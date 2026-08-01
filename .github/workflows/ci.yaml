@@ -1,0 +1,13 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/python-ci.yaml@main
+    with:
+      python-version: "3.12"
+      coverage-package: "src"
