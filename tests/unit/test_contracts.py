@@ -52,6 +52,24 @@ def test_settings_require_model_for_live_provider(tmp_path: Path) -> None:
         Settings(policy_file=tmp_path / "policy.json", llm_provider="openai")
 
 
+def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
+    settings = Settings.model_validate(
+        {
+            "policy_file": tmp_path / "policy.json",
+            "llm_provider": "fake",
+            "llm_model": "",
+            "aws_region": "",
+            "github_repository": "",
+            "github_token": "",
+            "postgres_dsn": "",
+            "checkpoint_encryption_key": "",
+        }
+    )
+    assert settings.llm_model is None
+    assert settings.github_repository is None
+    assert settings.postgres_dsn is None
+
+
 def test_policy_unknown_fields_fail_closed(tmp_path: Path) -> None:
     policy_path = Path(__file__).parents[2] / "config" / "policies" / "demo.json"
     altered = policy_path.read_text().replace('"policy_id":', '"unknown": true, "policy_id":')

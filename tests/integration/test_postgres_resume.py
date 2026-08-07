@@ -31,11 +31,12 @@ pytestmark = pytest.mark.integration
 
 def _nodes() -> WorkflowNodes:
     policy = PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "demo.json"))
+    repository = FakeRepository(files={"src/app.py": "value = int(raw)\n"})
     return WorkflowNodes(
         policy=policy,
         model=FakeStructuredModel(scripted_responses(risk_level=RiskLevel.MEDIUM, risk_decision=PolicyDecision.ALLOW)),
-        repository=FakeRepository(files={"src/app.py": "value = int(raw)\n"}),
-        sandbox=FakeSandboxExecutor(),
+        repository=repository,
+        sandbox=FakeSandboxExecutor(repository=repository),
         pr_provider=FakePullRequestProvider(),
         artifact_store=MemoryArtifactStore(),
         audit_sink=MemoryAuditSink(),

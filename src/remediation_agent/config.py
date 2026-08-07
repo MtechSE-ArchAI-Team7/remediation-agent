@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class CheckpointSettings(BaseSettings):
+    """Persistence-only settings used by database lifecycle commands."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIOS_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    postgres_dsn: SecretStr
+    checkpoint_encryption_key: SecretStr
+
+    def connection_values(self) -> tuple[str, str]:
+        return self.postgres_dsn.get_secret_value(), self.checkpoint_encryption_key.get_secret_value()
 
 
 class Settings(BaseSettings):
@@ -49,6 +66,24 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8080, ge=1, le=65535)
     prompt_version: str = "remediation-v1"
+
+    @field_validator(
+        "llm_model",
+        "aws_region",
+        "openai_base_url",
+        "deepseek_base_url",
+        "postgres_dsn",
+        "checkpoint_encryption_key",
+        "github_token",
+        "github_repository",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_values_are_unset(cls, value: Any) -> Any:
+        """Treat blank values in the distributable .env example as absent."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("sandbox_image")
     @classmethod

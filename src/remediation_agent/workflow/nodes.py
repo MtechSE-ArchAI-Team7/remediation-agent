@@ -439,7 +439,10 @@ class WorkflowNodes:
             applied_diff = await self.repository.current_diff(state["workspace"])
             applied_policy = self.policy.preflight_patch(applied_diff.unified_diff)
             if applied_policy.decision is PolicyDecision.DENY:
-                raise RuntimeError("applied workspace diff failed deterministic post-apply policy")
+                raise RuntimeError(
+                    "applied workspace diff failed deterministic post-apply policy: "
+                    + "; ".join(applied_policy.reasons)
+                )
             if applied_policy.changed_files != state["patch_policy"].changed_files:
                 raise RuntimeError("applied workspace diff does not match the preflighted file scope")
         except (OSError, RuntimeError, ValueError) as exc:
