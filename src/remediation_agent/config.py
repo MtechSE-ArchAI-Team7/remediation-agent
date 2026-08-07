@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     llm_provider: Literal["fake", "bedrock", "openai", "deepseek"]
     llm_model: str | None = None
     aws_region: str | None = None
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    deepseek_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPSEEK_API_KEY")
     openai_base_url: str | None = None
     deepseek_base_url: str | None = None
     model_timeout_seconds: float = Field(default=60.0, gt=0)
@@ -72,6 +74,8 @@ class Settings(BaseSettings):
         "aws_region",
         "openai_base_url",
         "deepseek_base_url",
+        "openai_api_key",
+        "deepseek_api_key",
         "postgres_dsn",
         "checkpoint_encryption_key",
         "github_token",
@@ -108,6 +112,10 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_LLM_MODEL is required for live model providers")
         if self.llm_provider == "bedrock" and not self.aws_region:
             raise ValueError("AIOS_AWS_REGION is required for Bedrock")
+        if self.llm_provider == "openai" and self.openai_api_key is None:
+            raise ValueError("OPENAI_API_KEY is required for OpenAI")
+        if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
+            raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
         return self
 
     def require_persistent_checkpointing(self) -> tuple[str, str]:

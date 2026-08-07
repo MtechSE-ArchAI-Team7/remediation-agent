@@ -125,6 +125,7 @@ def build_structured_model(
                 _ChatModel,
                 ChatOpenAI(
                     model=settings.llm_model,
+                    api_key=settings.openai_api_key,
                     base_url=settings.openai_base_url,
                     temperature=settings.model_temperature,
                     max_completion_tokens=max_output_tokens,
@@ -138,6 +139,7 @@ def build_structured_model(
                 _ChatModel,
                 ChatOpenAI(
                     model=settings.llm_model,
+                    api_key=settings.openai_api_key,
                     temperature=settings.model_temperature,
                     max_completion_tokens=max_output_tokens,
                     timeout=settings.model_timeout_seconds,
@@ -153,6 +155,7 @@ def build_structured_model(
                 _ChatModel,
                 ChatDeepSeek(
                     model=settings.llm_model,
+                    api_key=settings.deepseek_api_key,
                     base_url=settings.deepseek_base_url,
                     temperature=settings.model_temperature,
                     max_tokens=max_output_tokens,
@@ -165,6 +168,7 @@ def build_structured_model(
                 _ChatModel,
                 ChatDeepSeek(
                     model=settings.llm_model,
+                    api_key=settings.deepseek_api_key,
                     temperature=settings.model_temperature,
                     max_tokens=max_output_tokens,
                     timeout=settings.model_timeout_seconds,

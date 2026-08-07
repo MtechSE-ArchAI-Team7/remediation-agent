@@ -85,6 +85,20 @@ def test_local_provider_adapters_construct_without_network(
     assert adapter.model == "fixture-model"
 
 
+def test_openai_key_is_loaded_from_dotenv_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "AIOS_POLICY_FILE=config/policies/demo.json\n"
+        "AIOS_LLM_PROVIDER=openai\n"
+        "AIOS_LLM_MODEL=fixture-model\n"
+        "OPENAI_API_KEY=dotenv-test-key\n"
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
+    assert settings.openai_api_key is not None
+    assert settings.openai_api_key.get_secret_value() == "dotenv-test-key"
+
+
 def test_bedrock_converse_adapter_uses_current_constructor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

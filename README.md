@@ -70,7 +70,9 @@ make db-init
 make db-down
 ```
 
-The local Git fixture tests are under the `integration` marker. The PostgreSQL recreation test runs only when `AIOS_TEST_POSTGRES_DSN` is set; otherwise it is skipped.
+The local Git fixture tests are under the `integration` marker. The PostgreSQL recreation test uses
+`AIOS_TEST_POSTGRES_DSN` when set, then falls back to the local `AIOS_POSTGRES_DSN` from `.env`; it is skipped only
+when neither is configured.
 
 ## Configuration
 

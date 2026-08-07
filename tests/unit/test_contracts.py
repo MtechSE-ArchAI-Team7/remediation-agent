@@ -49,7 +49,7 @@ def test_committed_json_schemas_match_models() -> None:
 
 def test_settings_require_model_for_live_provider(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="AIOS_LLM_MODEL"):
-        Settings(policy_file=tmp_path / "policy.json", llm_provider="openai")
+        Settings(policy_file=tmp_path / "policy.json", llm_provider="openai", _env_file=None)  # type: ignore[call-arg]
 
 
 def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
@@ -61,12 +61,15 @@ def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
             "aws_region": "",
             "github_repository": "",
             "github_token": "",
+            "OPENAI_API_KEY": "",
+            "DEEPSEEK_API_KEY": "",
             "postgres_dsn": "",
             "checkpoint_encryption_key": "",
         }
     )
     assert settings.llm_model is None
     assert settings.github_repository is None
+    assert settings.openai_api_key is None
     assert settings.postgres_dsn is None
 
 

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.fakes import (
@@ -17,6 +18,7 @@ from remediation_agent.adapters.fakes import (
     MemoryArtifactStore,
     MemoryAuditSink,
 )
+from remediation_agent.config import CheckpointSettings
 from remediation_agent.domain.enums import ApprovalStatus, FinalStatus, PolicyDecision, RiskLevel
 from remediation_agent.domain.models import ApprovalDecisionV1
 from remediation_agent.policy.engine import PolicyEngine
@@ -47,7 +49,10 @@ def _nodes() -> WorkflowNodes:
 async def test_interrupt_survives_checkpointer_recreation() -> None:
     dsn = os.getenv("AIOS_TEST_POSTGRES_DSN")
     if not dsn:
-        pytest.skip("AIOS_TEST_POSTGRES_DSN is not configured")
+        try:
+            dsn, _ = CheckpointSettings().connection_values()  # type: ignore[call-arg]
+        except ValidationError:
+            pytest.skip("AIOS_TEST_POSTGRES_DSN or local checkpoint settings are not configured")
     key = "0123456789abcdef0123456789abcdef"
     nodes = _nodes()
     async with postgres_checkpointer(dsn, key, setup=True) as checkpointer:
