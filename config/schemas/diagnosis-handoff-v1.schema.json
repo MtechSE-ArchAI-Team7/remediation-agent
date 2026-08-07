@@ -1,0 +1,247 @@
+{
+  "$defs": {
+    "Diagnosis": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "contradictions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Contradictions",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "unresolved_questions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Unresolved Questions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "confidence",
+        "evidence_ids"
+      ],
+      "title": "Diagnosis",
+      "type": "object"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "minLength": 1,
+          "title": "Digest",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "default": "",
+          "maxLength": 10000,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "source_locator": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Source Locator",
+          "type": "string"
+        },
+        "source_type": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "source_type",
+        "source_locator",
+        "observed_at",
+        "digest"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "RemediationType": {
+      "enum": [
+        "CODE",
+        "CONFIGURATION",
+        "ACCOUNT_UNLOCK",
+        "PASSWORD_RESET",
+        "ACCESS_PROVISIONING",
+        "PRIVILEGED_ACCESS",
+        "SOFTWARE_REQUEST",
+        "PRODUCTION_CHANGE",
+        "OTHER"
+      ],
+      "title": "RemediationType",
+      "type": "string"
+    },
+    "RepositoryProvider": {
+      "enum": [
+        "LOCAL",
+        "GITHUB",
+        "GITLAB",
+        "GENERIC_GIT"
+      ],
+      "title": "RepositoryProvider",
+      "type": "string"
+    },
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+          "title": "Base Branch",
+          "type": "string"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-fA-F]{7,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "provider": {
+          "$ref": "#/$defs/RepositoryProvider"
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "url",
+        "base_branch"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Provisional versioned handoff from Agent 2 to Agent 3.",
+  "properties": {
+    "acceptance_criteria": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Acceptance Criteria",
+      "type": "array"
+    },
+    "case_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "diagnosis": {
+      "$ref": "#/$defs/Diagnosis"
+    },
+    "issue_summary": {
+      "maxLength": 10000,
+      "minLength": 1,
+      "title": "Issue Summary",
+      "type": "string"
+    },
+    "remediation_type": {
+      "$ref": "#/$defs/RemediationType"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryRef"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "supporting_evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceRecord"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Supporting Evidence",
+      "type": "array"
+    },
+    "upstream_audit_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Upstream Audit Refs",
+      "type": "array"
+    },
+    "upstream_correlation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Upstream Correlation Id"
+    }
+  },
+  "required": [
+    "case_id",
+    "issue_summary",
+    "remediation_type",
+    "diagnosis",
+    "supporting_evidence",
+    "acceptance_criteria",
+    "repository"
+  ],
+  "title": "DiagnosisHandoffV1",
+  "type": "object"
+}

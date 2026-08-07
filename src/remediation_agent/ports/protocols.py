@@ -1,0 +1,97 @@
+"""Protocols for side effects and model calls."""
+
+from __future__ import annotations
+
+from typing import Protocol
+
+from pydantic import BaseModel
+
+from remediation_agent.domain.models import (
+    ArtifactManifest,
+    CleanupResult,
+    RepositoryRef,
+    ValidationTaskResult,
+    WorkspaceRef,
+)
+from remediation_agent.ports.models import (
+    ArtifactWriteRequest,
+    AuditWriteRequest,
+    BranchRequest,
+    BranchResult,
+    CommitRequest,
+    CommitResult,
+    CreatedDraftPr,
+    DiffResult,
+    DraftPrRequest,
+    FileContent,
+    ModelGeneration,
+    ModelRequest,
+    PatchApplyRequest,
+    PatchApplyResult,
+    PreparedDraftPr,
+    PushRequest,
+    PushResult,
+    ReadFileRequest,
+    SearchRequest,
+    SearchResult,
+    TModel,
+    TreeRequest,
+    TreeResult,
+    ValidationTaskRequest,
+)
+
+
+class RepositoryPort(Protocol):
+    async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef: ...
+
+    async def list_tree(self, request: TreeRequest) -> TreeResult: ...
+
+    async def read_file(self, request: ReadFileRequest) -> FileContent: ...
+
+    async def search(self, request: SearchRequest) -> SearchResult: ...
+
+    async def current_diff(self, workspace: WorkspaceRef) -> DiffResult: ...
+
+    async def create_branch(self, request: BranchRequest) -> BranchResult: ...
+
+    async def commit(self, request: CommitRequest) -> CommitResult: ...
+
+    async def push(self, request: PushRequest) -> PushResult: ...
+
+
+class SandboxExecutor(Protocol):
+    async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult: ...
+
+    async def restore_base(self, workspace: WorkspaceRef) -> None: ...
+
+    async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult: ...
+
+    async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest: ...
+
+    async def destroy(self, workspace: WorkspaceRef) -> CleanupResult: ...
+
+
+class StructuredModel(Protocol):
+    async def generate(self, request: ModelRequest, output_schema: type[TModel]) -> ModelGeneration[TModel]: ...
+
+
+class PullRequestProvider(Protocol):
+    async def prepare(self, request: DraftPrRequest) -> PreparedDraftPr: ...
+
+    async def create_draft(self, request: DraftPrRequest) -> CreatedDraftPr: ...
+
+
+class ArtifactStore(Protocol):
+    async def write_bundle(self, request: ArtifactWriteRequest) -> ArtifactManifest: ...
+
+
+class AuditSink(Protocol):
+    async def write(self, request: AuditWriteRequest) -> None: ...
+
+
+class ReadinessProbe(Protocol):
+    async def ready(self) -> bool: ...
+
+
+class StructuredOutputRunnable(Protocol):
+    async def ainvoke(self, input: object) -> BaseModel: ...

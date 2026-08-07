@@ -29,6 +29,10 @@ pip-audit.json
 .env.*
 !.env.example
 
+# Remediation runtime output
+.artifacts/
+.workspaces/
+
 # Editors and OS files
 .DS_Store
 .idea/

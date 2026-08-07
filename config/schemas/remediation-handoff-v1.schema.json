@@ -1,0 +1,630 @@
+{
+  "$defs": {
+    "ApprovalDecisionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "minLength": 1,
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Comment",
+          "type": "string"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string"
+        },
+        "reviewer_id": {
+          "minLength": 1,
+          "title": "Reviewer Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scope_digest": {
+          "minLength": 1,
+          "title": "Scope Digest",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "APPROVED",
+            "REJECTED"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "scope_digest",
+        "status",
+        "reviewer_id",
+        "decided_at"
+      ],
+      "title": "ApprovalDecisionV1",
+      "type": "object"
+    },
+    "ArtifactManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "ArtifactManifest",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "minLength": 1,
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "digest",
+        "media_type"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "DraftPrMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "created": {
+          "default": false,
+          "title": "Created",
+          "type": "boolean"
+        },
+        "payload": {
+          "$ref": "#/$defs/DraftPrPayload"
+        },
+        "provider_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Id"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "payload"
+      ],
+      "title": "DraftPrMetadata",
+      "type": "object"
+    },
+    "DraftPrPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": {
+          "minLength": 1,
+          "title": "Base Branch",
+          "type": "string"
+        },
+        "body": {
+          "minLength": 1,
+          "title": "Body",
+          "type": "string"
+        },
+        "draft": {
+          "const": true,
+          "default": true,
+          "title": "Draft",
+          "type": "boolean"
+        },
+        "head_branch": {
+          "minLength": 1,
+          "title": "Head Branch",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body",
+        "head_branch",
+        "base_branch"
+      ],
+      "title": "DraftPrPayload",
+      "type": "object"
+    },
+    "ErrorRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "stage": {
+          "minLength": 1,
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "stage",
+        "message"
+      ],
+      "title": "ErrorRecord",
+      "type": "object"
+    },
+    "FinalStatus": {
+      "enum": [
+        "PENDING",
+        "AWAITING_APPROVAL",
+        "INVALID_REQUEST",
+        "UNSUPPORTED_REMEDIATION_TYPE",
+        "NOT_IMPLEMENTED",
+        "HUMAN_ACTION_REQUIRED",
+        "UNSAFE_REMEDIATION",
+        "VALIDATION_FAILED",
+        "DRAFT_PR_PREPARED",
+        "DRAFT_PR_CREATED",
+        "INTERNAL_ERROR",
+        "CLEANUP_FAILED"
+      ],
+      "title": "FinalStatus",
+      "type": "string"
+    },
+    "RepositoryProvider": {
+      "enum": [
+        "LOCAL",
+        "GITHUB",
+        "GITLAB",
+        "GENERIC_GIT"
+      ],
+      "title": "RepositoryProvider",
+      "type": "string"
+    },
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+          "title": "Base Branch",
+          "type": "string"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-fA-F]{7,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "provider": {
+          "$ref": "#/$defs/RepositoryProvider"
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "url",
+        "base_branch"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    },
+    "RollbackInstructions": {
+      "additionalProperties": false,
+      "properties": {
+        "after_commit": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "After Commit",
+          "type": "array"
+        },
+        "before_commit": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Before Commit",
+          "type": "array"
+        },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "before_commit",
+        "after_commit"
+      ],
+      "title": "RollbackInstructions",
+      "type": "object"
+    },
+    "ValidationAttempt": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ValidationOutcome"
+        },
+        "patch_digest": {
+          "minLength": 1,
+          "title": "Patch Digest",
+          "type": "string"
+        },
+        "results": {
+          "items": {
+            "$ref": "#/$defs/ValidationTaskResult"
+          },
+          "title": "Results",
+          "type": "array"
+        }
+      },
+      "required": [
+        "attempt",
+        "patch_digest",
+        "results",
+        "outcome"
+      ],
+      "title": "ValidationAttempt",
+      "type": "object"
+    },
+    "ValidationOutcome": {
+      "enum": [
+        "NOT_RUN",
+        "PASSED",
+        "FAILED",
+        "ERROR",
+        "TIMED_OUT"
+      ],
+      "title": "ValidationOutcome",
+      "type": "string"
+    },
+    "ValidationTaskResult": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exit Code"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ValidationOutcome"
+        },
+        "output_truncated": {
+          "default": false,
+          "title": "Output Truncated",
+          "type": "boolean"
+        },
+        "stderr": {
+          "default": "",
+          "title": "Stderr",
+          "type": "string"
+        },
+        "stdout": {
+          "default": "",
+          "title": "Stdout",
+          "type": "string"
+        },
+        "task_name": {
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "outcome",
+        "duration_ms"
+      ],
+      "title": "ValidationTaskResult",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Provisional versioned handoff from Agent 3 to Agent 4.",
+  "properties": {
+    "approvals": {
+      "items": {
+        "$ref": "#/$defs/ApprovalDecisionV1"
+      },
+      "title": "Approvals",
+      "type": "array"
+    },
+    "artifact_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactManifest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "audit_bundle_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "base_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Base Commit"
+    },
+    "case_id": {
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "changed_files": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed Files",
+      "type": "array"
+    },
+    "diff_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Diff Digest"
+    },
+    "draft_pr": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DraftPrMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "errors": {
+      "items": {
+        "$ref": "#/$defs/ErrorRecord"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "failed_attempt_summaries": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Failed Attempt Summaries",
+      "type": "array"
+    },
+    "final_status": {
+      "$ref": "#/$defs/FinalStatus"
+    },
+    "policy_control_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Policy Control Ids",
+      "type": "array"
+    },
+    "proposed_branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Proposed Branch"
+    },
+    "proposed_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Proposed Commit"
+    },
+    "remediation_plan_summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remediation Plan Summary"
+    },
+    "repository": {
+      "$ref": "#/$defs/RepositoryRef"
+    },
+    "residual_risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Residual Risks",
+      "type": "array"
+    },
+    "risk_summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Risk Summary"
+    },
+    "rollback_instructions": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RollbackInstructions"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "validation_attempts": {
+      "items": {
+        "$ref": "#/$defs/ValidationAttempt"
+      },
+      "title": "Validation Attempts",
+      "type": "array"
+    }
+  },
+  "required": [
+    "case_id",
+    "run_id",
+    "final_status",
+    "repository"
+  ],
+  "title": "RemediationHandoffV1",
+  "type": "object"
+}

@@ -1,0 +1,354 @@
+{
+  "$defs": {
+    "ArtifactPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "include_full_diff": {
+          "title": "Include Full Diff",
+          "type": "boolean"
+        },
+        "retention_days": {
+          "exclusiveMinimum": 0,
+          "title": "Retention Days",
+          "type": "integer"
+        },
+        "write_audit_jsonl": {
+          "title": "Write Audit Jsonl",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "retention_days",
+        "write_audit_jsonl",
+        "include_full_diff"
+      ],
+      "title": "ArtifactPolicy",
+      "type": "object"
+    },
+    "GitHubPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "writes_enabled": {
+          "default": false,
+          "title": "Writes Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "GitHubPolicy",
+      "type": "object"
+    },
+    "Limits": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute_max_changed_files": {
+          "exclusiveMinimum": 0,
+          "title": "Absolute Max Changed Files",
+          "type": "integer"
+        },
+        "absolute_max_diff_lines": {
+          "exclusiveMinimum": 0,
+          "title": "Absolute Max Diff Lines",
+          "type": "integer"
+        },
+        "autonomous_max_changed_files": {
+          "exclusiveMinimum": 0,
+          "title": "Autonomous Max Changed Files",
+          "type": "integer"
+        },
+        "autonomous_max_diff_lines": {
+          "exclusiveMinimum": 0,
+          "title": "Autonomous Max Diff Lines",
+          "type": "integer"
+        },
+        "max_active_runs": {
+          "exclusiveMinimum": 0,
+          "title": "Max Active Runs",
+          "type": "integer"
+        },
+        "max_context_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Context Bytes",
+          "type": "integer"
+        },
+        "max_file_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max File Bytes",
+          "type": "integer"
+        },
+        "max_model_format_retries": {
+          "minimum": 0,
+          "title": "Max Model Format Retries",
+          "type": "integer"
+        },
+        "max_model_output_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Model Output Tokens",
+          "type": "integer"
+        },
+        "max_search_results": {
+          "exclusiveMinimum": 0,
+          "title": "Max Search Results",
+          "type": "integer"
+        },
+        "max_task_output_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Max Task Output Bytes",
+          "type": "integer"
+        },
+        "max_task_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Task Timeout Seconds",
+          "type": "integer"
+        },
+        "max_tree_entries": {
+          "exclusiveMinimum": 0,
+          "title": "Max Tree Entries",
+          "type": "integer"
+        },
+        "max_validation_attempts": {
+          "exclusiveMinimum": 0,
+          "title": "Max Validation Attempts",
+          "type": "integer"
+        },
+        "max_validation_tasks_per_attempt": {
+          "exclusiveMinimum": 0,
+          "title": "Max Validation Tasks Per Attempt",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "autonomous_max_changed_files",
+        "absolute_max_changed_files",
+        "autonomous_max_diff_lines",
+        "absolute_max_diff_lines",
+        "max_validation_attempts",
+        "max_model_format_retries",
+        "max_tree_entries",
+        "max_file_bytes",
+        "max_search_results",
+        "max_context_bytes",
+        "max_task_timeout_seconds",
+        "max_task_output_bytes",
+        "max_validation_tasks_per_attempt",
+        "max_model_output_tokens",
+        "max_active_runs"
+      ],
+      "title": "Limits",
+      "type": "object"
+    },
+    "MandatoryTaskRule": {
+      "additionalProperties": false,
+      "properties": {
+        "path_patterns": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Path Patterns",
+          "type": "array"
+        },
+        "task_names": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Task Names",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path_patterns",
+        "task_names"
+      ],
+      "title": "MandatoryTaskRule",
+      "type": "object"
+    },
+    "PathRules": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_required": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Approval Required",
+          "type": "array"
+        },
+        "autonomous": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Autonomous",
+          "type": "array"
+        },
+        "forbidden": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Forbidden",
+          "type": "array"
+        }
+      },
+      "required": [
+        "autonomous",
+        "approval_required",
+        "forbidden"
+      ],
+      "title": "PathRules",
+      "type": "object"
+    },
+    "RepositoryRules": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_providers": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Providers",
+          "type": "array"
+        },
+        "allowed_url_patterns": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Url Patterns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "allowed_providers",
+        "allowed_url_patterns"
+      ],
+      "title": "RepositoryRules",
+      "type": "object"
+    },
+    "ValidationTaskConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Argv",
+          "type": "array"
+        },
+        "cwd": {
+          "default": ".",
+          "minLength": 1,
+          "title": "Cwd",
+          "type": "string"
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 50,
+          "title": "Environment",
+          "type": "object"
+        },
+        "output_limit_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Output Limit Bytes",
+          "type": "integer"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "argv",
+        "timeout_seconds",
+        "output_limit_bytes"
+      ],
+      "title": "ValidationTaskConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactPolicy"
+    },
+    "default_validation_tasks": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Default Validation Tasks",
+      "type": "array"
+    },
+    "github": {
+      "$ref": "#/$defs/GitHubPolicy"
+    },
+    "limits": {
+      "$ref": "#/$defs/Limits"
+    },
+    "mandatory_tasks": {
+      "items": {
+        "$ref": "#/$defs/MandatoryTaskRule"
+      },
+      "title": "Mandatory Tasks",
+      "type": "array"
+    },
+    "paths": {
+      "$ref": "#/$defs/PathRules"
+    },
+    "policy_id": {
+      "minLength": 1,
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "repositories": {
+      "$ref": "#/$defs/RepositoryRules"
+    },
+    "validation_tasks": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ValidationTaskConfig"
+      },
+      "maxProperties": 50,
+      "minProperties": 1,
+      "title": "Validation Tasks",
+      "type": "object"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "policy_id",
+    "version",
+    "repositories",
+    "paths",
+    "limits",
+    "default_validation_tasks",
+    "validation_tasks",
+    "artifacts",
+    "github"
+  ],
+  "title": "PolicyConfig",
+  "type": "object"
+}
