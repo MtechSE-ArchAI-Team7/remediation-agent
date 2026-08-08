@@ -32,7 +32,7 @@ pytestmark = pytest.mark.integration
 
 
 def _nodes() -> WorkflowNodes:
-    policy = PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "demo.json"))
+    policy = PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "reference.json"))
     repository = FakeRepository(files={"src/app.py": "value = int(raw)\n"})
     return WorkflowNodes(
         policy=policy,

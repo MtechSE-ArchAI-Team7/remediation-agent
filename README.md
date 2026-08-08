@@ -76,7 +76,7 @@ when neither is configured.
 
 Copy `.env.example` to `.env`, fill secrets locally, and never commit it. The runtime requires:
 
-- `AIOS_POLICY_FILE`: validated operator policy; `config/policies/demo.json` is an example, not a production default.
+- `AIOS_POLICY_FILE`: validated operator policy; `config/policies/reference.json` is a reference configuration, not a production default.
 - `AIOS_LLM_PROVIDER`: `bedrock`, `openai`, or `deepseek`; `fake` is injection-only for automated tests.
 - `AIOS_LLM_MODEL`: a provider-compatible model or Bedrock inference-profile ID.
 - `AIOS_POSTGRES_DSN`: PostgreSQL checkpoint DSN.
@@ -112,7 +112,7 @@ make db-init
 uv run remediation-agent
 ```
 
-The service binds to `127.0.0.1:8080` by default. Remote API authentication and trusted reviewer identity are deferred, so this prototype must remain local-only.
+The service binds to `127.0.0.1:8080` by default. Remote API authentication and trusted reviewer identity are deferred, so the service must remain local-only.
 
 ## HTTP API
 
@@ -128,13 +128,13 @@ Schemas are in `config/schemas/`; run `make schemas` after changing a public con
 
 The service never exposes a generic shell to the model. Validation task names resolve to fixed `argv` arrays in operator JSON. The Docker executor uses no shell, no network, non-root UID 10001, dropped capabilities, `no-new-privileges`, a read-only root filesystem, resource limits, one writable workspace mount with `.git` over-mounted read-only, timeouts, and streaming output caps. The approved diff is hashed before validation and checked again afterward, so a test cannot silently rewrite the proposed change. Patch and repository paths reject absolute paths, traversal, NULs, forbidden files, unsupported diff features, and symlink components.
 
-The committed demo policy allows only the listed fixture/team repository patterns and conservative change limits. Operators must create and review a suitable policy before using another repository.
+The committed reference policy allows only the listed fixture/team repository patterns and conservative change limits. Operators must create and review a suitable policy before using another repository.
 
 ## Known residual risks
 
-- This is a prototype, not a production control plane.
+- The service is not designed or approved for production control-plane use.
 - API authentication, durable encrypted artifact storage, immutable/WORM audit storage, distributed rate limits, secret-manager integration, and trusted reviewer identity are deferred.
 - GitHub Actions reusable workflows and container base-image references are not digest-pinned. They were pre-existing protected files and require explicit human approval before modification.
-- The Docker sandbox is the demonstrated backend; Kubernetes/EKS execution is an interface-compatible future adapter only.
-- The service image is not an end-to-end Docker-in-Docker deployment. Run the prototype API on a trusted local host with Docker available; do not mount a host Docker socket into an internet-exposed service container.
+- The Docker sandbox is the implemented validation backend; Kubernetes/EKS execution is an interface-compatible future adapter only.
+- The service image is not an end-to-end Docker-in-Docker deployment. Run the API on a trusted local host with Docker available; do not mount a host Docker socket into an internet-exposed service container.
 - Model output can be wrong even when schema-valid. Validation evidence and mandatory human PR review remain required.

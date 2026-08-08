@@ -1,5 +1,5 @@
 {
-  "policy_id": "demo-v1",
+  "policy_id": "reference-v1",
   "version": "1.0",
   "repositories": {
     "allowed_providers": ["LOCAL", "GITHUB"],

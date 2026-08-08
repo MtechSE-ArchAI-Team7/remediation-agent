@@ -76,7 +76,7 @@ def test_local_provider_adapters_construct_without_network(
 ) -> None:
     monkeypatch.setenv(key_name, "local-test-key")
     settings = Settings(
-        policy_file=Path("config/policies/demo.json"),
+        policy_file=Path("config/policies/reference.json"),
         llm_provider=provider,
         llm_model="fixture-model",
     )
@@ -88,7 +88,7 @@ def test_local_provider_adapters_construct_without_network(
 def test_openai_key_is_loaded_from_dotenv_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "AIOS_POLICY_FILE=config/policies/demo.json\n"
+        "AIOS_POLICY_FILE=config/policies/reference.json\n"
         "AIOS_LLM_PROVIDER=openai\n"
         "AIOS_LLM_MODEL=fixture-model\n"
         "OPENAI_API_KEY=dotenv-test-key\n"
@@ -116,7 +116,7 @@ def test_bedrock_converse_adapter_uses_current_constructor(
 
     monkeypatch.setattr(langchain_aws, "ChatBedrockConverse", FakeBedrock)
     settings = Settings(
-        policy_file=Path("config/policies/demo.json"),
+        policy_file=Path("config/policies/reference.json"),
         llm_provider="bedrock",
         llm_model="fixture-inference-profile",
         aws_region="ap-southeast-1",

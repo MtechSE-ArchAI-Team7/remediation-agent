@@ -74,7 +74,7 @@ def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
 
 
 def test_policy_unknown_fields_fail_closed(tmp_path: Path) -> None:
-    policy_path = Path(__file__).parents[2] / "config" / "policies" / "demo.json"
+    policy_path = Path(__file__).parents[2] / "config" / "policies" / "reference.json"
     altered = policy_path.read_text().replace('"policy_id":', '"unknown": true, "policy_id":')
     target = tmp_path / "bad.json"
     target.write_text(altered)
@@ -83,7 +83,7 @@ def test_policy_unknown_fields_fail_closed(tmp_path: Path) -> None:
 
 
 def test_policy_loader_rejects_symlink(tmp_path: Path) -> None:
-    policy_path = Path(__file__).parents[2] / "config" / "policies" / "demo.json"
+    policy_path = Path(__file__).parents[2] / "config" / "policies" / "reference.json"
     linked = tmp_path / "linked-policy.json"
     linked.symlink_to(policy_path)
     with pytest.raises(PolicyLoadError, match="non-symlink"):

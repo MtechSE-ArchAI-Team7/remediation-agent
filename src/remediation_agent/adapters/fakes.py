@@ -1,4 +1,4 @@
-"""Deterministic fake adapters used by tests and demos"""
+"""Deterministic fake adapters used by automated tests."""
 
 from __future__ import annotations
 

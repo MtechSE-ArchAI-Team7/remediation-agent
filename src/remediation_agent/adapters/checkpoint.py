@@ -26,7 +26,7 @@ def checkpoint_serializer() -> JsonPlusSerializer:
 
 
 def in_memory_checkpointer() -> InMemorySaver:
-    """Create the external-service-free checkpointer used by tests and demonstrations."""
+    """Create the external-service-free checkpointer used by automated tests."""
 
     return InMemorySaver(serde=checkpoint_serializer())
 

@@ -15,7 +15,7 @@ from tests.conftest import patch_for
 
 @pytest.fixture
 def policy() -> PolicyEngine:
-    return PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "demo.json"))
+    return PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "reference.json"))
 
 
 @pytest.mark.parametrize(

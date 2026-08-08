@@ -104,8 +104,8 @@ policy. Agent 2 must not assume that its proposed paths or repository location g
 
 | Value | Current Agent 3 behavior |
 |---|---|
-| `CODE` | Supported prototype workflow. |
-| `CONFIGURATION` | Supported prototype workflow. |
+| `CODE` | Supported workflow. |
+| `CONFIGURATION` | Supported workflow. |
 | `ACCOUNT_UNLOCK` | Deferred; typed unsupported/human-action result. |
 | `PASSWORD_RESET` | Deferred; typed unsupported/human-action result. |
 | `ACCESS_PROVISIONING` | Deferred; typed unsupported/human-action result. |
@@ -384,4 +384,3 @@ manufacture approvals or reuse approval decisions across scope digests.
 4. Because consumers are strict, even optional additions require coordinated schema/model rollout or a new version.
 5. Breaking changes require a new versioned model and schema; keep old versions available during migration.
 6. Regenerate schemas with `make schemas`, run contract tests, and exchange updated schemas with all owners.
-

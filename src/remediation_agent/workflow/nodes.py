@@ -147,7 +147,7 @@ class WorkflowNodes:
         remediation_type = state["handoff"].remediation_type
         if remediation_type in _SUPPORTED_TYPES:
             status = FinalStatus.PENDING
-            detail = f"Remediation type {remediation_type} is supported by the prototype."
+            detail = f"Remediation type {remediation_type} is supported by this workflow."
         elif remediation_type in _HUMAN_ONLY_TYPES:
             status = FinalStatus.HUMAN_ACTION_REQUIRED
             detail = f"Remediation type {remediation_type} requires a deferred human workflow."

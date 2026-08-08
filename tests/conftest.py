@@ -135,7 +135,7 @@ def build_test_service(
     MemoryArtifactStore,
     MemoryAuditSink,
 ]:
-    policy_path = Path(__file__).parents[1] / "config" / "policies" / "demo.json"
+    policy_path = Path(__file__).parents[1] / "config" / "policies" / "reference.json"
     policy = PolicyEngine(load_policy(policy_path))
     model = FakeStructuredModel(responses)
     repository = FakeRepository(files=files or {"src/app.py": "value = int(raw)\n"})
