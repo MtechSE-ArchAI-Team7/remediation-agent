@@ -1,4 +1,4 @@
-"""End-to-end graph tests for the three required academic scenarios."""
+"""End-to-end graph tests"""
 
 from __future__ import annotations
 

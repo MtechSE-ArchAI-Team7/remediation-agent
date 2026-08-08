@@ -44,7 +44,7 @@ async def test_plan_approval_interrupt_can_resume_same_run() -> None:
         approval_id=request.approval_id,
         scope_digest=request.scope_digest,
         status=ApprovalStatus.APPROVED,
-        reviewer_id="academic-reviewer",
+        reviewer_id="reviewer",
         decided_at=datetime.now(UTC),
     )
     completed = await service.approve(waiting.run_id, decision)
@@ -68,7 +68,7 @@ async def test_rejected_approval_makes_no_patch() -> None:
             approval_id=request.approval_id,
             scope_digest=request.scope_digest,
             status=ApprovalStatus.REJECTED,
-            reviewer_id="academic-reviewer",
+            reviewer_id="reviewer",
             decided_at=datetime.now(UTC),
             comment="Risk not accepted.",
         ),
@@ -90,7 +90,7 @@ async def test_approval_is_bound_to_exact_scope() -> None:
                 approval_id=request.approval_id,
                 scope_digest="sha256:wrong",
                 status=ApprovalStatus.APPROVED,
-                reviewer_id="academic-reviewer",
+                reviewer_id="reviewer",
                 decided_at=datetime.now(UTC),
             ),
         )
@@ -113,7 +113,7 @@ async def test_revised_sensitive_patch_invalidates_prior_diff_approval() -> None
             approval_id=first_request.approval_id,
             scope_digest=first_request.scope_digest,
             status=ApprovalStatus.APPROVED,
-            reviewer_id="academic-reviewer",
+            reviewer_id="reviewer",
             decided_at=datetime.now(UTC),
         ),
     )

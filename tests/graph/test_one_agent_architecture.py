@@ -1,4 +1,4 @@
-"""Architecture assertions for the academic one-agent constraint."""
+"""Architecture assertions for one-agent constraint."""
 
 from __future__ import annotations
 

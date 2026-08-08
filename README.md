@@ -1,8 +1,8 @@
-# AIOS Resolution/Remediation Agent
+# Remediation Agent
 
-This repository implements Agent 3 of the NUS-ISS MTech project **AIOS: Agentic AI for IT Operations Support**. It is one bounded, stateful LangGraph agent that converts an evidence-supported diagnosis into a policy-checked patch, validation evidence, rollback instructions, and a draft pull-request payload.
+This repository implements a Resolution/Remediation Agent for **AIOS: Agentic AI for IT Operations Support**. It is one bounded, stateful LangGraph agent that converts an evidence-supported diagnosis into a policy-checked patch, validation evidence, rollback instructions, and a draft pull-request payload.
 
-The prototype changes only disposable repository workspaces. It cannot merge, deploy, mutate production, or perform identity and privileged-access operations.
+The agent changes only disposable repository workspaces. It cannot merge, deploy, mutate production, or perform identity and privileged-access operations.
 
 ## Architecture
 
@@ -25,8 +25,6 @@ flowchart LR
 
 Deterministic Python logic owns routing, policy, approvals, limits, command resolution, validation outcomes, cleanup, and final status. LLM calls return Pydantic-validated inspection requests, plans, risk observations, and full unified patches. The model never receives callable tools or command authority.
 
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the detailed architecture and [docs/SECURITY_EVIDENCE.md](docs/SECURITY_EVIDENCE.md) for the OWASP assessment.
-
 ## Implemented capabilities
 
 - Provisional versioned Agent 2 → Agent 3 and Agent 3 → Agent 4 contracts, with exported JSON Schemas.
@@ -44,7 +42,7 @@ Account unlock, password reset, access provisioning, privileged access, software
 
 ## Setup and quality checks
 
-Python 3.12, `uv`, Git, and Docker are required for the full local demonstration.
+Python 3.12, `uv`, Git, and Docker are required for local setup.
 
 ```bash
 uv sync --frozen
@@ -78,7 +76,7 @@ when neither is configured.
 
 Copy `.env.example` to `.env`, fill secrets locally, and never commit it. The runtime requires:
 
-- `AIOS_POLICY_FILE`: validated operator policy; `config/policies/demo.json` is an academic example, not a production default.
+- `AIOS_POLICY_FILE`: validated operator policy; `config/policies/demo.json` is an example, not a production default.
 - `AIOS_LLM_PROVIDER`: `bedrock`, `openai`, or `deepseek`; `fake` is injection-only for automated tests.
 - `AIOS_LLM_MODEL`: a provider-compatible model or Bedrock inference-profile ID.
 - `AIOS_POSTGRES_DSN`: PostgreSQL checkpoint DSN.
@@ -134,7 +132,7 @@ The committed demo policy allows only the listed fixture/team repository pattern
 
 ## Known residual risks
 
-- This is an academic prototype, not a production control plane.
+- This is a prototype, not a production control plane.
 - API authentication, durable encrypted artifact storage, immutable/WORM audit storage, distributed rate limits, secret-manager integration, and trusted reviewer identity are deferred.
 - GitHub Actions reusable workflows and container base-image references are not digest-pinned. They were pre-existing protected files and require explicit human approval before modification.
 - The Docker sandbox is the demonstrated backend; Kubernetes/EKS execution is an interface-compatible future adapter only.

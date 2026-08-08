@@ -385,14 +385,3 @@ manufacture approvals or reuse approval decisions across scope digests.
 5. Breaking changes require a new versioned model and schema; keep old versions available during migration.
 6. Regenerate schemas with `make schemas`, run contract tests, and exchange updated schemas with all owners.
 
-## Items requiring team confirmation
-
-- Whether a full `repository.commit_sha` becomes mandatory rather than strongly recommended.
-- The shared format and storage/transport mechanism for artifact and audit references.
-- Which component authenticates callers and supplies trusted reviewer identity.
-- Whether Agent 4 receives the terminal handoff directly, through shared orchestration, or by polling Agent 3.
-- Retention limits for evidence excerpts, validation output, and audit bundles.
-- Ownership of retry/idempotency behavior between services.
-
-Until those decisions are ratified, Agent 3 fails closed where operator safety depends on them and records unresolved
-integration concerns as residual risk.
