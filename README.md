@@ -25,7 +25,7 @@ flowchart LR
 
 Deterministic Python logic owns routing, policy, approvals, limits, command resolution, validation outcomes, cleanup, and final status. LLM calls return Pydantic-validated inspection requests, plans, risk observations, and full unified patches. The model never receives callable tools or command authority.
 
-## Implemented capabilities
+## Capabilities
 
 - Provisional versioned Agent 2 → Agent 3 and Agent 3 → Agent 4 contracts, with exported JSON Schemas.
 - Strict required JSON operator policy and deterministic repository/patch/task controls.
@@ -38,11 +38,10 @@ Deterministic Python logic owns routing, policy, approvals, limits, command reso
 - Optional GitHub draft-PR creation, disabled by both settings and policy by default. Automatic merge is not implemented.
 - FastAPI start, approval, status, health, and readiness endpoints.
 
-Account unlock, password reset, access provisioning, privileged access, software fulfilment, production remediation/deployment, rollback execution, EKS, and automatic merge remain deferred or return typed human/unsupported statuses.
 
 ## Setup and quality checks
 
-Python 3.12, `uv`, Git, and Docker are required for local setup.
+Prerequisites: Python 3.12, uv, Git, and Docker
 
 ```bash
 uv sync --frozen
@@ -61,6 +60,7 @@ Additional commands:
 ```bash
 make schemas
 make test-integration
+make test-sandbox-integration
 make sandbox-build
 make docker-build
 make db-up
@@ -68,7 +68,10 @@ make db-init
 make db-down
 ```
 
-The local Git fixture tests are under the `integration` marker. The PostgreSQL recreation test uses
+The local Git, Docker sandbox, and PostgreSQL tests are under the `integration` marker. Docker cases skip when the
+daemon or `aios-remediation-sandbox:local` image is unavailable. Run `make test-sandbox-integration` to build that
+image and execute the Docker-specific suite; this command requires a running Docker daemon and may need network access
+when the image is built for the first time. The PostgreSQL recreation test uses
 `AIOS_TEST_POSTGRES_DSN` when set, then falls back to the local `AIOS_POSTGRES_DSN` from `.env`; it is skipped only
 when neither is configured.
 
@@ -102,8 +105,6 @@ export AIOS_LLM_MODEL='<operator-selected-model-id>'
 export DEEPSEEK_API_KEY='<local-secret>'
 ```
 
-Model IDs are intentionally not hard-coded. Optional compatible base URLs use `AIOS_OPENAI_BASE_URL` and `AIOS_DEEPSEEK_BASE_URL`.
-
 Start local persistence and the API:
 
 ```bash
@@ -111,8 +112,6 @@ make db-up
 make db-init
 uv run remediation-agent
 ```
-
-The service binds to `127.0.0.1:8080` by default. Remote API authentication and trusted reviewer identity are deferred, so the service must remain local-only.
 
 ## HTTP API
 
@@ -130,11 +129,3 @@ The service never exposes a generic shell to the model. Validation task names re
 
 The committed reference policy allows only the listed fixture/team repository patterns and conservative change limits. Operators must create and review a suitable policy before using another repository.
 
-## Known residual risks
-
-- The service is not designed or approved for production control-plane use.
-- API authentication, durable encrypted artifact storage, immutable/WORM audit storage, distributed rate limits, secret-manager integration, and trusted reviewer identity are deferred.
-- GitHub Actions reusable workflows and container base-image references are not digest-pinned. They were pre-existing protected files and require explicit human approval before modification.
-- The Docker sandbox is the implemented validation backend; Kubernetes/EKS execution is an interface-compatible future adapter only.
-- The service image is not an end-to-end Docker-in-Docker deployment. Run the API on a trusted local host with Docker available; do not mount a host Docker socket into an internet-exposed service container.
-- Model output can be wrong even when schema-valid. Validation evidence and mandatory human PR review remain required.
