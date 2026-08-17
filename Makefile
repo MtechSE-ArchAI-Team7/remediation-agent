@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-integration security schemas build docker-build sandbox-build db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-integration test-sandbox-integration security schemas build docker-build sandbox-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -23,6 +23,9 @@ test:
 
 test-integration:
 	uv run pytest -m integration
+
+test-sandbox-integration: sandbox-build
+	uv run pytest -m integration tests/integration/test_docker_sandbox.py
 
 security:
 	uv run bandit -q -r src
