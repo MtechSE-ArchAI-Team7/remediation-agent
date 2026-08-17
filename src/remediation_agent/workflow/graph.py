@@ -18,9 +18,11 @@ def build_graph(
     """Compile one remediation workflow; nested graphs are stages, not agents."""
 
     analysis_builder = StateGraph(RemediationState)
+    analysis_builder.add_node("create_workspace", nodes.create_workspace)
     analysis_builder.add_node("inspect_repository", nodes.inspect_repository)
     analysis_builder.add_node("create_plan", nodes.create_plan)
-    analysis_builder.add_edge(START, "inspect_repository")
+    analysis_builder.add_edge(START, "create_workspace")
+    analysis_builder.add_edge("create_workspace", "inspect_repository")
     analysis_builder.add_edge("inspect_repository", "create_plan")
     analysis_builder.add_edge("create_plan", END)
     analysis_workflow = analysis_builder.compile()

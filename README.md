@@ -1,47 +1,321 @@
-# Remediation Agent
+# AIOS Resolution/Remediation Agent
 
-This repository implements a Resolution/Remediation Agent for **AIOS: Agentic AI for IT Operations Support**. It is one bounded, stateful LangGraph agent that converts an evidence-supported diagnosis into a policy-checked patch, validation evidence, rollback instructions, and a draft pull-request payload.
+This service implements the **Resolution/Remediation Agent**, for **AIOS: Agentic AI for IT Operations Support**. It turns a diagnosis into a policy-checked code or configuration change, validation evidence, rollback instructions, and a draft pull-request payload.
 
-The agent changes only disposable repository workspaces. It cannot merge, deploy, mutate production, or perform identity and privileged-access operations.
+The implementation changes only disposable repository workspaces. It cannot merge a pull request, deploy, mutate production, or perform identity and
+privileged-access operations. The HTTP API does not implement caller authentication; deployment and network controls must restrict access to authorized operators.
 
-## Architecture
+## Agent details
 
-One parent `StateGraph` owns one agent identity and one shared `RemediationState`. Two nested graphs group analysis and repair stages; they are workflow subgraphs, not agents and have no independent goals, memory, tools, or personas.
+| Property | Implementation |
+|---|---|
+| Identity | One `resolution-remediation-agent` |
+| Orchestration | One stateful parent LangGraph workflow with analysis and repair workflow subgraphs |
+| Input | Versioned `DiagnosisHandoffV1` from the Investigation/Diagnosis Agent |
+| Output | Versioned `RemediationHandoffV1` for the Verification/Monitoring Agent |
+| Supported remediation | Bounded `CODE` and `CONFIGURATION` changes |
+| Human-only remediation | Account unlock, password reset, access provisioning, privileged access, and production changes |
+| Persistence | In-memory checkpoints in tests; encrypted PostgreSQL checkpoints in the service runtime |
+| Approval | LangGraph interrupts bound to an exact plan or patch digest |
+| Deployment-target model provider | AWS Bedrock through `ChatBedrockConverse` |
+| Execution boundary | Docker validation sandbox with operator-defined named tasks |
+| External writes | Draft-PR preparation by default; GitHub branch, push, and draft creation only when both gates are enabled |
+
+The workflow subgraphs are organizational stages that share the same identity, state,
+checkpointer, model abstraction, policy engine, tool boundary, and final outcome.
+
+## How the workflow operates
 
 ```mermaid
 flowchart LR
     Intake["Validate intake"] --> Analysis["Analysis workflow subgraph"]
-    Analysis --> Risk["Policy and risk"]
+    Analysis --> Workspace["Create immutable-base workspace"]
+    Workspace --> Inspect["Model ↔ scoped MCP inspection loop"]
+    Inspect --> Plan["Create structured remediation plan"]
+    Plan --> Risk["Policy and risk assessment"]
     Risk -->|sensitive| Approval["Checkpointed approval interrupt"]
     Risk -->|allowed| Repair["Repair workflow subgraph"]
     Approval -->|approved| Repair
+    Approval -->|rejected| Evidence["Evidence and final result"]
     Repair --> Apply["Preflight and apply full patch"]
     Apply --> Validate["Run configured task names"]
     Validate -->|failed; attempts remain| Reset["Restore immutable base"]
     Reset --> Repair
-    Validate -->|passed or exhausted| Evidence["Rollback, audit, and result"]
+    Validate -->|passed or exhausted| Evidence
     Evidence --> Draft["Prepare draft-PR payload"]
+    Draft --> Cleanup["Destroy disposable workspace"]
 ```
 
-Deterministic Python logic owns routing, policy, approvals, limits, command resolution, validation outcomes, cleanup, and final status. LLM calls return Pydantic-validated inspection requests, plans, risk observations, and full unified patches. The model never receives callable tools or command authority.
+The lifecycle is:
 
-## Capabilities
+1. Validate the versioned handoff, evidence references, remediation type, and repository policy.
+2. Create and checkpoint a disposable workspace at the immutable base commit.
+3. Start a workspace-scoped stdio MCP session. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
+4. Require at least one successful MCP repository call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session.
+5. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
+6. Interrupt for approval when the plan or exact patch crosses an approval boundary.
+7. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
+8. Resolve proposed validation names through operator policy and run their fixed argument arrays in the Docker sandbox.
+9. Evaluate results deterministically. Failed attempts restart from the immutable base and stop at the configured limit.
+10. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
 
-- Provisional versioned Agent 2 → Agent 3 and Agent 3 → Agent 4 contracts, with exported JSON Schemas.
-- Strict required JSON operator policy and deterministic repository/patch/task controls.
-- Bounded repository tree, text read, and fixed-string search operations.
-- Full-patch preflight, Docker workspace application, configured validation, clean-base revision, and exact attempt limits.
-- Hash-bound LangGraph approval interrupts and resume through persistent checkpoints.
-- Bedrock Converse, OpenAI API, and DeepSeek API structured-output adapters plus deterministic fakes.
-- Encrypted PostgreSQL checkpointing; explicitly allowlisted serialization with pickle fallback disabled.
-- Redacted, hash-chained JSONL audit evidence, rollback instructions, and draft-PR preparation.
-- Optional GitHub draft-PR creation, disabled by both settings and policy by default. Automatic merge is not implemented.
-- FastAPI start, approval, status, health, and readiness endpoints.
+Model output never decides whether validation passed, lowers policy severity, supplies executable command strings, or
+calls workspace mutation, sandbox, Git, GitHub, artifact, approval, checkpoint, credential, or cleanup operations.
 
+## Capabilities and tool boundary
 
-## Setup and quality checks
+The model-callable surface is deliberately smaller than the agent's operational surface. Repository inspection uses
+three read-only MCP tools; every mutation remains a deterministic workflow action behind a typed port.
 
-Prerequisites: Python 3.12, uv, Git, and Docker
+| Capability | Typed boundary | Current implementation and controls |
+|---|---|---|
+| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `StdioMcpInspectionTools` launches the fixed `remediation-repository-mcp` server. The model can list a tree, read one UTF-8 file, or run fixed-string search under policy, redaction, and output bounds. |
+| Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
+| Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` preflights/applies a unified patch, restores the base, runs named tasks, collects artifacts, and destroys the workspace. |
+| Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
+| Pull-request handling | `PullRequestProvider` | A deterministic draft payload is always prepared; authenticated GitHub draft creation is separately gated and merge is unavailable. |
+| Evidence and audit | `ArtifactStore`, `AuditSink` | Local redacted artifacts and hash-chained JSONL audit events record material decisions and side effects. |
+| Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL persistence. |
+
+The reference policy defines these validation task names:
+
+| Task name | Reference command purpose |
+|---|---|
+| `unit_tests` | Run the target repository's pytest suite |
+| `integration_tests` | Run tests marked `integration` |
+| `lint` | Run Ruff checks |
+| `type_check` | Run mypy |
+| `security_scan` | Run Bandit against `src` |
+| `config_validation` | Validate the demonstration JSON configuration |
+
+These are examples in `config/policies/reference.json`, not hidden defaults or model-generated commands. An operator
+reviews the policy, and the model may only suggest task names. The policy engine selects known names, adds mandatory
+tasks based on changed paths, and resolves each selected name to a trusted `argv` array.
+
+### Model-called tools and decorators
+
+The analysis stage binds exactly four LangChain tools to the configured model:
+
+- `list_repository_tree(relative_path=".")`
+- `read_repository_file(relative_path)`
+- `search_repository(query)`
+- `finish_inspection(rationale)`
+
+The first three are discovered from the scoped MCP server through `langchain-mcp-adapters`. `finish_inspection` is a
+local LangChain `@tool`; it is a control signal with no repository authority. The model must make exactly one call per
+round and cannot finish until at least one MCP inspection succeeds.
+
+Planning, risk, patch, and revision still use `with_structured_output(...)`. Tool decorators are not used for clone,
+checkout, diff, patch application, validation, branch, commit, push, draft PR, artifacts, approvals, or cleanup because
+those capabilities have side effects or determine security outcomes and therefore stay under deterministic workflow control.
+
+### Why MCP is limited to inspection
+
+The stdio server is created for one run and receives its workspace root, workspace ID, immutable base commit, and policy
+file from the host process. Those values never appear in tool schemas or model arguments. It exposes exactly three
+read-only operations and reuses the repository adapter's path, symlink, UTF-8, forbidden-file, redaction, and size controls.
+
+Provider messages and the MCP session are transient. Checkpoints retain only typed redacted artifacts, normalized call
+records and digests, model metadata, and the reconstructed inspection plan. Generic filesystem/shell MCP and arbitrary
+server commands, URLs, or tool allowlists are not accepted. The MCP server is infrastructure inside the same workflow,
+not another agent.
+
+The runtime pins MCP SDK v1 (`mcp>=1.28,<2`) with `langchain-mcp-adapters>=0.3.1,<0.4` while the adapter's
+[MCP SDK v2 compatibility issue](https://github.com/langchain-ai/langchain-mcp-adapters/issues/578) remains unresolved.
+
+## Supported model providers
+
+Model and provider IDs are operator settings; the project does not hard-code a catalog of current model names. The
+selected provider/model combination must support both structured output and tool calling through its LangChain adapter.
+
+| `AIOS_LLM_PROVIDER` | Adapter | Intended use | Additional configuration |
+|---|---|---|---|
+| `bedrock` | `langchain_aws.ChatBedrockConverse` | Deployment target | `AIOS_LLM_MODEL` and `AIOS_AWS_REGION`; AWS credential provider chain |
+| `openai` | `langchain_openai.ChatOpenAI` | Optional local experiments | `AIOS_LLM_MODEL`, `OPENAI_API_KEY`, optional `AIOS_OPENAI_BASE_URL` |
+| `deepseek` | `langchain_deepseek.ChatDeepSeek` | Optional local experiments | `AIOS_LLM_MODEL`, `DEEPSEEK_API_KEY`, optional `AIOS_DEEPSEEK_BASE_URL` |
+| `fake` | `FakeStructuredModel` | Unit, graph, security, and demonstration tests | Injection-only; rejected by the production dependency builder |
+
+All live adapters record provider/model, prompt version, latency, token usage when available, refusal state, and response
+digests. Credentials and unrestricted prompt content are not recorded.
+
+## Repository structure
+
+```text
+remediation-agent/
+├── README.md                       # Primary operator and contributor guide
+├── openapi.yaml                    # Generated and version-controlled HTTP contract
+├── pyproject.toml                  # Python package, dependencies, and tool configuration
+├── uv.lock                         # Reproducible dependency lock
+├── Makefile                        # Development, test, schema, build, and lifecycle commands
+├── .env.example                    # Safe configuration variable names/placeholders
+├── compose.yaml                    # Local PostgreSQL checkpoint store
+├── Dockerfile                      # API service image
+├── docker/
+│   └── sandbox.Dockerfile          # Separate restricted validation image
+├── config/
+│   ├── policies/
+│   │   └── reference.json          # Reviewed reference policy and explicit limits
+│   └── schemas/                    # Generated handoff and policy JSON Schemas
+├── scripts/
+│   ├── export_schemas.py           # Regenerates versioned JSON Schemas
+│   └── export_openapi.py           # Regenerates openapi.yaml from FastAPI
+├── src/remediation_agent/
+│   ├── api/
+│   │   ├── app.py                  # FastAPI routes and production dependency lifecycle
+│   │   ├── models.py               # HTTP-only response and error envelopes
+│   │   └── openapi.py              # Tags and representative safe API examples
+│   ├── workflow/
+│   │   ├── graph.py                # Parent graph, workflow subgraphs, and deterministic routes
+│   │   ├── nodes.py                # Dependency-injected workflow stages and side-effect sequencing
+│   │   └── state.py                # Shared typed LangGraph state
+│   ├── domain/
+│   │   ├── enums.py                # Routing, status, risk, approval, and outcome enums
+│   │   └── models.py               # Strict domain models and versioned inter-agent handoffs
+│   ├── policy/
+│   │   ├── models.py               # Strict operator-policy schema
+│   │   ├── loader.py               # Required JSON policy loading and validation
+│   │   └── engine.py               # Repository, plan, path, patch, limit, and task decisions
+│   ├── ports/
+│   │   ├── protocols.py            # Narrow model, repository, sandbox, PR, artifact, and audit interfaces
+│   │   └── models.py               # Typed requests/results crossing infrastructure boundaries
+│   ├── adapters/
+│   │   ├── models.py               # Bedrock, OpenAI, and DeepSeek structured/tool-call adapters
+│   │   ├── mcp.py                  # Fixed stdio MCP client, discovery, and schema validation
+│   │   ├── repository.py           # Bounded local Git workspace implementation
+│   │   ├── sandbox.py              # Restricted Docker patch/validation implementation
+│   │   ├── checkpoint.py           # Encrypted in-memory/PostgreSQL checkpoint support
+│   │   ├── pr.py                   # Draft-PR preparation and optional GitHub creation
+│   │   ├── evidence.py             # Redaction, artifacts, and hash-chained audit evidence
+│   │   └── fakes.py                # External-service-free deterministic test adapters
+│   ├── mcp/
+│   │   └── server.py               # Three-tool run-scoped repository inspection server
+│   ├── tools/
+│   │   └── inspection.py           # Local finish_inspection control tool
+│   ├── prompts/
+│   │   └── templates.py            # Versioned structured-output instructions
+│   ├── config.py                   # Environment-backed runtime settings
+│   ├── db.py                       # PostgreSQL checkpoint schema initialization
+│   ├── service.py                  # Start/get/approve lifecycle around the compiled graph
+│   └── main.py                     # Uvicorn process entry point
+└── tests/
+    ├── api/                         # HTTP behavior and OpenAPI contract tests
+    ├── unit/                        # Deterministic component tests
+    ├── graph/                       # Routes, retries, approvals, and one-agent invariants
+    ├── mcp/                         # Real local stdio discovery and round-trip tests
+    ├── security/                    # Policy, injection, path, secret, and patch controls
+    └── integration/                 # Opt-in Git, Docker, and PostgreSQL tests
+```
+
+Package `__init__.py`, `py.typed`, cache files, and test fixture details are omitted from the tree for readability.
+
+## Quick start
+
+Prerequisites are Python 3.12, [uv](https://docs.astral.sh/uv/), Git, and Docker.
+
+```bash
+cd remediation-agent
+cp .env.example .env
+uv sync --frozen
+make sandbox-build
+make db-up
+make db-init
+uv run remediation-agent
+```
+
+Before starting the service, set a local PostgreSQL password/DSN, checkpoint encryption key, reviewed policy path, and
+model-provider settings in `.env`. Never commit that file or place credentials in policy JSON.
+
+The default service address is `http://127.0.0.1:8080`. Useful local documentation endpoints are:
+
+- Swagger UI: `http://127.0.0.1:8080/docs`
+- ReDoc: `http://127.0.0.1:8080/redoc`
+- Live JSON contract: `http://127.0.0.1:8080/openapi.json`
+- Committed YAML contract: `openapi.yaml`
+
+## Configuration
+
+The runtime fails closed when required settings are absent.
+
+| Setting | Purpose |
+|---|---|
+| `AIOS_POLICY_FILE` | Required reviewed operator policy; `config/policies/reference.json` is an example only |
+| `AIOS_LLM_PROVIDER` | `bedrock`, `openai`, or `deepseek`; `fake` is test-injection only |
+| `AIOS_LLM_MODEL` | Provider-compatible model or Bedrock inference-profile ID |
+| `AIOS_AWS_REGION` | Required for Bedrock |
+| `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` | Provider credentials for optional local adapters |
+| `AIOS_POSTGRES_DSN` | PostgreSQL checkpoint DSN |
+| `AIOS_CHECKPOINT_ENCRYPTION_KEY` | Exactly 16, 24, or 32 UTF-8 bytes for AES checkpoint encryption |
+| `AIOS_SANDBOX_IMAGE` | Restricted validation image; defaults to `aios-remediation-sandbox:local` |
+| `AIOS_GITHUB_WRITES_ENABLED` | Application-side gate for branch/push/draft creation; defaults to `false` |
+| `AIOS_GITHUB_REPOSITORY` | Optional `owner/repository` target for GitHub draft creation |
+| `AIOS_GITHUB_TOKEN` | Optional GitHub credential; required only when remote writes are enabled |
+
+The reference policy also requires `max_inspection_rounds`, `max_inspection_tool_calls`, and
+`max_mcp_tool_timeout_seconds`. Its committed values are 8 rounds, 12 calls, and 30 seconds. Requests and model output
+cannot change these limits or select a different MCP server.
+
+GitHub creation also requires `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled. Automatic
+merge is not implemented.
+
+## HTTP API and lifecycle
+
+| Method and path | Operation ID | Behavior |
+|---|---|---|
+| `GET /` | `get_service_info` | Return service identity and architecture |
+| `GET /healthz` | `get_health` | Process liveness |
+| `GET /readyz` | `get_readiness` | Runtime and checkpoint readiness; returns `503` when unavailable |
+| `POST /v1/remediations` | `start_remediation` | Accept `DiagnosisHandoffV1`; return `202` at completion or approval interrupt |
+| `GET /v1/remediations/{run_id}` | `get_remediation` | Return the latest persisted `RemediationRunView`; returns `404` when absent |
+| `POST /v1/remediations/{run_id}/approvals` | `submit_remediation_approval` | Resume with an exact `ApprovalDecisionV1`; returns `404` or `409` on mismatch |
+
+Start a run with a payload that conforms to `config/schemas/diagnosis-handoff-v1.schema.json`:
+
+```bash
+curl --request POST http://127.0.0.1:8080/v1/remediations \
+  --header 'Content-Type: application/json' \
+  --data @diagnosis-handoff.json
+```
+
+Every accepted start returns a run UUID. A `202` response does not imply that the workflow finished: inspect `status`.
+When it is `AWAITING_APPROVAL`, copy the exact `approval_id` and `scope_digest` into a reviewed decision:
+
+```bash
+curl --request POST http://127.0.0.1:8080/v1/remediations/4d1ceef7-9dd5-47d0-b875-218e1682a8d7/approvals \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "schema_version": "1.0",
+    "approval_id": "approval-7dd19b23",
+    "scope_digest": "sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c",
+    "status": "APPROVED",
+    "reviewer_id": "operator@example.org",
+    "decided_at": "2026-08-08T09:30:00Z",
+    "comment": "Reviewed against the evidence and policy findings."
+  }'
+```
+
+Poll `GET /v1/remediations/{run_id}` for the latest interrupted or terminal view. Consumers must use a terminal,
+non-null `result` before handing the output to Agent 4. The full field-level integration guide is in
+`config/schemas/CONTRACTS_README.md`.
+
+### Regenerating API and handoff contracts
+
+FastAPI is the source of truth for the HTTP contract. The checked-in YAML must remain semantically identical to
+`create_app().openapi()`:
+
+```bash
+make openapi
+```
+
+Pydantic models are the source of truth for the versioned inter-agent and policy JSON Schemas:
+
+```bash
+make schemas
+```
+
+Run the corresponding command after changing an API route, response model, example, handoff, or policy model. The
+default test suite includes an OpenAPI drift check.
+
+## Quality and test commands
 
 ```bash
 uv sync --frozen
@@ -49,16 +323,18 @@ make lint
 make format-check
 make typecheck
 make test
+make test-mcp
 make security
 make build
 ```
 
-`make test` uses fake providers and in-memory checkpoints. It requires no cloud credentials, network, GitHub repository, Docker daemon, PostgreSQL, EKS, or production service.
+`make test` uses fake providers, a local stdio MCP process, and in-memory checkpoints. It requires no cloud credentials,
+network access, GitHub repository, Docker daemon, PostgreSQL, EKS, or deployed service. `make test-mcp` runs the focused
+MCP discovery, transport, and security suite.
 
-Additional commands:
+Opt-in integration and image commands are:
 
 ```bash
-make schemas
 make test-integration
 make test-sandbox-integration
 make sandbox-build
@@ -68,64 +344,22 @@ make db-init
 make db-down
 ```
 
-The local Git, Docker sandbox, and PostgreSQL tests are under the `integration` marker. Docker cases skip when the
-daemon or `aios-remediation-sandbox:local` image is unavailable. Run `make test-sandbox-integration` to build that
-image and execute the Docker-specific suite; this command requires a running Docker daemon and may need network access
-when the image is built for the first time. The PostgreSQL recreation test uses
-`AIOS_TEST_POSTGRES_DSN` when set, then falls back to the local `AIOS_POSTGRES_DSN` from `.env`; it is skipped only
-when neither is configured.
-
-## Configuration
-
-Copy `.env.example` to `.env`, fill secrets locally, and never commit it. The runtime requires:
-
-- `AIOS_POLICY_FILE`: validated operator policy; `config/policies/reference.json` is a reference configuration, not a production default.
-- `AIOS_LLM_PROVIDER`: `bedrock`, `openai`, or `deepseek`; `fake` is injection-only for automated tests.
-- `AIOS_LLM_MODEL`: a provider-compatible model or Bedrock inference-profile ID.
-- `AIOS_POSTGRES_DSN`: PostgreSQL checkpoint DSN.
-- `AIOS_CHECKPOINT_ENCRYPTION_KEY`: exactly 16, 24, or 32 UTF-8 bytes for AES checkpoint encryption.
-
-Bedrock also requires `AIOS_AWS_REGION` and uses the normal AWS credential provider chain. OpenAI reads `OPENAI_API_KEY`; DeepSeek reads `DEEPSEEK_API_KEY`. Provider credentials are never placed in graph state, prompts, or artifacts.
-
-Optional GitHub draft creation requires `AIOS_GITHUB_TOKEN`, `AIOS_GITHUB_REPOSITORY=owner/repository`, `AIOS_GITHUB_WRITES_ENABLED=true`, and `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled; merge is never available.
-
-For local OpenAI API testing:
-
-```bash
-export AIOS_LLM_PROVIDER=openai
-export AIOS_LLM_MODEL='<operator-selected-model-id>'
-export OPENAI_API_KEY='<local-secret>'
-```
-
-For local DeepSeek API testing:
-
-```bash
-export AIOS_LLM_PROVIDER=deepseek
-export AIOS_LLM_MODEL='<operator-selected-model-id>'
-export DEEPSEEK_API_KEY='<local-secret>'
-```
-
-Start local persistence and the API:
-
-```bash
-make db-up
-make db-init
-uv run remediation-agent
-```
-
-## HTTP API
-
-- `POST /v1/remediations`: accept `DiagnosisHandoffV1`; run until terminal state or approval interrupt.
-- `POST /v1/remediations/{run_id}/approvals`: validate an exact `ApprovalDecisionV1` and resume its checkpoint.
-- `GET /v1/remediations/{run_id}`: return an interrupt or final `RemediationHandoffV1`.
-- `GET /healthz`: process liveness.
-- `GET /readyz`: confirms runtime dependencies were constructed.
-
-Schemas are in `config/schemas/`; run `make schemas` after changing a public contract or the policy model.
+Docker tests skip when the daemon or `aios-remediation-sandbox:local` image is unavailable. The PostgreSQL recreation
+test uses `AIOS_TEST_POSTGRES_DSN` when set, then the local `AIOS_POSTGRES_DSN`; it skips when neither is configured.
+Live model tests require their explicit marker/environment gate and never run in the default suite.
 
 ## Sandbox and policy boundary
 
-The service never exposes a generic shell to the model. Validation task names resolve to fixed `argv` arrays in operator JSON. The Docker executor uses no shell, no network, non-root UID 10001, dropped capabilities, `no-new-privileges`, a read-only root filesystem, resource limits, one writable workspace mount with `.git` over-mounted read-only, timeouts, and streaming output caps. The approved diff is hashed before validation and checked again afterward, so a test cannot silently rewrite the proposed change. Patch and repository paths reject absolute paths, traversal, NULs, forbidden files, unsupported diff features, and symlink components.
+The service never exposes a generic shell to the model. MCP inspection and patch paths reject absolute paths, traversal,
+NULs, forbidden files, unsupported diff features, binary changes, and symlink components. Autonomous and absolute
+file/diff limits are enforced before patch application.
 
-The committed reference policy allows only the listed fixture/team repository patterns and conservative change limits. Operators must create and review a suitable policy before using another repository.
+The Docker executor uses no shell, no network, no Docker socket, a non-root UID, dropped capabilities,
+`no-new-privileges`, a read-only root filesystem, resource limits, timeouts, capped output, and one writable workspace
+mount with `.git` over-mounted read-only. The approved diff is hashed before validation and checked afterward so a task
+cannot silently rewrite the proposal.
 
+The committed reference policy permits only its listed repository patterns and limits. Operators must create and review
+a suitable policy before using another repository. API caller authentication and trusted reviewer identity are not
+implemented. Docker daemon trust, mutable image provenance, local artifact durability, and live-provider behavior remain
+residual risks that deployments must address.

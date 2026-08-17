@@ -14,7 +14,7 @@ import pytest
 
 from remediation_agent.adapters.checkpoint import in_memory_checkpointer
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
-from remediation_agent.adapters.fakes import FakeStructuredModel
+from remediation_agent.adapters.fakes import FakeInspectionToolProvider, FakeStructuredModel
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
@@ -219,6 +219,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         policy=policy,
         model=model,
         repository=repository,
+        inspection_tools=FakeInspectionToolProvider(repository, policy),
         sandbox=sandbox,
         pr_provider=DraftPullRequestProvider(writes_enabled=False),
         artifact_store=LocalArtifactStore(artifact_root),

@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel
 
 from remediation_agent.adapters.checkpoint import in_memory_checkpointer
 from remediation_agent.adapters.fakes import (
+    FakeInspectionToolProvider,
     FakePullRequestProvider,
     FakeRepository,
     FakeSandboxExecutor,
@@ -36,6 +38,7 @@ from remediation_agent.domain.models import (
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
+from remediation_agent.ports.protocols import InspectionToolProvider
 from remediation_agent.service import RemediationService
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
@@ -126,6 +129,11 @@ def build_test_service(
     task_outcomes: dict[str, list[ValidationOutcome]] | None = None,
     cleanup_succeeds: bool = True,
     tampered_diff: str | None = None,
+    tool_turns: list[AIMessage] | None = None,
+    inspection_tool_provider: InspectionToolProvider | None = None,
+    max_inspection_rounds: int | None = None,
+    max_inspection_tool_calls: int | None = None,
+    max_mcp_tool_timeout_seconds: int | None = None,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -136,9 +144,24 @@ def build_test_service(
     MemoryAuditSink,
 ]:
     policy_path = Path(__file__).parents[1] / "config" / "policies" / "reference.json"
-    policy = PolicyEngine(load_policy(policy_path))
-    model = FakeStructuredModel(responses)
+    policy_config = load_policy(policy_path)
+    limit_updates = {
+        key: value
+        for key, value in {
+            "max_inspection_rounds": max_inspection_rounds,
+            "max_inspection_tool_calls": max_inspection_tool_calls,
+            "max_mcp_tool_timeout_seconds": max_mcp_tool_timeout_seconds,
+        }.items()
+        if value is not None
+    }
+    if limit_updates:
+        policy_config = policy_config.model_copy(
+            update={"limits": policy_config.limits.model_copy(update=limit_updates)}
+        )
+    policy = PolicyEngine(policy_config)
+    model = FakeStructuredModel(responses, tool_turns=tool_turns or ())
     repository = FakeRepository(files=files or {"src/app.py": "value = int(raw)\n"})
+    inspection_tools = inspection_tool_provider or FakeInspectionToolProvider(repository, policy)
     sandbox = FakeSandboxExecutor(
         task_outcomes,
         cleanup_succeeds=cleanup_succeeds,
@@ -152,6 +175,7 @@ def build_test_service(
         policy=policy,
         model=model,
         repository=repository,
+        inspection_tools=inspection_tools,
         sandbox=sandbox,
         pr_provider=pr_provider,
         artifact_store=artifacts,

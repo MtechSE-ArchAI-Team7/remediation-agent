@@ -9,9 +9,11 @@ dependencies = [
   "langchain-aws>=0.2.0",
   "langchain-core>=0.3.0",
   "langchain-deepseek>=0.1.0",
+  "langchain-mcp-adapters>=0.3.1,<0.4.0",
   "langchain-openai>=0.3.9",
   "langgraph>=1.0.0",
   "langgraph-checkpoint-postgres>=3.0.0",
+  "mcp>=1.28,<2.0.0",
   "psycopg[binary]>=3.2.0",
   "pydantic-settings>=2.10.0",
   "pycryptodome>=3.23.0",
@@ -26,6 +28,7 @@ dev = [
   "httpx>=0.28.0",
   "mypy>=1.16.0",
   "pip-audit>=2.9.0",
+  "pyyaml>=6.0.3",
   "pytest>=8.4.0",
   "pytest-asyncio>=1.1.0",
   "pytest-cov>=6.2.0",
@@ -35,6 +38,7 @@ dev = [
 [project.scripts]
 remediation-agent = "remediation_agent.main:main"
 remediation-db-init = "remediation_agent.db:main"
+remediation-repository-mcp = "remediation_agent.mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -49,6 +53,7 @@ testpaths = ["tests"]
 markers = [
   "integration: requires Docker or PostgreSQL and is excluded from the default suite",
   "live_model: calls a configured external LLM provider and is excluded by default",
+  "mcp: exercises the local stdio MCP transport and inspection tool boundary",
 ]
 addopts = "-m 'not integration and not live_model'"
 asyncio_mode = "auto"

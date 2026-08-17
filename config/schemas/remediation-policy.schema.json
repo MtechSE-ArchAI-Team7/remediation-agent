@@ -75,6 +75,21 @@
           "title": "Max File Bytes",
           "type": "integer"
         },
+        "max_inspection_rounds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Inspection Rounds",
+          "type": "integer"
+        },
+        "max_inspection_tool_calls": {
+          "exclusiveMinimum": 0,
+          "title": "Max Inspection Tool Calls",
+          "type": "integer"
+        },
+        "max_mcp_tool_timeout_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Mcp Tool Timeout Seconds",
+          "type": "integer"
+        },
         "max_model_format_retries": {
           "minimum": 0,
           "title": "Max Model Format Retries",
@@ -127,6 +142,9 @@
         "max_file_bytes",
         "max_search_results",
         "max_context_bytes",
+        "max_inspection_rounds",
+        "max_inspection_tool_calls",
+        "max_mcp_tool_timeout_seconds",
         "max_task_timeout_seconds",
         "max_task_output_bytes",
         "max_validation_tasks_per_attempt",

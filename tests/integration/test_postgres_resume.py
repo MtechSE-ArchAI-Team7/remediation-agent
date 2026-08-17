@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.fakes import (
+    FakeInspectionToolProvider,
     FakePullRequestProvider,
     FakeRepository,
     FakeSandboxExecutor,
@@ -38,6 +39,7 @@ def _nodes() -> WorkflowNodes:
         policy=policy,
         model=FakeStructuredModel(scripted_responses(risk_level=RiskLevel.MEDIUM, risk_decision=PolicyDecision.ALLOW)),
         repository=repository,
+        inspection_tools=FakeInspectionToolProvider(repository, policy),
         sandbox=FakeSandboxExecutor(repository=repository),
         pr_provider=FakePullRequestProvider(),
         artifact_store=MemoryArtifactStore(),

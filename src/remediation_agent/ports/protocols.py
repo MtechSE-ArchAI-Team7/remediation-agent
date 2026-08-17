@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from remediation_agent.domain.models import (
     ArtifactManifest,
     CleanupResult,
+    ModelCallRecord,
     RepositoryRef,
     ValidationTaskResult,
     WorkspaceRef,
@@ -41,14 +46,16 @@ from remediation_agent.ports.models import (
 )
 
 
-class RepositoryPort(Protocol):
-    async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef: ...
-
+class RepositoryInspectionPort(Protocol):
     async def list_tree(self, request: TreeRequest) -> TreeResult: ...
 
     async def read_file(self, request: ReadFileRequest) -> FileContent: ...
 
     async def search(self, request: SearchRequest) -> SearchResult: ...
+
+
+class RepositoryWorkspacePort(Protocol):
+    async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef: ...
 
     async def current_diff(self, workspace: WorkspaceRef) -> DiffResult: ...
 
@@ -57,6 +64,14 @@ class RepositoryPort(Protocol):
     async def commit(self, request: CommitRequest) -> CommitResult: ...
 
     async def push(self, request: PushRequest) -> PushResult: ...
+
+
+class RepositoryPort(RepositoryInspectionPort, RepositoryWorkspacePort, Protocol):
+    """Compatibility protocol for adapters that implement both boundaries."""
+
+
+class InspectionToolProvider(Protocol):
+    def session(self, workspace: WorkspaceRef) -> AbstractAsyncContextManager[Sequence[BaseTool]]: ...
 
 
 class SandboxExecutor(Protocol):
@@ -73,6 +88,13 @@ class SandboxExecutor(Protocol):
 
 class StructuredModel(Protocol):
     async def generate(self, request: ModelRequest, output_schema: type[TModel]) -> ModelGeneration[TModel]: ...
+
+    async def generate_tool_turn(
+        self,
+        request: ModelRequest,
+        messages: Sequence[BaseMessage],
+        tools: Sequence[BaseTool],
+    ) -> tuple[AIMessage, ModelCallRecord]: ...
 
 
 class PullRequestProvider(Protocol):

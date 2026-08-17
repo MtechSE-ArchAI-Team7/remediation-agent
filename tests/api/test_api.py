@@ -25,6 +25,10 @@ async def test_start_and_get_completed_remediation() -> None:
             fetched = await client.get(f"/v1/remediations/{body['run_id']}")
             assert fetched.status_code == 200
             assert fetched.json()["result"]["case_id"] == "CASE-123"
+            assert (await client.get("/")).json() == {
+                "name": "AIOS Resolution/Remediation Agent",
+                "architecture": "one-agent-langgraph-workflow",
+            }
             assert (await client.get("/healthz")).json() == {"status": "ok"}
             assert (await client.get("/readyz")).json() == {"status": "ready"}
 

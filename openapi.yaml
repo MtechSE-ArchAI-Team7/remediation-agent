@@ -1,0 +1,1112 @@
+openapi: 3.1.0
+info:
+  title: AIOS Resolution/Remediation Agent
+  description: Policy-bounded repository remediation. The API does not implement caller authentication; deployment and network
+    controls must restrict access to authorized operators.
+  version: 0.1.0
+paths:
+  /:
+    get:
+      tags:
+      - Service
+      summary: Get service identity
+      description: Return the service name and its one-agent LangGraph architecture identifier.
+      operationId: get_service_info
+      responses:
+        '200':
+          description: Service identity and architecture.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceInfoResponse'
+  /healthz:
+    get:
+      tags:
+      - Service
+      summary: Check process liveness
+      description: Return success when the API process can serve requests; dependencies are checked by `/readyz`.
+      operationId: get_health
+      responses:
+        '200':
+          description: The API process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /readyz:
+    get:
+      tags:
+      - Service
+      summary: Check runtime readiness
+      description: Confirm that runtime dependencies were constructed and checkpoint persistence is reachable.
+      operationId: get_readiness
+      responses:
+        '200':
+          description: The service and checkpoint store are ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Runtime construction or checkpoint persistence is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                not_ready:
+                  summary: Checkpoint persistence is unavailable
+                  value:
+                    detail: checkpoint store is not ready
+  /v1/remediations:
+    post:
+      tags:
+      - Remediations
+      summary: Start a remediation run
+      description: Validate an Agent 2 diagnosis handoff and execute the single remediation workflow synchronously until it
+        reaches a terminal state or a human-approval interrupt. Inspect `status` in the accepted response.
+      operationId: start_remediation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiagnosisHandoffV1'
+            examples:
+              code_defect:
+                summary: Evidence-supported code defect
+                value:
+                  schema_version: '1.0'
+                  case_id: CASE-2026-0042
+                  issue_summary: Malformed quantity input causes an unhandled application error.
+                  remediation_type: CODE
+                  diagnosis:
+                    summary: The request handler does not handle non-numeric quantity input.
+                    confidence: 0.94
+                    evidence_ids:
+                    - ev-log-42
+                    contradictions: []
+                    unresolved_questions: []
+                  supporting_evidence:
+                  - evidence_id: ev-log-42
+                    source_type: application_log
+                    source_locator: logs/api/request-42
+                    observed_at: '2026-08-08T09:15:00Z'
+                    digest: sha256:6ec7d7f7f98e3c5d2af117a9444fe4210a55ad42794f582fef880fc97c92465c
+                    excerpt: ValueError while parsing quantity
+                  acceptance_criteria:
+                  - Non-numeric quantity input returns a typed validation error.
+                  - Existing valid quantity requests continue to pass their unit tests.
+                  repository:
+                    provider: GITHUB
+                    url: https://github.com/MtechSE-ArchAI-Team7/example-service.git
+                    base_branch: main
+                    commit_sha: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                  upstream_correlation_id: investigation-run-9f31
+                  upstream_audit_refs:
+                  - audit://agent-2/CASE-2026-0042
+        required: true
+      responses:
+        '202':
+          description: The current run view, which may be terminal or awaiting approval.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationRunView'
+              examples:
+                awaiting_approval:
+                  summary: Run paused at a hash-bound approval interrupt
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: AWAITING_APPROVAL
+                    approval_request:
+                      approval_id: approval-7dd19b23
+                      case_id: CASE-2026-0042
+                      kind: PATCH
+                      scope_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      summary: The patch changes a policy-controlled path.
+                      reasons:
+                      - A human must approve the exact patch scope.
+                      requested_at: '2026-08-08T09:25:00Z'
+                      status: PENDING
+                terminal:
+                  summary: Run completed with a validated draft-PR payload
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: DRAFT_PR_PREPARED
+                    result:
+                      schema_version: '1.0'
+                      case_id: CASE-2026-0042
+                      run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                      final_status: DRAFT_PR_PREPARED
+                      repository:
+                        provider: GITHUB
+                        url: https://github.com/MtechSE-ArchAI-Team7/example-service.git
+                        base_branch: main
+                        commit_sha: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      base_commit: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      proposed_branch: remediation/case-2026-0042-4d1ceef7
+                      changed_files:
+                      - src/example.py
+                      - tests/test_example.py
+                      diff_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      remediation_plan_summary: Handle invalid quantity input and add regression coverage.
+                      risk_summary: Bounded code and test change permitted by policy.
+                      policy_control_ids:
+                      - PATCH_ALLOWED
+                      approvals: []
+                      validation_attempts: []
+                      failed_attempt_summaries: []
+                      residual_risks: []
+                      errors: []
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/remediations/{run_id}/approvals:
+    post:
+      tags:
+      - Remediations
+      summary: Submit an approval decision
+      description: Resume a run waiting at an approval interrupt. The approval ID and scope digest must exactly match the
+        pending request; stale or mismatched approvals are rejected.
+      operationId: submit_remediation_approval
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: UUID returned when the remediation run was started.
+          title: Run Id
+        description: UUID returned when the remediation run was started.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecisionV1'
+            examples:
+              approve_exact_scope:
+                summary: Approve the pending plan or patch scope
+                value:
+                  schema_version: '1.0'
+                  approval_id: approval-7dd19b23
+                  scope_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                  status: APPROVED
+                  reviewer_id: operator@example.org
+                  decided_at: '2026-08-08T09:30:00Z'
+                  comment: Reviewed against the evidence and policy findings.
+      responses:
+        '202':
+          description: The resumed run view, which may be terminal or reach another approval interrupt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationRunView'
+              examples:
+                awaiting_approval:
+                  summary: Run paused at a hash-bound approval interrupt
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: AWAITING_APPROVAL
+                    approval_request:
+                      approval_id: approval-7dd19b23
+                      case_id: CASE-2026-0042
+                      kind: PATCH
+                      scope_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      summary: The patch changes a policy-controlled path.
+                      reasons:
+                      - A human must approve the exact patch scope.
+                      requested_at: '2026-08-08T09:25:00Z'
+                      status: PENDING
+                terminal:
+                  summary: Run completed with a validated draft-PR payload
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: DRAFT_PR_PREPARED
+                    result:
+                      schema_version: '1.0'
+                      case_id: CASE-2026-0042
+                      run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                      final_status: DRAFT_PR_PREPARED
+                      repository:
+                        provider: GITHUB
+                        url: https://github.com/MtechSE-ArchAI-Team7/example-service.git
+                        base_branch: main
+                        commit_sha: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      base_commit: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      proposed_branch: remediation/case-2026-0042-4d1ceef7
+                      changed_files:
+                      - src/example.py
+                      - tests/test_example.py
+                      diff_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      remediation_plan_summary: Handle invalid quantity input and add regression coverage.
+                      risk_summary: Bounded code and test change permitted by policy.
+                      policy_control_ids:
+                      - PATCH_ALLOWED
+                      approvals: []
+                      validation_attempts: []
+                      failed_attempt_summaries: []
+                      residual_risks: []
+                      errors: []
+        '404':
+          description: The run identifier is invalid or no persisted run exists.
+          content:
+            application/json:
+              examples:
+                not_found:
+                  summary: Unknown or invalid run identifier
+                  value:
+                    detail: 'remediation run not found: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7'
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The run is not awaiting approval or the decision does not match the pending scope.
+          content:
+            application/json:
+              examples:
+                approval_conflict:
+                  summary: Approval does not match the pending interrupt
+                  value:
+                    detail: approval ID and scope digest must match the pending interrupt
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /v1/remediations/{run_id}:
+    get:
+      tags:
+      - Remediations
+      summary: Get a remediation run
+      description: Return the latest persisted state for an interrupted or completed remediation run.
+      operationId: get_remediation
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          description: UUID returned when the remediation run was started.
+          title: Run Id
+        description: UUID returned when the remediation run was started.
+      responses:
+        '200':
+          description: The latest persisted run view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationRunView'
+              examples:
+                awaiting_approval:
+                  summary: Run paused at a hash-bound approval interrupt
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: AWAITING_APPROVAL
+                    approval_request:
+                      approval_id: approval-7dd19b23
+                      case_id: CASE-2026-0042
+                      kind: PATCH
+                      scope_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      summary: The patch changes a policy-controlled path.
+                      reasons:
+                      - A human must approve the exact patch scope.
+                      requested_at: '2026-08-08T09:25:00Z'
+                      status: PENDING
+                terminal:
+                  summary: Run completed with a validated draft-PR payload
+                  value:
+                    run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                    status: DRAFT_PR_PREPARED
+                    result:
+                      schema_version: '1.0'
+                      case_id: CASE-2026-0042
+                      run_id: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7
+                      final_status: DRAFT_PR_PREPARED
+                      repository:
+                        provider: GITHUB
+                        url: https://github.com/MtechSE-ArchAI-Team7/example-service.git
+                        base_branch: main
+                        commit_sha: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      base_commit: 34d8b82d6274a77b3627b52e8c09203fc58f6d8a
+                      proposed_branch: remediation/case-2026-0042-4d1ceef7
+                      changed_files:
+                      - src/example.py
+                      - tests/test_example.py
+                      diff_digest: sha256:ecb7689fbcc1d65d6f1e7509f9e5f3f6d7e46fd26978c94443a2f45a0a765a4c
+                      remediation_plan_summary: Handle invalid quantity input and add regression coverage.
+                      risk_summary: Bounded code and test change permitted by policy.
+                      policy_control_ids:
+                      - PATCH_ALLOWED
+                      approvals: []
+                      validation_attempts: []
+                      failed_attempt_summaries: []
+                      residual_risks: []
+                      errors: []
+        '404':
+          description: The run identifier is invalid or no persisted run exists.
+          content:
+            application/json:
+              examples:
+                not_found:
+                  summary: Unknown or invalid run identifier
+                  value:
+                    detail: 'remediation run not found: 4d1ceef7-9dd5-47d0-b875-218e1682a8d7'
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    ApprovalDecisionV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        approval_id:
+          type: string
+          minLength: 1
+          title: Approval Id
+        scope_digest:
+          type: string
+          minLength: 1
+          title: Scope Digest
+        status:
+          type: string
+          enum:
+          - APPROVED
+          - REJECTED
+          title: Status
+        reviewer_id:
+          type: string
+          minLength: 1
+          title: Reviewer Id
+        decided_at:
+          type: string
+          format: date-time
+          title: Decided At
+        comment:
+          type: string
+          maxLength: 2000
+          title: Comment
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - approval_id
+      - scope_digest
+      - status
+      - reviewer_id
+      - decided_at
+      title: ApprovalDecisionV1
+    ApprovalRequest:
+      properties:
+        approval_id:
+          type: string
+          minLength: 1
+          title: Approval Id
+        case_id:
+          type: string
+          minLength: 1
+          title: Case Id
+        kind:
+          type: string
+          enum:
+          - PLAN
+          - PATCH
+          title: Kind
+        scope_digest:
+          type: string
+          minLength: 1
+          title: Scope Digest
+        summary:
+          type: string
+          minLength: 1
+          title: Summary
+        reasons:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          title: Reasons
+        requested_at:
+          type: string
+          format: date-time
+          title: Requested At
+        status:
+          $ref: '#/components/schemas/ApprovalStatus'
+          default: PENDING
+      additionalProperties: false
+      type: object
+      required:
+      - approval_id
+      - case_id
+      - kind
+      - scope_digest
+      - summary
+      - reasons
+      - requested_at
+      title: ApprovalRequest
+    ApprovalStatus:
+      type: string
+      enum:
+      - NOT_REQUIRED
+      - PENDING
+      - APPROVED
+      - REJECTED
+      title: ApprovalStatus
+    ArtifactManifest:
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          title: Run Id
+        artifacts:
+          items:
+            $ref: '#/components/schemas/ArtifactRef'
+          type: array
+          title: Artifacts
+      additionalProperties: false
+      type: object
+      required:
+      - run_id
+      title: ArtifactManifest
+    ArtifactRef:
+      properties:
+        name:
+          type: string
+          minLength: 1
+          title: Name
+        path:
+          type: string
+          minLength: 1
+          title: Path
+        digest:
+          type: string
+          minLength: 1
+          title: Digest
+        media_type:
+          type: string
+          minLength: 1
+          title: Media Type
+      additionalProperties: false
+      type: object
+      required:
+      - name
+      - path
+      - digest
+      - media_type
+      title: ArtifactRef
+    Diagnosis:
+      properties:
+        summary:
+          type: string
+          maxLength: 20000
+          minLength: 1
+          title: Summary
+        confidence:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Confidence
+        evidence_ids:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          minItems: 1
+          title: Evidence Ids
+        contradictions:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Contradictions
+        unresolved_questions:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Unresolved Questions
+      additionalProperties: false
+      type: object
+      required:
+      - summary
+      - confidence
+      - evidence_ids
+      title: Diagnosis
+    DiagnosisHandoffV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        case_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Case Id
+        issue_summary:
+          type: string
+          maxLength: 10000
+          minLength: 1
+          title: Issue Summary
+        remediation_type:
+          $ref: '#/components/schemas/RemediationType'
+        diagnosis:
+          $ref: '#/components/schemas/Diagnosis'
+        supporting_evidence:
+          items:
+            $ref: '#/components/schemas/EvidenceRecord'
+          type: array
+          maxItems: 100
+          minItems: 1
+          title: Supporting Evidence
+        acceptance_criteria:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          maxItems: 20
+          minItems: 1
+          title: Acceptance Criteria
+        repository:
+          $ref: '#/components/schemas/RepositoryRef'
+        upstream_correlation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Upstream Correlation Id
+        upstream_audit_refs:
+          items:
+            type: string
+          type: array
+          title: Upstream Audit Refs
+      additionalProperties: false
+      type: object
+      required:
+      - case_id
+      - issue_summary
+      - remediation_type
+      - diagnosis
+      - supporting_evidence
+      - acceptance_criteria
+      - repository
+      title: DiagnosisHandoffV1
+      description: Provisional versioned handoff from Agent 2 to Agent 3.
+    DraftPrMetadata:
+      properties:
+        payload:
+          $ref: '#/components/schemas/DraftPrPayload'
+        created:
+          type: boolean
+          title: Created
+          default: false
+        provider_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider Id
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+      additionalProperties: false
+      type: object
+      required:
+      - payload
+      title: DraftPrMetadata
+    DraftPrPayload:
+      properties:
+        title:
+          type: string
+          minLength: 1
+          title: Title
+        body:
+          type: string
+          minLength: 1
+          title: Body
+        head_branch:
+          type: string
+          minLength: 1
+          title: Head Branch
+        base_branch:
+          type: string
+          minLength: 1
+          title: Base Branch
+        draft:
+          type: boolean
+          const: true
+          title: Draft
+          default: true
+      additionalProperties: false
+      type: object
+      required:
+      - title
+      - body
+      - head_branch
+      - base_branch
+      title: DraftPrPayload
+    ErrorRecord:
+      properties:
+        code:
+          type: string
+          minLength: 1
+          title: Code
+        stage:
+          type: string
+          minLength: 1
+          title: Stage
+        message:
+          type: string
+          minLength: 1
+          title: Message
+        retryable:
+          type: boolean
+          title: Retryable
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - code
+      - stage
+      - message
+      title: ErrorRecord
+    ErrorResponse:
+      properties:
+        detail:
+          type: string
+          title: Detail
+      additionalProperties: false
+      type: object
+      required:
+      - detail
+      title: ErrorResponse
+      description: Error envelope used by explicit FastAPI HTTP exceptions.
+    EvidenceRecord:
+      properties:
+        evidence_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Evidence Id
+        source_type:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Source Type
+        source_locator:
+          type: string
+          maxLength: 2048
+          minLength: 1
+          title: Source Locator
+        observed_at:
+          type: string
+          format: date-time
+          title: Observed At
+        digest:
+          type: string
+          minLength: 1
+          title: Digest
+        excerpt:
+          type: string
+          maxLength: 10000
+          title: Excerpt
+          default: ''
+      additionalProperties: false
+      type: object
+      required:
+      - evidence_id
+      - source_type
+      - source_locator
+      - observed_at
+      - digest
+      title: EvidenceRecord
+    FinalStatus:
+      type: string
+      enum:
+      - PENDING
+      - AWAITING_APPROVAL
+      - INVALID_REQUEST
+      - UNSUPPORTED_REMEDIATION_TYPE
+      - NOT_IMPLEMENTED
+      - HUMAN_ACTION_REQUIRED
+      - UNSAFE_REMEDIATION
+      - VALIDATION_FAILED
+      - DRAFT_PR_PREPARED
+      - DRAFT_PR_CREATED
+      - INTERNAL_ERROR
+      - CLEANUP_FAILED
+      title: FinalStatus
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          const: ok
+          title: Status
+          default: ok
+      additionalProperties: false
+      type: object
+      title: HealthResponse
+      description: Process-liveness response.
+    ReadinessResponse:
+      properties:
+        status:
+          type: string
+          const: ready
+          title: Status
+          default: ready
+      additionalProperties: false
+      type: object
+      title: ReadinessResponse
+      description: Dependency-readiness response.
+    RemediationHandoffV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        case_id:
+          type: string
+          minLength: 1
+          title: Case Id
+        run_id:
+          type: string
+          minLength: 1
+          title: Run Id
+        final_status:
+          $ref: '#/components/schemas/FinalStatus'
+        repository:
+          $ref: '#/components/schemas/RepositoryRef'
+        base_commit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Commit
+        proposed_branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proposed Branch
+        proposed_commit:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Proposed Commit
+        changed_files:
+          items:
+            type: string
+          type: array
+          title: Changed Files
+        diff_digest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Diff Digest
+        remediation_plan_summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Remediation Plan Summary
+        risk_summary:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Risk Summary
+        policy_control_ids:
+          items:
+            type: string
+          type: array
+          title: Policy Control Ids
+        approvals:
+          items:
+            $ref: '#/components/schemas/ApprovalDecisionV1'
+          type: array
+          title: Approvals
+        validation_attempts:
+          items:
+            $ref: '#/components/schemas/ValidationAttempt'
+          type: array
+          title: Validation Attempts
+        failed_attempt_summaries:
+          items:
+            type: string
+          type: array
+          title: Failed Attempt Summaries
+        residual_risks:
+          items:
+            type: string
+          type: array
+          title: Residual Risks
+        rollback_instructions:
+          anyOf:
+          - $ref: '#/components/schemas/RollbackInstructions'
+          - type: 'null'
+        draft_pr:
+          anyOf:
+          - $ref: '#/components/schemas/DraftPrMetadata'
+          - type: 'null'
+        artifact_manifest:
+          anyOf:
+          - $ref: '#/components/schemas/ArtifactManifest'
+          - type: 'null'
+        audit_bundle_ref:
+          anyOf:
+          - $ref: '#/components/schemas/ArtifactRef'
+          - type: 'null'
+        errors:
+          items:
+            $ref: '#/components/schemas/ErrorRecord'
+          type: array
+          title: Errors
+      additionalProperties: false
+      type: object
+      required:
+      - case_id
+      - run_id
+      - final_status
+      - repository
+      title: RemediationHandoffV1
+      description: Provisional versioned handoff from Agent 3 to Agent 4.
+    RemediationRunView:
+      properties:
+        run_id:
+          type: string
+          minLength: 1
+          title: Run Id
+        status:
+          $ref: '#/components/schemas/FinalStatus'
+        approval_request:
+          anyOf:
+          - $ref: '#/components/schemas/ApprovalRequest'
+          - type: 'null'
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/RemediationHandoffV1'
+          - type: 'null'
+      additionalProperties: false
+      type: object
+      required:
+      - run_id
+      - status
+      title: RemediationRunView
+      description: Public API view of a running, interrupted, or completed remediation.
+    RemediationType:
+      type: string
+      enum:
+      - CODE
+      - CONFIGURATION
+      - ACCOUNT_UNLOCK
+      - PASSWORD_RESET
+      - ACCESS_PROVISIONING
+      - PRIVILEGED_ACCESS
+      - SOFTWARE_REQUEST
+      - PRODUCTION_CHANGE
+      - OTHER
+      title: RemediationType
+    RepositoryProvider:
+      type: string
+      enum:
+      - LOCAL
+      - GITHUB
+      - GITLAB
+      - GENERIC_GIT
+      title: RepositoryProvider
+    RepositoryRef:
+      properties:
+        provider:
+          $ref: '#/components/schemas/RepositoryProvider'
+        url:
+          type: string
+          maxLength: 2048
+          minLength: 1
+          title: Url
+        base_branch:
+          type: string
+          maxLength: 200
+          minLength: 1
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._/-]*$
+          title: Base Branch
+        commit_sha:
+          anyOf:
+          - type: string
+            pattern: ^[0-9a-fA-F]{7,64}$
+          - type: 'null'
+          title: Commit Sha
+      additionalProperties: false
+      type: object
+      required:
+      - provider
+      - url
+      - base_branch
+      title: RepositoryRef
+    RollbackInstructions:
+      properties:
+        summary:
+          type: string
+          minLength: 1
+          title: Summary
+        before_commit:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          title: Before Commit
+        after_commit:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          title: After Commit
+        limitations:
+          items:
+            type: string
+          type: array
+          title: Limitations
+      additionalProperties: false
+      type: object
+      required:
+      - summary
+      - before_commit
+      - after_commit
+      title: RollbackInstructions
+    ServiceInfoResponse:
+      properties:
+        name:
+          type: string
+          const: AIOS Resolution/Remediation Agent
+          title: Name
+          default: AIOS Resolution/Remediation Agent
+        architecture:
+          type: string
+          const: one-agent-langgraph-workflow
+          title: Architecture
+          default: one-agent-langgraph-workflow
+      additionalProperties: false
+      type: object
+      title: ServiceInfoResponse
+      description: Static service identity returned from the root endpoint.
+    ValidationAttempt:
+      properties:
+        attempt:
+          type: integer
+          minimum: 1.0
+          title: Attempt
+        patch_digest:
+          type: string
+          minLength: 1
+          title: Patch Digest
+        results:
+          items:
+            $ref: '#/components/schemas/ValidationTaskResult'
+          type: array
+          title: Results
+        outcome:
+          $ref: '#/components/schemas/ValidationOutcome'
+      additionalProperties: false
+      type: object
+      required:
+      - attempt
+      - patch_digest
+      - results
+      - outcome
+      title: ValidationAttempt
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    ValidationOutcome:
+      type: string
+      enum:
+      - NOT_RUN
+      - PASSED
+      - FAILED
+      - ERROR
+      - TIMED_OUT
+      title: ValidationOutcome
+    ValidationTaskResult:
+      properties:
+        task_name:
+          type: string
+          minLength: 1
+          title: Task Name
+        outcome:
+          $ref: '#/components/schemas/ValidationOutcome'
+        exit_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Exit Code
+        duration_ms:
+          type: integer
+          minimum: 0.0
+          title: Duration Ms
+        stdout:
+          type: string
+          title: Stdout
+          default: ''
+        stderr:
+          type: string
+          title: Stderr
+          default: ''
+        output_truncated:
+          type: boolean
+          title: Output Truncated
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - task_name
+      - outcome
+      - duration_ms
+      title: ValidationTaskResult
+tags:
+- name: Service
+  description: Service identity, liveness, and dependency readiness.
+- name: Remediations
+  description: Start, inspect, and approve bounded remediation workflow runs.

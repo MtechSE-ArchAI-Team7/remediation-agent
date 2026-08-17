@@ -16,6 +16,7 @@ from remediation_agent.domain.models import (
     ErrorRecord,
     InspectionArtifact,
     InspectionPlan,
+    InspectionToolCallRecord,
     ModelCallRecord,
     PatchCandidate,
     PatchPolicyResult,
@@ -42,6 +43,7 @@ class RemediationState(TypedDict, total=False):
     workspace_status: WorkspaceStatus
     inspection_plan: InspectionPlan
     inspection_artifacts: list[InspectionArtifact]
+    inspection_tool_calls: list[InspectionToolCallRecord]
 
     remediation_plan: RemediationPlan
     risk_assessment: RiskAssessment

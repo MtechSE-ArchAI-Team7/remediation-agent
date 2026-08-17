@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel
 
 from remediation_agent.adapters.models import ProviderStructuredModel, build_structured_model
@@ -14,6 +17,7 @@ from remediation_agent.config import Settings
 from remediation_agent.domain.enums import ModelOperation
 from remediation_agent.domain.models import InspectionPlan
 from remediation_agent.ports.models import ModelRequest
+from remediation_agent.tools import finish_inspection
 
 
 class _Runnable:
@@ -35,6 +39,10 @@ class _ChatModel:
     def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
         _ = schema
         assert include_raw
+        return _Runnable(self.responses)
+
+    def bind_tools(self, tools: Sequence[BaseTool]) -> _Runnable:
+        _ = tools
         return _Runnable(self.responses)
 
 
@@ -63,6 +71,119 @@ async def test_schema_failure_receives_one_bounded_retry() -> None:
     assert generation.value.paths_to_read == ["src/app.py"]
     assert generation.record.provider == "fake-chat"
     assert generation.record.input_digest.startswith("sha256:")
+
+
+async def test_tool_turn_binds_tools_and_normalizes_call_metadata() -> None:
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "finish_inspection",
+                "args": {"rationale": "Enough evidence."},
+                "id": "call-1",
+                "type": "tool_call",
+            }
+        ],
+        usage_metadata={"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+    )
+    model = ProviderStructuredModel(
+        _ChatModel([response]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+    request = ModelRequest(
+        operation=ModelOperation.INSPECTION,
+        prompt_version="test-v1",
+        system_instruction="Inspect with tools.",
+        payload={"handoff": "untrusted"},
+    )
+
+    message, record = await model.generate_tool_turn(request, [HumanMessage(content="inspect")], [finish_inspection])
+
+    assert message.tool_calls[0]["name"] == "finish_inspection"
+    assert record.input_tokens == 11
+    assert record.output_tokens == 7
+    assert not record.refused
+    assert record.input_digest.startswith("sha256:")
+    assert record.output_digest.startswith("sha256:")
+
+
+async def test_tool_turn_records_provider_refusal_metadata() -> None:
+    response = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "name": "finish_inspection",
+                "args": {"rationale": "Provider supplied a bounded call."},
+                "id": "call-refusal-metadata",
+                "type": "tool_call",
+            }
+        ],
+        response_metadata={"stop_reason": "refusal"},
+    )
+    model = ProviderStructuredModel(
+        _ChatModel([response]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+    request = ModelRequest(
+        operation=ModelOperation.INSPECTION,
+        prompt_version="test-v1",
+        system_instruction="Inspect with tools.",
+        payload={},
+    )
+
+    _, record = await model.generate_tool_turn(request, [HumanMessage(content="inspect")], [finish_inspection])
+
+    assert record.refused
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        AIMessage(content="No tool call."),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "finish_inspection", "args": {"rationale": "one"}, "id": "one", "type": "tool_call"},
+                {"name": "finish_inspection", "args": {"rationale": "two"}, "id": "two", "type": "tool_call"},
+            ],
+        ),
+        AIMessage(
+            content="",
+            invalid_tool_calls=[
+                {
+                    "name": "finish_inspection",
+                    "args": "not-json",
+                    "id": "bad",
+                    "error": "malformed",
+                    "type": "invalid_tool_call",
+                }
+            ],
+        ),
+    ],
+)
+async def test_tool_turn_rejects_missing_multiple_and_malformed_calls(response: AIMessage) -> None:
+    model = ProviderStructuredModel(
+        _ChatModel([response]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+    request = ModelRequest(
+        operation=ModelOperation.INSPECTION,
+        prompt_version="test-v1",
+        system_instruction="Inspect with tools.",
+        payload={},
+    )
+
+    with pytest.raises(RuntimeError, match="bounded retries"):
+        await model.generate_tool_turn(request, [HumanMessage(content="inspect")], [finish_inspection])
 
 
 @pytest.mark.parametrize(

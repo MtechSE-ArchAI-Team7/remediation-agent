@@ -73,6 +73,12 @@ class ModelOperation(StrEnum):
     REVISION = "REVISION"
 
 
+class InspectionToolStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    DENIED = "DENIED"
+    ERROR = "ERROR"
+
+
 class WorkspaceStatus(StrEnum):
     NOT_CREATED = "NOT_CREATED"
     READY = "READY"

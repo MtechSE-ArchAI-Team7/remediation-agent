@@ -3,8 +3,11 @@
 from remediation_agent.ports.protocols import (
     ArtifactStore,
     AuditSink,
+    InspectionToolProvider,
     PullRequestProvider,
+    RepositoryInspectionPort,
     RepositoryPort,
+    RepositoryWorkspacePort,
     SandboxExecutor,
     StructuredModel,
 )
@@ -12,8 +15,11 @@ from remediation_agent.ports.protocols import (
 __all__ = [
     "ArtifactStore",
     "AuditSink",
+    "InspectionToolProvider",
     "PullRequestProvider",
+    "RepositoryInspectionPort",
     "RepositoryPort",
+    "RepositoryWorkspacePort",
     "SandboxExecutor",
     "StructuredModel",
 ]

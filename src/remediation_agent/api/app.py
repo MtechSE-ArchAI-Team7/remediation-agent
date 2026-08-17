@@ -6,14 +6,23 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Path, Request, status
 
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
+from remediation_agent.adapters.mcp import StdioMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
+from remediation_agent.api.models import ErrorResponse, HealthResponse, ReadinessResponse, ServiceInfoResponse
+from remediation_agent.api.openapi import (
+    APPROVAL_DECISION_EXAMPLES,
+    ERROR_EXAMPLES,
+    OPENAPI_TAGS,
+    RUN_RESPONSE_EXAMPLES,
+    START_REMEDIATION_EXAMPLES,
+)
 from remediation_agent.config import Settings
 from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
 from remediation_agent.policy.engine import PolicyEngine
@@ -47,6 +56,7 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             author_name=settings.git_author_name,
             author_email=settings.git_author_email,
         )
+        inspection_tools = StdioMcpInspectionTools(settings.workspace_root, settings.policy_file)
         sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
         pr_provider = DraftPullRequestProvider(
             token=settings.github_token.get_secret_value() if settings.github_token else None,
@@ -59,6 +69,7 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
                 policy=policy,
                 model=model,
                 repository=repository,
+                inspection_tools=inspection_tools,
                 sandbox=sandbox,
                 pr_provider=pr_provider,
                 artifact_store=artifact_store,
@@ -75,30 +86,83 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
 
     application = FastAPI(
         title="AIOS Resolution/Remediation Agent",
+        description=(
+            "Policy-bounded repository remediation. The API does not implement caller authentication; "
+            "deployment and network controls must restrict access to authorized operators."
+        ),
         version="0.1.0",
+        openapi_tags=OPENAPI_TAGS,
         lifespan=lifespan,
     )
 
-    @application.get("/")
-    async def root() -> dict[str, str]:
-        return {"name": "AIOS Resolution/Remediation Agent", "architecture": "one-agent-langgraph-workflow"}
+    @application.get(
+        "/",
+        response_model=ServiceInfoResponse,
+        tags=["Service"],
+        summary="Get service identity",
+        description="Return the service name and its one-agent LangGraph architecture identifier.",
+        operation_id="get_service_info",
+        response_description="Service identity and architecture.",
+    )
+    async def root() -> ServiceInfoResponse:
+        return ServiceInfoResponse()
 
-    @application.get("/healthz")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    @application.get(
+        "/healthz",
+        response_model=HealthResponse,
+        tags=["Service"],
+        summary="Check process liveness",
+        description="Return success when the API process can serve requests; dependencies are checked by `/readyz`.",
+        operation_id="get_health",
+        response_description="The API process is alive.",
+    )
+    async def health() -> HealthResponse:
+        return HealthResponse()
 
-    @application.get("/readyz")
-    async def readiness(request: Request) -> dict[str, str]:
+    @application.get(
+        "/readyz",
+        response_model=ReadinessResponse,
+        tags=["Service"],
+        summary="Check runtime readiness",
+        description="Confirm that runtime dependencies were constructed and checkpoint persistence is reachable.",
+        operation_id="get_readiness",
+        response_description="The service and checkpoint store are ready.",
+        responses={
+            status.HTTP_503_SERVICE_UNAVAILABLE: {
+                "model": ErrorResponse,
+                "description": "Runtime construction or checkpoint persistence is unavailable.",
+                "content": {"application/json": {"examples": {"not_ready": ERROR_EXAMPLES["not_ready"]}}},
+            }
+        },
+    )
+    async def readiness(request: Request) -> ReadinessResponse:
         if not hasattr(request.app.state, "remediation_service"):
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="runtime is not ready")
         runtime: RemediationService = request.app.state.remediation_service
         if not await runtime.ready():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="checkpoint store is not ready")
-        return {"status": "ready"}
+        return ReadinessResponse()
 
-    @application.post("/v1/remediations", response_model=RemediationRunView, status_code=status.HTTP_202_ACCEPTED)
+    @application.post(
+        "/v1/remediations",
+        response_model=RemediationRunView,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["Remediations"],
+        summary="Start a remediation run",
+        description=(
+            "Validate an Agent 2 diagnosis handoff and execute the single remediation workflow synchronously until "
+            "it reaches a terminal state or a human-approval interrupt. Inspect `status` in the accepted response."
+        ),
+        operation_id="start_remediation",
+        response_description="The current run view, which may be terminal or awaiting approval.",
+        responses={
+            status.HTTP_202_ACCEPTED: {
+                "content": {"application/json": {"examples": RUN_RESPONSE_EXAMPLES}},
+            }
+        },
+    )
     async def start_remediation(
-        handoff: DiagnosisHandoffV1,
+        handoff: Annotated[DiagnosisHandoffV1, Body(openapi_examples=START_REMEDIATION_EXAMPLES)],
         runtime: Annotated[RemediationService, Depends(_service)],
     ) -> RemediationRunView:
         return await runtime.start(handoff)
@@ -107,10 +171,35 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
         "/v1/remediations/{run_id}/approvals",
         response_model=RemediationRunView,
         status_code=status.HTTP_202_ACCEPTED,
+        tags=["Remediations"],
+        summary="Submit an approval decision",
+        description=(
+            "Resume a run waiting at an approval interrupt. The approval ID and scope digest must exactly match "
+            "the pending request; stale or mismatched approvals are rejected."
+        ),
+        operation_id="submit_remediation_approval",
+        response_description="The resumed run view, which may be terminal or reach another approval interrupt.",
+        responses={
+            status.HTTP_202_ACCEPTED: {
+                "content": {"application/json": {"examples": RUN_RESPONSE_EXAMPLES}},
+            },
+            status.HTTP_404_NOT_FOUND: {
+                "model": ErrorResponse,
+                "description": "The run identifier is invalid or no persisted run exists.",
+                "content": {"application/json": {"examples": {"not_found": ERROR_EXAMPLES["not_found"]}}},
+            },
+            status.HTTP_409_CONFLICT: {
+                "model": ErrorResponse,
+                "description": "The run is not awaiting approval or the decision does not match the pending scope.",
+                "content": {
+                    "application/json": {"examples": {"approval_conflict": ERROR_EXAMPLES["approval_conflict"]}}
+                },
+            },
+        },
     )
     async def submit_approval(
-        run_id: str,
-        decision: ApprovalDecisionV1,
+        run_id: Annotated[str, Path(description="UUID returned when the remediation run was started.")],
+        decision: Annotated[ApprovalDecisionV1, Body(openapi_examples=APPROVAL_DECISION_EXAMPLES)],
         runtime: Annotated[RemediationService, Depends(_service)],
     ) -> RemediationRunView:
         try:
@@ -120,9 +209,27 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
         except ApprovalConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
-    @application.get("/v1/remediations/{run_id}", response_model=RemediationRunView)
+    @application.get(
+        "/v1/remediations/{run_id}",
+        response_model=RemediationRunView,
+        tags=["Remediations"],
+        summary="Get a remediation run",
+        description="Return the latest persisted state for an interrupted or completed remediation run.",
+        operation_id="get_remediation",
+        response_description="The latest persisted run view.",
+        responses={
+            status.HTTP_200_OK: {
+                "content": {"application/json": {"examples": RUN_RESPONSE_EXAMPLES}},
+            },
+            status.HTTP_404_NOT_FOUND: {
+                "model": ErrorResponse,
+                "description": "The run identifier is invalid or no persisted run exists.",
+                "content": {"application/json": {"examples": {"not_found": ERROR_EXAMPLES["not_found"]}}},
+            },
+        },
+    )
     async def get_remediation(
-        run_id: str,
+        run_id: Annotated[str, Path(description="UUID returned when the remediation run was started.")],
         runtime: Annotated[RemediationService, Depends(_service)],
     ) -> RemediationRunView:
         try:

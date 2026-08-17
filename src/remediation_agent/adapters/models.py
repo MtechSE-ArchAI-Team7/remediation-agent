@@ -6,9 +6,11 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Protocol, cast
 
+from langchain_core.messages import AIMessage, BaseMessage, messages_to_dict
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ValidationError
 
 from remediation_agent.config import Settings
@@ -18,6 +20,8 @@ from remediation_agent.ports.models import ModelGeneration, ModelRequest, TModel
 
 class _ChatModel(Protocol):
     def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable: ...
+
+    def bind_tools(self, tools: Sequence[BaseTool]) -> _Runnable: ...
 
 
 class _Runnable(Protocol):
@@ -91,6 +95,59 @@ class ProviderStructuredModel:
             except Exception as exc:  # noqa: BLE001 - normalize an untrusted provider boundary
                 raise RuntimeError(f"structured model provider failed: {type(exc).__name__}") from exc
         raise RuntimeError(f"structured model generation failed after bounded retries: {last_error}") from last_error
+
+    async def generate_tool_turn(
+        self,
+        request: ModelRequest,
+        messages: Sequence[BaseMessage],
+        tools: Sequence[BaseTool],
+    ) -> tuple[AIMessage, ModelCallRecord]:
+        """Generate one normalized tool call while keeping provider messages transient."""
+
+        last_error: Exception | None = None
+        for attempt in range(self.retries + 1):
+            started = time.monotonic()
+            try:
+                raw = await asyncio.wait_for(
+                    self.chat_model.bind_tools(tools).ainvoke(list(messages)),
+                    timeout=self.timeout_seconds,
+                )
+                if not isinstance(raw, AIMessage):
+                    raise ValueError("provider returned a non-AI message for a tool turn")
+                if raw.invalid_tool_calls:
+                    raise ValueError("provider returned malformed tool-call arguments")
+                if len(raw.tool_calls) != 1:
+                    raise ValueError("provider must return exactly one tool call per inspection round")
+                input_tokens, output_tokens = _usage_tokens(raw)
+                duration_ms = int((time.monotonic() - started) * 1_000)
+                input_value = json.dumps(
+                    {
+                        "request": request.model_dump(mode="json"),
+                        "messages": messages_to_dict(list(messages)),
+                        "tools": [tool.name for tool in tools],
+                    },
+                    sort_keys=True,
+                    default=str,
+                )
+                return raw, ModelCallRecord(
+                    operation=request.operation,
+                    provider=self.provider,
+                    model=self.model,
+                    prompt_version=request.prompt_version,
+                    duration_ms=duration_ms,
+                    input_digest=_digest(input_value),
+                    output_digest=_digest(raw.model_dump_json()),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    refused=_was_refused(raw),
+                )
+            except (TimeoutError, ConnectionError, OSError, ValidationError, ValueError) as exc:
+                last_error = exc
+                if attempt >= self.retries:
+                    break
+            except Exception as exc:  # noqa: BLE001 - normalize an untrusted provider boundary
+                raise RuntimeError(f"tool-calling model provider failed: {type(exc).__name__}") from exc
+        raise RuntimeError(f"tool-calling model generation failed after bounded retries: {last_error}") from last_error
 
 
 def build_structured_model(

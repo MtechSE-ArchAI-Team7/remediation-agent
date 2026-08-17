@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 from remediation_agent.domain.enums import (
     ApprovalStatus,
     FinalStatus,
+    InspectionToolStatus,
     PolicyDecision,
     RemediationType,
     RepositoryProvider,
@@ -111,6 +112,45 @@ class InspectionArtifact(StrictModel):
     digest: NonEmptyStr
     truncated: bool = False
     untrusted: bool = True
+
+
+class InspectionToolResponse(StrictModel):
+    status: InspectionToolStatus
+    artifact: InspectionArtifact | None = None
+    error_code: str | None = Field(default=None, max_length=200)
+    detail: str = Field(default="", max_length=4_000)
+
+    @model_validator(mode="after")
+    def successful_response_has_artifact(self) -> InspectionToolResponse:
+        if self.status is InspectionToolStatus.SUCCEEDED and self.artifact is None:
+            raise ValueError("successful inspection tool response requires an artifact")
+        if self.status is not InspectionToolStatus.SUCCEEDED and self.artifact is not None:
+            raise ValueError("denied or failed inspection tool response cannot contain an artifact")
+        return self
+
+
+class FinishInspectionArgs(StrictModel):
+    rationale: str = Field(min_length=1, max_length=4_000)
+
+
+class ListRepositoryTreeArgs(StrictModel):
+    relative_path: RepositoryPathStr = "."
+
+
+class ReadRepositoryFileArgs(StrictModel):
+    relative_path: RepositoryPathStr
+
+
+class SearchRepositoryArgs(StrictModel):
+    query: SearchQueryStr
+
+
+class InspectionToolCallRecord(StrictModel):
+    call_id: IdentifierStr
+    tool_name: IdentifierStr
+    arguments: dict[str, object] = Field(max_length=4)
+    status: InspectionToolStatus
+    result_digest: NonEmptyStr
 
 
 class RemediationPlan(StrictModel):
