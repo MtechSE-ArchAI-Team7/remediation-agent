@@ -58,6 +58,21 @@ paths:
                   summary: Checkpoint persistence is unavailable
                   value:
                     detail: checkpoint store is not ready
+  /v1/tools:
+    get:
+      tags:
+      - Tools
+      summary: List operational tools
+      description: Return the versioned catalogue of model-callable inspection controls and deterministic workflow-only operations.
+        Listing the catalogue invokes no tool and creates no side effect.
+      operationId: list_operational_tools
+      responses:
+        '200':
+          description: The implemented operational tool catalogue and authority boundaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolCatalogResponse'
   /v1/remediations:
     post:
       tags:
@@ -771,6 +786,90 @@ components:
       type: object
       title: HealthResponse
       description: Process-liveness response.
+    OperationalToolAvailability:
+      type: string
+      enum:
+      - ALWAYS_BOUNDED
+      - POLICY_GATED
+      - CONFIG_AND_POLICY_GATED
+      title: OperationalToolAvailability
+    OperationalToolCategory:
+      type: string
+      enum:
+      - INSPECTION
+      - REPOSITORY
+      - SANDBOX
+      - PULL_REQUEST
+      - EVIDENCE
+      title: OperationalToolCategory
+    OperationalToolDescriptor:
+      properties:
+        tool_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Tool Id
+        operation:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Operation
+        boundary:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Boundary
+        category:
+          $ref: '#/components/schemas/OperationalToolCategory'
+        execution_mode:
+          $ref: '#/components/schemas/OperationalToolExecutionMode'
+        effect:
+          $ref: '#/components/schemas/OperationalToolEffect'
+        availability:
+          $ref: '#/components/schemas/OperationalToolAvailability'
+        description:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          title: Description
+        controls:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          maxItems: 10
+          minItems: 1
+          title: Controls
+      additionalProperties: false
+      type: object
+      required:
+      - tool_id
+      - operation
+      - boundary
+      - category
+      - execution_mode
+      - effect
+      - availability
+      - description
+      - controls
+      title: OperationalToolDescriptor
+      description: Public metadata for one implemented, policy-bounded operation.
+    OperationalToolEffect:
+      type: string
+      enum:
+      - READ_ONLY
+      - CONTROL_ONLY
+      - DISPOSABLE_WORKSPACE_WRITE
+      - LOCAL_EVIDENCE_WRITE
+      - OPTIONAL_REMOTE_WRITE
+      title: OperationalToolEffect
+    OperationalToolExecutionMode:
+      type: string
+      enum:
+      - MODEL_MCP
+      - MODEL_CONTROL
+      - DETERMINISTIC_WORKFLOW
+      title: OperationalToolExecutionMode
     ReadinessResponse:
       properties:
         status:
@@ -1009,6 +1108,40 @@ components:
       type: object
       title: ServiceInfoResponse
       description: Static service identity returned from the root endpoint.
+    ToolCatalogResponse:
+      properties:
+        catalog_version:
+          type: string
+          const: '1.0'
+          title: Catalog Version
+          default: '1.0'
+        total_tools:
+          type: integer
+          minimum: 1.0
+          title: Total Tools
+        model_callable_tools:
+          type: integer
+          minimum: 0.0
+          title: Model Callable Tools
+        workflow_only_tools:
+          type: integer
+          minimum: 0.0
+          title: Workflow Only Tools
+        tools:
+          items:
+            $ref: '#/components/schemas/OperationalToolDescriptor'
+          type: array
+          minItems: 1
+          title: Tools
+      additionalProperties: false
+      type: object
+      required:
+      - total_tools
+      - model_callable_tools
+      - workflow_only_tools
+      - tools
+      title: ToolCatalogResponse
+      description: Versioned public inventory of implemented operational tools.
     ValidationAttempt:
       properties:
         attempt:
@@ -1108,5 +1241,7 @@ components:
 tags:
 - name: Service
   description: Service identity, liveness, and dependency readiness.
+- name: Tools
+  description: Read-only catalogue of model-callable and deterministic operational tools.
 - name: Remediations
   description: Start, inspect, and approve bounded remediation workflow runs.

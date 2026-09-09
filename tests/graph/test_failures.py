@@ -49,6 +49,56 @@ async def test_disallowed_repository_fails_closed_before_inspection() -> None:
     assert ModelOperation.INSPECTION in responses
 
 
+async def test_github_write_target_must_match_handoff_repository() -> None:
+    responses = scripted_responses()
+    service, model, repository, _, _, _, _ = build_test_service(
+        responses,
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/aios-remediation-demo",
+    )
+    payload = diagnosis_handoff().model_dump(mode="json")
+    payload["repository"] = {
+        "provider": "GITHUB",
+        "url": "https://github.com/MtechSE-ArchAI-Team7/remediation-agent.git",
+        "base_branch": "main",
+        "commit_sha": "a" * 40,
+    }
+
+    result = await service.start(diagnosis_handoff().model_validate(payload))
+
+    assert result.status is FinalStatus.INVALID_REQUEST
+    assert not repository.created
+    assert not model.requests
+    assert result.result is not None
+    assert result.result.errors[0].code == "REPOSITORY_NOT_ALLOWED"
+
+
+async def test_partial_github_failure_retains_prepared_payload_and_cleanup_evidence() -> None:
+    service, _, repository, sandbox, pr, _, _ = build_test_service(
+        scripted_responses(),
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/aios-remediation-demo",
+    )
+    payload = diagnosis_handoff().model_dump(mode="json")
+    payload["repository"] = {
+        "provider": "GITHUB",
+        "url": "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git",
+        "base_branch": "scenario/01-invalid-quantity",
+        "commit_sha": "a" * 40,
+    }
+
+    result = await service.start(diagnosis_handoff().model_validate(payload))
+
+    assert result.status is FinalStatus.DRAFT_PR_PREPARED
+    assert result.result is not None
+    assert result.result.draft_pr is not None
+    assert result.result.draft_pr.created is False
+    assert result.result.errors[-1].code == "DRAFT_PR_CREATE_FAILED"
+    assert repository.pushes
+    assert len(pr.requests) == 2
+    assert sandbox.destroyed
+
+
 async def test_validation_task_workspace_tampering_is_detected_and_bounded() -> None:
     responses = scripted_responses(
         patch=patch_for(new="value = safe_v1(raw)"),

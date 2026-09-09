@@ -70,6 +70,14 @@ class RepositoryPort(RepositoryInspectionPort, RepositoryWorkspacePort, Protocol
     """Compatibility protocol for adapters that implement both boundaries."""
 
 
+class GitCredentialProvider(Protocol):
+    """Provide process-local Git authentication without persisting credentials."""
+
+    def environment_for(self, remote_url: str) -> dict[str, str]: ...
+
+    def redact(self, value: str) -> str: ...
+
+
 class InspectionToolProvider(Protocol):
     def session(self, workspace: WorkspaceRef) -> AbstractAsyncContextManager[Sequence[BaseTool]]: ...
 

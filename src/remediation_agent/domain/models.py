@@ -12,6 +12,10 @@ from remediation_agent.domain.enums import (
     ApprovalStatus,
     FinalStatus,
     InspectionToolStatus,
+    OperationalToolAvailability,
+    OperationalToolCategory,
+    OperationalToolEffect,
+    OperationalToolExecutionMode,
     PolicyDecision,
     RemediationType,
     RepositoryProvider,
@@ -143,6 +147,20 @@ class ReadRepositoryFileArgs(StrictModel):
 
 class SearchRepositoryArgs(StrictModel):
     query: SearchQueryStr
+
+
+class OperationalToolDescriptor(StrictModel):
+    """Public metadata for one implemented, policy-bounded operation."""
+
+    tool_id: IdentifierStr
+    operation: IdentifierStr
+    boundary: IdentifierStr
+    category: OperationalToolCategory
+    execution_mode: OperationalToolExecutionMode
+    effect: OperationalToolEffect
+    availability: OperationalToolAvailability
+    description: str = Field(min_length=1, max_length=1_000)
+    controls: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=10)
 
 
 class InspectionToolCallRecord(StrictModel):

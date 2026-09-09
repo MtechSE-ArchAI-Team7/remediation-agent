@@ -8,6 +8,7 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Literal, cast
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -24,6 +25,7 @@ from remediation_agent.domain.enums import (
     ModelOperation,
     PolicyDecision,
     RemediationType,
+    RepositoryProvider,
     RiskLevel,
     ValidationOutcome,
     WorkspaceStatus,
@@ -125,6 +127,12 @@ class WorkflowNodes:
         handoff = state["handoff"]
         try:
             self.policy.validate_repository(handoff.repository)
+            if self.github_writes_enabled:
+                repository_slug = _github_repository_slug(handoff.repository.url)
+                if handoff.repository.provider is not RepositoryProvider.GITHUB:
+                    raise ValueError("GitHub writes require a GitHub repository handoff")
+                if repository_slug is None or repository_slug != self.github_repository:
+                    raise ValueError("GitHub write target does not match the handoff repository")
         except ValueError as exc:
             return {
                 "agent_id": "resolution-remediation-agent",
@@ -1191,3 +1199,21 @@ class WorkflowNodes:
 def _branch_name(case_id: str, run_id: str) -> str:
     safe_case = re.sub(r"[^a-zA-Z0-9._-]+", "-", case_id).strip("-").lower() or "case"
     return f"aios/remediation/{safe_case}-{run_id[:8]}"[:200]
+
+
+def _github_repository_slug(url: str) -> str | None:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "github.com"
+        or parsed.port is not None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    parts = [part for part in parsed.path.removesuffix(".git").split("/") if part]
+    if len(parts) != 2:
+        return None
+    return "/".join(parts)

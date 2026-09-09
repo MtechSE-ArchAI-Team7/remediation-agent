@@ -18,6 +18,19 @@ def policy() -> PolicyEngine:
     return PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "reference.json"))
 
 
+def test_demo_policy_is_exactly_scoped_and_reference_writes_stay_disabled() -> None:
+    policy_root = Path(__file__).parents[2] / "config" / "policies"
+    reference = load_policy(policy_root / "reference.json")
+    demo = load_policy(policy_root / "demo.json")
+
+    assert reference.github.writes_enabled is False
+    assert demo.github.writes_enabled is True
+    assert demo.repositories.allowed_url_patterns == [
+        "file:///**",
+        "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git",
+    ]
+
+
 @pytest.mark.parametrize(
     ("diff", "control"),
     [
@@ -59,9 +72,13 @@ def test_path_traversal_is_rejected(policy: PolicyEngine) -> None:
 
 
 def test_secret_redactor_masks_common_credentials() -> None:
-    raw = "token=super-secret AKIA1234567890ABCDEF ghp_abcdefghijklmnopqrstuvwxyz /Users/alice/project"
+    raw = (
+        "token=super-secret AKIA1234567890ABCDEF ghp_abcdefghijklmnopqrstuvwxyz "
+        "github_pat_abcdefghijklmnopqrstuvwxyz123456 /Users/alice/project"
+    )
     redacted = SecretRedactor().redact(raw)
     assert "super-secret" not in redacted
     assert "AKIA1234567890ABCDEF" not in redacted
     assert "ghp_" not in redacted
+    assert "github_pat_" not in redacted
     assert "/Users/alice" not in redacted

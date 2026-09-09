@@ -25,11 +25,12 @@ def test_openapi_documents_stable_operations_errors_and_examples() -> None:
     paths = document["paths"]
 
     assert document["openapi"] == "3.1.0"
-    assert [tag["name"] for tag in document["tags"]] == ["Service", "Remediations"]
+    assert [tag["name"] for tag in document["tags"]] == ["Service", "Tools", "Remediations"]
     assert "securitySchemes" not in document.get("components", {})
     assert paths["/"]["get"]["operationId"] == "get_service_info"
     assert paths["/healthz"]["get"]["operationId"] == "get_health"
     assert paths["/readyz"]["get"]["operationId"] == "get_readiness"
+    assert paths["/v1/tools"]["get"]["operationId"] == "list_operational_tools"
     assert paths["/v1/remediations"]["post"]["operationId"] == "start_remediation"
     assert paths["/v1/remediations/{run_id}"]["get"]["operationId"] == "get_remediation"
     assert paths["/v1/remediations/{run_id}/approvals"]["post"]["operationId"] == "submit_remediation_approval"
@@ -56,6 +57,8 @@ def test_openapi_documents_stable_operations_errors_and_examples() -> None:
         "RemediationHandoffV1",
         "RemediationRunView",
         "ServiceInfoResponse",
+        "ToolCatalogResponse",
+        "OperationalToolDescriptor",
     }.issubset(schemas)
 
 

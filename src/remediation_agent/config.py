@@ -116,6 +116,10 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_KEY is required for OpenAI")
         if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
             raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
+        if self.github_writes_enabled and self.github_token is None:
+            raise ValueError("AIOS_GITHUB_TOKEN is required when GitHub writes are enabled")
+        if self.github_writes_enabled and self.github_repository is None:
+            raise ValueError("AIOS_GITHUB_REPOSITORY is required when GitHub writes are enabled")
         return self
 
     def require_persistent_checkpointing(self) -> tuple[str, str]:

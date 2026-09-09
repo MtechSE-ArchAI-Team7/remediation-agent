@@ -6,10 +6,12 @@ import asyncio
 import fnmatch
 import hashlib
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
+from remediation_agent.adapters.credentials import NoGitCredentials
 from remediation_agent.domain.models import RepositoryRef, WorkspaceRef
 from remediation_agent.ports.models import (
     BranchRequest,
@@ -27,6 +29,7 @@ from remediation_agent.ports.models import (
     TreeRequest,
     TreeResult,
 )
+from remediation_agent.ports.protocols import GitCredentialProvider
 
 
 class RepositoryError(RuntimeError):
@@ -44,6 +47,7 @@ class LocalGitRepository:
         author_name: str = "AIOS Remediation Agent",
         author_email: str = "aios-remediation@users.noreply.github.com",
         max_command_output_bytes: int = 4_194_304,
+        credential_provider: GitCredentialProvider | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
         self.workspace_root.mkdir(parents=True, exist_ok=True)
@@ -51,6 +55,7 @@ class LocalGitRepository:
         self.author_name = author_name
         self.author_email = author_email
         self.max_command_output_bytes = max_command_output_bytes
+        self.credential_provider = credential_provider or NoGitCredentials()
 
     async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef:
         workspace_path = Path(tempfile.mkdtemp(prefix="remediation-", dir=self.workspace_root)).resolve()
@@ -66,7 +71,8 @@ class LocalGitRepository:
             str(workspace_path),
         ]
         try:
-            await self._run(command, cwd=self.workspace_root)
+            credential_environment = self.credential_provider.environment_for(ref.url)
+            await self._run(command, cwd=self.workspace_root, extra_environment=credential_environment)
             if ref.commit_sha:
                 branch_commit = (await self._run(["git", "rev-parse", "HEAD"], cwd=workspace_path)).strip()
                 if not branch_commit.lower().startswith(ref.commit_sha.lower()):
@@ -205,7 +211,15 @@ class LocalGitRepository:
 
     async def push(self, request: PushRequest) -> PushResult:
         root = self._workspace_root(request.workspace)
-        await self._run(["git", "push", "--set-upstream", request.remote, request.branch_name], cwd=root)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", request.remote):
+            raise RepositoryError("Git remote name is not canonical")
+        remote_url = (await self._run(["git", "remote", "get-url", "--push", request.remote], cwd=root)).strip()
+        credential_environment = self.credential_provider.environment_for(remote_url)
+        await self._run(
+            ["git", "push", "--set-upstream", request.remote, request.branch_name],
+            cwd=root,
+            extra_environment=credential_environment,
+        )
         return PushResult(remote=request.remote, branch_name=request.branch_name, pushed=True)
 
     def validate_workspace(self, workspace: WorkspaceRef) -> Path:
@@ -251,11 +265,20 @@ class LocalGitRepository:
         _ = stat_result
         return resolved
 
-    async def _run(self, argv: list[str], *, cwd: Path) -> str:
+    async def _run(
+        self,
+        argv: list[str],
+        *,
+        cwd: Path,
+        extra_environment: dict[str, str] | None = None,
+    ) -> str:
+        environment = self._git_environment()
+        if extra_environment:
+            environment.update(extra_environment)
         process = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
-            env=self._git_environment(),
+            env=environment,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -299,6 +322,7 @@ class LocalGitRepository:
             raise RepositoryError("repository operation exceeded the configured output limit")
         if process.returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[:4_000]
+            detail = self.credential_provider.redact(detail)
             raise RepositoryError(f"repository operation failed ({process.returncode}): {detail}")
         return stdout.decode("utf-8", errors="replace")
 
@@ -312,6 +336,9 @@ class LocalGitRepository:
             "GIT_ASKPASS": "/bin/false",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "",
             "GIT_TERMINAL_PROMPT": "0",
             "LC_ALL": "C",
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),

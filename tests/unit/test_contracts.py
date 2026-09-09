@@ -53,24 +53,37 @@ def test_settings_require_model_for_live_provider(tmp_path: Path) -> None:
 
 
 def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
-    settings = Settings.model_validate(
-        {
-            "policy_file": tmp_path / "policy.json",
-            "llm_provider": "fake",
-            "llm_model": "",
-            "aws_region": "",
-            "github_repository": "",
-            "github_token": "",
-            "OPENAI_API_KEY": "",
-            "DEEPSEEK_API_KEY": "",
-            "postgres_dsn": "",
-            "checkpoint_encryption_key": "",
-        }
+    settings = Settings(  # type: ignore[call-arg]
+        policy_file=tmp_path / "policy.json",
+        llm_provider="fake",
+        llm_model="",
+        aws_region="",
+        github_repository="",
+        github_token="",
+        OPENAI_API_KEY="",
+        DEEPSEEK_API_KEY="",
+        postgres_dsn="",
+        checkpoint_encryption_key="",
+        _env_file=None,
     )
     assert settings.llm_model is None
     assert settings.github_repository is None
     assert settings.openai_api_key is None
     assert settings.postgres_dsn is None
+
+
+@pytest.mark.parametrize("missing", ["github_token", "github_repository"])
+def test_settings_require_complete_github_write_configuration(tmp_path: Path, missing: str) -> None:
+    values: dict[str, object] = {
+        "policy_file": tmp_path / "policy.json",
+        "llm_provider": "fake",
+        "github_writes_enabled": True,
+        "github_token": "github_pat_" + "a" * 32,
+        "github_repository": "example/demo",
+    }
+    values[missing] = None
+    with pytest.raises(ValidationError, match="required when GitHub writes are enabled"):
+        Settings.model_validate(values)
 
 
 def test_policy_unknown_fields_fail_closed(tmp_path: Path) -> None:

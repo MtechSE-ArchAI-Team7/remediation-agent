@@ -134,6 +134,8 @@ def build_test_service(
     max_inspection_rounds: int | None = None,
     max_inspection_tool_calls: int | None = None,
     max_mcp_tool_timeout_seconds: int | None = None,
+    github_writes_enabled: bool = False,
+    github_repository: str | None = None,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -158,6 +160,10 @@ def build_test_service(
         policy_config = policy_config.model_copy(
             update={"limits": policy_config.limits.model_copy(update=limit_updates)}
         )
+    if github_writes_enabled:
+        policy_config = policy_config.model_copy(
+            update={"github": policy_config.github.model_copy(update={"writes_enabled": True})}
+        )
     policy = PolicyEngine(policy_config)
     model = FakeStructuredModel(responses, tool_turns=tool_turns or ())
     repository = FakeRepository(files=files or {"src/app.py": "value = int(raw)\n"})
@@ -181,6 +187,8 @@ def build_test_service(
         artifact_store=artifacts,
         audit_sink=audit,
         prompt_version="test-prompt-v1",
+        github_writes_enabled=github_writes_enabled,
+        github_repository=github_repository,
     )
     graph = build_graph(nodes, in_memory_checkpointer())
     return (

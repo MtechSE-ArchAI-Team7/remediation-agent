@@ -44,6 +44,31 @@ async def test_invalid_contract_and_unknown_run_return_typed_http_errors() -> No
             assert missing.status_code == 404
 
 
+async def test_tool_catalog_is_read_only_and_reports_stable_counts() -> None:
+    service, model, repository, sandbox, pr_provider, artifacts, audit = build_test_service({})
+    app = create_app(service)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/v1/tools")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["catalog_version"] == "1.0"
+    assert body["total_tools"] == 17
+    assert body["model_callable_tools"] == 4
+    assert body["workflow_only_tools"] == 13
+    assert len(body["tools"]) == 17
+    assert model.requests == []
+    assert model.tool_turn_messages == []
+    assert repository.created is False
+    assert sandbox.applied_patches == []
+    assert sandbox.tasks_run == []
+    assert sandbox.destroyed is False
+    assert pr_provider.requests == []
+    assert artifacts.requests == []
+    assert audit.requests == []
+
+
 async def test_approval_endpoint_resumes_checkpoint() -> None:
     service, *_ = build_test_service(
         scripted_responses(risk_level=RiskLevel.MEDIUM, risk_decision=PolicyDecision.ALLOW)

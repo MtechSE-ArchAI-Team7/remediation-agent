@@ -8,6 +8,10 @@ OPENAPI_TAGS: Final[list[dict[str, str]]] = [
         "description": "Service identity, liveness, and dependency readiness.",
     },
     {
+        "name": "Tools",
+        "description": "Read-only catalogue of model-callable and deterministic operational tools.",
+    },
+    {
         "name": "Remediations",
         "description": "Start, inspect, and approve bounded remediation workflow runs.",
     },

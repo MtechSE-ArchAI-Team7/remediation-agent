@@ -1,0 +1,53 @@
+# AIOS Operational Tool Catalogue
+
+> Generated from `src/remediation_agent/tools/catalog.py`; do not edit manually.
+
+The Resolution/Remediation Agent implements **17 operational tools**: **4 model-callable** inspection/control tools and **13 deterministic workflow-only** tools. All tools belong to the same agent and shared LangGraph state; they are not agents or subagents.
+
+## Authority boundary
+
+```mermaid
+flowchart LR
+    Model["Configured model"] -->|exact allowlist| Inspect["3 read-only MCP tools"]
+    Model --> Finish["finish_inspection control"]
+    Workflow["Deterministic LangGraph workflow"] --> Host["13 typed operational tools"]
+    Inspect --> Workspace["Disposable workspace"]
+    Host --> Workspace
+    Host -->|double gated| Remote["Optional branch and draft PR"]
+    Host --> Evidence["Redacted local evidence"]
+```
+
+Repository content cannot expand the allowlist, choose commands, call mutation tools, or grant remote-write authority. The workflow resolves policy-controlled arguments and invokes workflow-only tools deterministically.
+
+## Implemented tools
+
+| Tool ID | Description | Operation / typed boundary | Category | Execution | Effect | Availability | Controls |
+|---|---|---|---|---|---|---|---|
+| `mcp.list_repository_tree` | List a bounded repository subtree in the assigned disposable workspace. | `list_repository_tree` / `RepositoryInspectionPort` | `INSPECTION` | `MODEL_MCP` | `READ_ONLY` | `POLICY_GATED` | Canonical relative paths and symlink containment<br>Forbidden-path filtering and entry limits<br>One model tool call per inspection round |
+| `mcp.read_repository_file` | Read one bounded UTF-8 repository file from the assigned disposable workspace. | `read_repository_file` / `RepositoryInspectionPort` | `INSPECTION` | `MODEL_MCP` | `READ_ONLY` | `POLICY_GATED` | Secret, binary, forbidden-file, and symlink denial<br>Per-file and aggregate context limits<br>Redacted typed results |
+| `mcp.search_repository` | Run bounded fixed-string search across permitted repository files. | `search_repository` / `RepositoryInspectionPort` | `INSPECTION` | `MODEL_MCP` | `READ_ONLY` | `POLICY_GATED` | Fixed-string queries without a shell<br>Result, query, timeout, and context limits<br>Forbidden-path filtering and redaction |
+| `inspection.finish_inspection` | Signal that the adaptive inspection loop has gathered sufficient evidence. | `finish_inspection` / `LangChain control tool` | `INSPECTION` | `MODEL_CONTROL` | `CONTROL_ONLY` | `ALWAYS_BOUNDED` | No repository or mutation authority<br>Requires at least one successful MCP repository call<br>Bounded rationale schema |
+| `repository.create_workspace` | Create a disposable repository workspace at the immutable requested base commit. | `create_workspace` / `RepositoryWorkspacePort` | `REPOSITORY` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `POLICY_GATED` | Repository allowlist and immutable-base verification<br>Workflow-generated workspace identity<br>Never model-callable |
+| `repository.current_diff` | Retrieve and hash the current bounded workspace diff. | `current_diff` / `RepositoryWorkspacePort` | `REPOSITORY` | `DETERMINISTIC_WORKFLOW` | `READ_ONLY` | `POLICY_GATED` | Fixed Git argument arrays without a shell<br>Pre-apply and post-validation integrity checks<br>Never model-callable |
+| `repository.create_branch` | Create the workflow-generated remediation branch after validation succeeds. | `create_branch` / `RepositoryWorkspacePort` | `REPOSITORY` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `CONFIG_AND_POLICY_GATED` | Validated branch naming<br>Enabled only for configured GitHub writes<br>Never model-callable |
+| `repository.commit` | Commit the validated workspace diff with workflow-generated metadata. | `commit` / `RepositoryWorkspacePort` | `REPOSITORY` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `CONFIG_AND_POLICY_GATED` | Validated diff and configured Git identity<br>Enabled only for configured GitHub writes<br>Never model-callable |
+| `repository.push` | Push only the workflow-generated remediation branch to the configured repository. | `push` / `RepositoryWorkspacePort` | `REPOSITORY` | `DETERMINISTIC_WORKFLOW` | `OPTIONAL_REMOTE_WRITE` | `CONFIG_AND_POLICY_GATED` | Application and operator-policy write gates<br>Exact-host credential handling and idempotent branch scope<br>Never model-callable and never merges |
+| `sandbox.apply_patch` | Apply a preflighted unified patch inside the disposable workspace. | `apply_patch` / `SandboxExecutor` | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `POLICY_GATED` | Parsed path, diff, file-count, and forbidden-change checks<br>Exact approved patch or diff scope<br>Never model-callable |
+| `sandbox.restore_base` | Restore the disposable workspace to its immutable base before revision. | `restore_base` / `SandboxExecutor` | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `ALWAYS_BOUNDED` | Runs only inside the assigned workspace<br>Clean-base proof before a revised full patch<br>Never model-callable |
+| `sandbox.run_task` | Run one operator-defined validation task in the restricted Docker sandbox. | `run_task` / `SandboxExecutor` | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `POLICY_GATED` | Trusted argv arrays without a shell<br>Non-root, no network, resource, timeout, and output limits<br>Post-validation diff integrity check |
+| `sandbox.destroy` | Destroy the assigned disposable workspace during mandatory cleanup. | `destroy` / `SandboxExecutor` | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `ALWAYS_BOUNDED` | Exact workspace identity and root containment<br>Cleanup attempted for every workspace-owning terminal path<br>Cleanup failure is surfaced in state and evidence |
+| `pull_request.prepare` | Prepare a deterministic draft pull-request payload and metadata. | `prepare` / `PullRequestProvider` | `PULL_REQUEST` | `DETERMINISTIC_WORKFLOW` | `CONTROL_ONLY` | `POLICY_GATED` | Runs only after deterministic validation passes<br>Workflow-generated title, body, branch, and idempotency key<br>Creates no remote state |
+| `pull_request.create_draft` | Create an optional draft pull request for the validated pushed branch. | `create_draft` / `PullRequestProvider` | `PULL_REQUEST` | `DETERMINISTIC_WORKFLOW` | `OPTIONAL_REMOTE_WRITE` | `CONFIG_AND_POLICY_GATED` | Application and operator-policy write gates<br>Exact repository matching and idempotency key<br>Draft only; merge is unavailable |
+| `audit.write` | Write the redacted hash-chained JSONL audit trail for the run. | `write` / `AuditSink` | `EVIDENCE` | `DETERMINISTIC_WORKFLOW` | `LOCAL_EVIDENCE_WRITE` | `ALWAYS_BOUNDED` | Secret and path redaction<br>Stable digests, UTC timestamps, and hash chaining<br>Local artifact root containment |
+| `artifact.write_bundle` | Write the bounded remediation evidence and handoff artifact bundle. | `write_bundle` / `ArtifactStore` | `EVIDENCE` | `DETERMINISTIC_WORKFLOW` | `LOCAL_EVIDENCE_WRITE` | `ALWAYS_BOUNDED` | Workflow-generated file names and contents<br>Redaction and local artifact root containment<br>Failure recorded in the final handoff |
+
+## Model-callable subset
+
+Only these tools are bound to the model during repository inspection:
+
+- `list_repository_tree` — List a bounded repository subtree in the assigned disposable workspace.
+- `read_repository_file` — Read one bounded UTF-8 repository file from the assigned disposable workspace.
+- `search_repository` — Run bounded fixed-string search across permitted repository files.
+- `finish_inspection` — Signal that the adaptive inspection loop has gathered sufficient evidence.
+
+The first three operations are discovered from the fixed run-scoped stdio MCP server. `finish_inspection` is a local control with no repository authority. Every other catalogue entry is workflow-only and is never included in model-visible tool schemas.

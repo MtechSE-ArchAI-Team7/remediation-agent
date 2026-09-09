@@ -9,13 +9,20 @@ from typing import Annotated
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, Request, status
 
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
+from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider, NoGitCredentials
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
 from remediation_agent.adapters.mcp import StdioMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
-from remediation_agent.api.models import ErrorResponse, HealthResponse, ReadinessResponse, ServiceInfoResponse
+from remediation_agent.api.models import (
+    ErrorResponse,
+    HealthResponse,
+    ReadinessResponse,
+    ServiceInfoResponse,
+    ToolCatalogResponse,
+)
 from remediation_agent.api.openapi import (
     APPROVAL_DECISION_EXAMPLES,
     ERROR_EXAMPLES,
@@ -28,6 +35,7 @@ from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoff
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
+from remediation_agent.tools.catalog import OPERATIONAL_TOOL_CATALOG, operational_tool_counts
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
 
@@ -51,15 +59,18 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
         )
+        github_token = settings.github_token.get_secret_value() if settings.github_token else None
+        credential_provider = GitHubAskpassCredentialProvider(github_token) if github_token else NoGitCredentials()
         repository = LocalGitRepository(
             settings.workspace_root,
             author_name=settings.git_author_name,
             author_email=settings.git_author_email,
+            credential_provider=credential_provider,
         )
         inspection_tools = StdioMcpInspectionTools(settings.workspace_root, settings.policy_file)
         sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
         pr_provider = DraftPullRequestProvider(
-            token=settings.github_token.get_secret_value() if settings.github_token else None,
+            token=github_token,
             writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
         )
         artifact_store = LocalArtifactStore(settings.artifact_root)
@@ -142,6 +153,27 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
         if not await runtime.ready():
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="checkpoint store is not ready")
         return ReadinessResponse()
+
+    @application.get(
+        "/v1/tools",
+        response_model=ToolCatalogResponse,
+        tags=["Tools"],
+        summary="List operational tools",
+        description=(
+            "Return the versioned catalogue of model-callable inspection controls and deterministic workflow-only "
+            "operations. Listing the catalogue invokes no tool and creates no side effect."
+        ),
+        operation_id="list_operational_tools",
+        response_description="The implemented operational tool catalogue and authority boundaries.",
+    )
+    async def list_tools() -> ToolCatalogResponse:
+        model_count, workflow_count = operational_tool_counts()
+        return ToolCatalogResponse(
+            total_tools=len(OPERATIONAL_TOOL_CATALOG),
+            model_callable_tools=model_count,
+            workflow_only_tools=workflow_count,
+            tools=OPERATIONAL_TOOL_CATALOG,
+        )
 
     @application.post(
         "/v1/remediations",

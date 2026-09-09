@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-mcp test-integration test-sandbox-integration security schemas openapi build docker-build sandbox-build db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-mcp test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build sandbox-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -39,6 +39,9 @@ schemas:
 
 openapi:
 	uv run python scripts/export_openapi.py
+
+tool-catalog:
+	uv run python scripts/export_tool_catalog.py
 
 build:
 	uv build --no-build-isolation

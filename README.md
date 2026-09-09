@@ -67,6 +67,11 @@ calls workspace mutation, sandbox, Git, GitHub, artifact, approval, checkpoint, 
 The model-callable surface is deliberately smaller than the agent's operational surface. Repository inspection uses
 three read-only MCP tools; every mutation remains a deterministic workflow action behind a typed port.
 
+The versioned operational catalogue contains **17 implemented tools**: four model-callable inspection/control tools
+and thirteen deterministic workflow-only tools. `GET /v1/tools` exposes the same strict metadata used to generate
+[`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md), including each tool's typed boundary, authority, availability gate,
+description, and safety controls. Catalogue entries are operations of this one agent, not agents or subagents.
+
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
 | Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `StdioMcpInspectionTools` launches the fixed `remediation-repository-mcp` server. The model can list a tree, read one UTF-8 file, or run fixed-string search under policy, redaction, and output bounds. |
@@ -152,13 +157,16 @@ remediation-agent/
 ├── Dockerfile                      # API service image
 ├── docker/
 │   └── sandbox.Dockerfile          # Separate restricted validation image
+├── docs/
+│   └── TOOL_CATALOG.md             # Generated 17-tool catalogue and authority boundary
 ├── config/
 │   ├── policies/
 │   │   └── reference.json          # Reviewed reference policy and explicit limits
 │   └── schemas/                    # Generated handoff and policy JSON Schemas
 ├── scripts/
 │   ├── export_schemas.py           # Regenerates versioned JSON Schemas
-│   └── export_openapi.py           # Regenerates openapi.yaml from FastAPI
+│   ├── export_openapi.py           # Regenerates openapi.yaml from FastAPI
+│   └── export_tool_catalog.py       # Regenerates the assessment-facing tool catalogue
 ├── src/remediation_agent/
 │   ├── api/
 │   │   ├── app.py                  # FastAPI routes and production dependency lifecycle
@@ -190,6 +198,7 @@ remediation-agent/
 │   ├── mcp/
 │   │   └── server.py               # Three-tool run-scoped repository inspection server
 │   ├── tools/
+│   │   ├── catalog.py              # Typed inventory of all 17 operational tools
 │   │   └── inspection.py           # Local finish_inspection control tool
 │   ├── prompts/
 │   │   └── templates.py            # Versioned structured-output instructions
@@ -247,15 +256,50 @@ The runtime fails closed when required settings are absent.
 | `AIOS_CHECKPOINT_ENCRYPTION_KEY` | Exactly 16, 24, or 32 UTF-8 bytes for AES checkpoint encryption |
 | `AIOS_SANDBOX_IMAGE` | Restricted validation image; defaults to `aios-remediation-sandbox:local` |
 | `AIOS_GITHUB_WRITES_ENABLED` | Application-side gate for branch/push/draft creation; defaults to `false` |
-| `AIOS_GITHUB_REPOSITORY` | Optional `owner/repository` target for GitHub draft creation |
-| `AIOS_GITHUB_TOKEN` | Optional GitHub credential; required only when remote writes are enabled |
+| `AIOS_GITHUB_REPOSITORY` | Required `owner/repository` target when GitHub writes are enabled; it must match the handoff URL |
+| `AIOS_GITHUB_TOKEN` | Optional fine-grained token for private GitHub HTTPS clone; required for push and draft creation |
 
 The reference policy also requires `max_inspection_rounds`, `max_inspection_tool_calls`, and
 `max_mcp_tool_timeout_seconds`. Its committed values are 8 rounds, 12 calls, and 30 seconds. Requests and model output
 cannot change these limits or select a different MCP server.
 
-GitHub creation also requires `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled. Automatic
-merge is not implemented.
+GitHub creation also requires `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled. The Git
+adapter uses the injected token only through a trusted askpass process for exact-host `https://github.com` remotes; it
+never places credentials in URLs, argv, workflow state, checkpoints, model input, artifacts, or validation containers.
+Use a fine-grained token restricted to the target repository with Contents and Pull Requests read/write permission.
+Automatic merge is not implemented.
+
+`config/policies/demo.json` is a deliberately write-enabled policy scoped only to the Team 7 demo repository and local
+`file://` rehearsal clones. The reference policy remains write-disabled and should remain the safer starting point for
+other operators.
+
+## Ten-scenario demonstration
+
+The separate `aios-remediation-demo` repository contains ten immutable scenario branches and the matching diagnosis
+handoffs. List them from this repository with:
+
+```bash
+uv run python scripts/run_demo.py list
+```
+
+Run a deterministic local rehearsal through the real LangGraph workflow, stdio MCP inspection server, and Docker
+sandbox without creating remote state:
+
+```bash
+uv run python scripts/run_demo.py scripted 01
+```
+
+Approval scenarios require `--reviewer` and always stop for interactive confirmation. Add `--github-writes` only when
+the private repository, reviewed demo policy, fine-grained token, and intentional draft-PR side effects are ready. Live
+mode submits the pinned handoff to the running API and expects configured GitHub writes:
+
+```bash
+uv run python scripts/run_demo.py live 01 --reviewer operator@example.org
+```
+
+The runner refuses duplicate open case/base draft PRs unless `--allow-duplicate` is explicit. Scenario 10 must finish
+as `UNSAFE_REMEDIATION`; it never creates a remote branch or PR. The target repository's cleanup script is dry-run-first
+and can close only matching demo drafts and delete only their generated `aios/remediation/case-demo-*` branches.
 
 ## HTTP API and lifecycle
 
@@ -264,6 +308,7 @@ merge is not implemented.
 | `GET /` | `get_service_info` | Return service identity and architecture |
 | `GET /healthz` | `get_health` | Process liveness |
 | `GET /readyz` | `get_readiness` | Runtime and checkpoint readiness; returns `503` when unavailable |
+| `GET /v1/tools` | `list_operational_tools` | Return the versioned 17-tool catalogue without invoking any tool |
 | `POST /v1/remediations` | `start_remediation` | Accept `DiagnosisHandoffV1`; return `202` at completion or approval interrupt |
 | `GET /v1/remediations/{run_id}` | `get_remediation` | Return the latest persisted `RemediationRunView`; returns `404` when absent |
 | `POST /v1/remediations/{run_id}/approvals` | `submit_remediation_approval` | Resume with an exact `ApprovalDecisionV1`; returns `404` or `409` on mismatch |
@@ -306,14 +351,20 @@ FastAPI is the source of truth for the HTTP contract. The checked-in YAML must r
 make openapi
 ```
 
+The typed operational catalogue is the source of truth for the assessment-facing tool documentation:
+
+```bash
+make tool-catalog
+```
+
 Pydantic models are the source of truth for the versioned inter-agent and policy JSON Schemas:
 
 ```bash
 make schemas
 ```
 
-Run the corresponding command after changing an API route, response model, example, handoff, or policy model. The
-default test suite includes an OpenAPI drift check.
+Run the corresponding command after changing an API route, response model, example, tool descriptor, handoff, or policy
+model. The default test suite includes OpenAPI and tool-catalogue drift checks.
 
 ## Quality and test commands
 
