@@ -151,9 +151,13 @@ async def test_code_interpreter_runs_fixed_python_runner_and_always_stops(tmp_pa
     assert result.outcome is ValidationOutcome.PASSED
     assert result.stdout == "one passed\n"
     assert [item["name"] for item in fake.invocations] == ["writeFiles", "executeCode"]
+    upload_arguments = cast(dict[str, object], fake.invocations[0]["arguments"])
+    upload_content = cast(list[dict[str, object]], upload_arguments["content"])
+    assert all(not Path(cast(str, item["path"])).is_absolute() for item in upload_content)
     execute_arguments = cast(dict[str, object], fake.invocations[1]["arguments"])
     runner = cast(str, execute_arguments["code"])
     assert "shell=False" in runner
+    assert "pathlib.Path('aios-workspace').resolve()" in runner
     assert fake.stopped == ["ci-session"]
 
 

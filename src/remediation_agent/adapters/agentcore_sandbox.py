@@ -26,8 +26,8 @@ from remediation_agent.ports.models import ValidationTaskRequest
 
 _MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _MAX_ARCHIVE_FILES = 50_000
-_REMOTE_ARCHIVE = "/tmp/aios-workspace.tar.gz"  # noqa: S108  # nosec B108
-_REMOTE_VENDOR = "/tmp/aios-pytest-vendor.tar.gz"  # noqa: S108  # nosec B108
+_REMOTE_ARCHIVE = "aios-workspace.tar.gz"
+_REMOTE_VENDOR = "aios-pytest-vendor.tar.gz"
 _RESULT_MARKER = "__AIOS_VALIDATION_RESULT__"
 _FORBIDDEN_ARCHIVE_PATTERNS = (
     ".git",
@@ -295,8 +295,8 @@ def _runner_code(argv: list[str], cwd: str, environment: dict[str, str], timeout
 import base64, io, json, os, pathlib, subprocess, tarfile
 
 cfg = json.loads({payload!r})
-root = pathlib.Path('/tmp/aios-workspace').resolve()
-vendor = pathlib.Path('/tmp/aios-vendor').resolve()
+root = pathlib.Path('aios-workspace').resolve()
+vendor = pathlib.Path('aios-vendor').resolve()
 root.mkdir(parents=True, exist_ok=True)
 vendor.mkdir(parents=True, exist_ok=True)
 
