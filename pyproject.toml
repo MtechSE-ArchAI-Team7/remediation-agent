@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Bounded Resolution/Remediation Agent for AIOS."
 requires-python = ">=3.12"
 dependencies = [
+  "boto3>=1.43.62,<2.0.0",
   "fastapi>=0.116.0",
   "httpx>=0.28.0",
   "langchain-aws>=0.2.0",
@@ -12,6 +13,7 @@ dependencies = [
   "langchain-mcp-adapters>=0.3.1,<0.4.0",
   "langchain-openai>=0.3.9",
   "langgraph>=1.0.0",
+  "langgraph-checkpoint-aws==1.2.3",
   "langgraph-checkpoint-postgres>=3.0.0",
   "mcp>=1.28,<2.0.0",
   "psycopg[binary]>=3.2.0",
@@ -27,6 +29,7 @@ dev = [
   "hatchling>=1.28.0",
   "httpx>=0.28.0",
   "mypy>=1.16.0",
+  "pip>=26.2",
   "pip-audit>=2.9.0",
   "pyyaml>=6.0.3",
   "pytest>=8.4.0",

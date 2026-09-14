@@ -19,6 +19,7 @@ from remediation_agent.domain.models import (
     RemediationHandoffV1,
     RemediationRunView,
 )
+from remediation_agent.ports.protocols import WorkspaceRecoveryPort
 from remediation_agent.workflow.state import RemediationState
 
 
@@ -30,9 +31,13 @@ class ApprovalConflictError(ValueError):
     """Raised when an approval cannot be applied to the current interrupt."""
 
 
+class InvocationDeadlineError(TimeoutError):
+    """Raised when an AgentCore invocation reaches its bounded execution deadline."""
+
+
 CompiledRemediationGraph = CompiledStateGraph[
     RemediationState,
-    None, 
+    None,
     RemediationState,
     RemediationState,
 ]
@@ -47,13 +52,22 @@ class RemediationService:
         *,
         max_active_runs: int,
         redactor: SecretRedactor | None = None,
+        actor_id: str | None = None,
+        invocation_timeout_seconds: float | None = None,
+        workspace_recovery: WorkspaceRecoveryPort | None = None,
     ) -> None:
         self.graph = graph
         self._run_slots = asyncio.Semaphore(max_active_runs)
         self._redactor = redactor or SecretRedactor()
+        self._actor_id = actor_id
+        self._invocation_timeout_seconds = invocation_timeout_seconds
+        self._workspace_recovery = workspace_recovery
 
-    async def start(self, handoff: DiagnosisHandoffV1) -> RemediationRunView:
-        run_id = str(uuid4())
+    async def start(self, handoff: DiagnosisHandoffV1, *, run_id: str | None = None) -> RemediationRunView:
+        run_id = run_id or str(uuid4())
+        self._validate_run_id(run_id)
+        if await self._exists(run_id):
+            return await self.get(run_id)
         redacted_handoff = DiagnosisHandoffV1.model_validate(self._redact_data(handoff.model_dump(mode="python")))
         initial_state: RemediationState = {
             "run_id": run_id,
@@ -77,6 +91,14 @@ class RemediationService:
             raise ApprovalConflictError("approval ID and scope digest must match the pending interrupt")
         if redacted_decision.decided_at < request.requested_at:
             raise ApprovalConflictError("approval decision cannot predate the approval request")
+        if self._workspace_recovery is not None and "workspace" in state:
+            recovered = await self._workspace_recovery.ensure(
+                state["handoff"].repository,
+                state["workspace"],
+                recovery_is_safe=self._workspace_recovery_is_safe(state),
+            )
+            if recovered != state["workspace"]:
+                await self.graph.aupdate_state(self._config(run_id), {"workspace": recovered})
         return await self._invoke(Command(resume=redacted_decision.model_dump(mode="json")), run_id)
 
     async def get(self, run_id: str) -> RemediationRunView:
@@ -97,7 +119,14 @@ class RemediationService:
     async def _invoke(self, value: RemediationState | Command[object], run_id: str) -> RemediationRunView:
         config = self._config(run_id)
         async with self._run_slots:
-            raw = await self.graph.ainvoke(value, config=config)
+            try:
+                if self._invocation_timeout_seconds is None:
+                    raw = await self.graph.ainvoke(value, config=config)
+                else:
+                    async with asyncio.timeout(self._invocation_timeout_seconds):
+                        raw = await self.graph.ainvoke(value, config=config)
+            except TimeoutError as exc:
+                raise InvocationDeadlineError("remediation invocation exceeded its execution deadline") from exc
         state = cast(RemediationState, raw)
         snapshot = await self._snapshot(run_id)
         if snapshot.values:
@@ -130,9 +159,23 @@ class RemediationService:
             result=result,
         )
 
+    def _config(self, run_id: str) -> RunnableConfig:
+        configurable = {"thread_id": run_id}
+        if self._actor_id is not None:
+            configurable["actor_id"] = self._actor_id
+        return {"configurable": configurable}
+
+    async def _exists(self, run_id: str) -> bool:
+        snapshot = await self.graph.aget_state(self._config(run_id))
+        return bool(snapshot.values)
+
     @staticmethod
-    def _config(run_id: str) -> RunnableConfig:
-        return {"configurable": {"thread_id": run_id}}
+    def _workspace_recovery_is_safe(state: RemediationState) -> bool:
+        return (
+            state.get("final_status") is FinalStatus.AWAITING_APPROVAL
+            and "validation_baseline_digest" not in state
+            and "proposed_commit" not in state
+        )
 
     @staticmethod
     def _pending_approval(state: RemediationState, snapshot: StateSnapshot) -> ApprovalRequest | None:

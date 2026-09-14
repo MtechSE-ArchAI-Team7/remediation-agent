@@ -15,10 +15,10 @@ privileged-access operations. The HTTP API does not implement caller authenticat
 | Output | Versioned `RemediationHandoffV1` for the Verification/Monitoring Agent |
 | Supported remediation | Bounded `CODE` and `CONFIGURATION` changes |
 | Human-only remediation | Account unlock, password reset, access provisioning, privileged access, and production changes |
-| Persistence | In-memory checkpoints in tests; encrypted PostgreSQL checkpoints in the service runtime |
+| Persistence | In-memory checkpoints in tests; encrypted PostgreSQL locally; encrypted AgentCore Memory when hosted |
 | Approval | LangGraph interrupts bound to an exact plan or patch digest |
 | Deployment-target model provider | AWS Bedrock through `ChatBedrockConverse` |
-| Execution boundary | Docker validation sandbox with operator-defined named tasks |
+| Execution boundary | Docker locally; isolated AgentCore Code Interpreter sessions when hosted |
 | External writes | Draft-PR preparation by default; GitHub branch, push, and draft creation only when both gates are enabled |
 
 The workflow subgraphs are organizational stages that share the same identity, state,
@@ -55,7 +55,7 @@ The lifecycle is:
 5. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
 6. Interrupt for approval when the plan or exact patch crosses an approval boundary.
 7. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
-8. Resolve proposed validation names through operator policy and run their fixed argument arrays in the Docker sandbox.
+8. Resolve proposed validation names through operator policy and run their fixed argument arrays in Docker locally or Code Interpreter when hosted.
 9. Evaluate results deterministically. Failed attempts restart from the immutable base and stop at the configured limit.
 10. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
 
@@ -77,11 +77,11 @@ agents or subagents. The hosted-tool migration advances the catalogue response t
 |---|---|---|
 | Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects only to GitHub's hosted read-only MCP endpoint. Repository identity, immutable SHA, paths, search scope, schemas, redaction, and output bounds are enforced by the host adapter. |
 | Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
-| Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` preflights/applies a unified patch, restores the base, runs named tasks, collects artifacts, and destroys the workspace. |
+| Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` is used locally; `AgentCoreCodeInterpreterSandbox` retains the patch boundary and validates a sanitized copy in an isolated managed session. |
 | Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
 | Pull-request handling | `PullRequestProvider` | A deterministic draft payload is always prepared; authenticated GitHub draft creation is separately gated and merge is unavailable. |
-| Evidence and audit | `ArtifactStore`, `AuditSink` | Local redacted artifacts and hash-chained JSONL audit events record material decisions and side effects. |
-| Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL persistence. |
+| Evidence and audit | `ArtifactStore`, `AuditSink` | Local files or immutable digest-addressed S3 objects hold redacted artifacts and hash-chained audit events. |
+| Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL or AgentCore Memory persistence. |
 
 The reference policy defines these validation task names:
 
@@ -421,12 +421,12 @@ Docker tests skip when the daemon or `aios-remediation-sandbox:local` image is u
 test uses `AIOS_TEST_POSTGRES_DSN` when set, then the local `AIOS_POSTGRES_DSN`; it skips when neither is configured.
 Live model tests require their explicit marker/environment gate and never run in the default suite.
 
-## Bedrock AgentCore smoke deployment
+## Bedrock AgentCore deployment
 
-`Dockerfile.agentcore` packages a smoke-only FastAPI entry point for Amazon Bedrock AgentCore Runtime. It does not run
-the remediation workflow. `GET /ping` implements the Runtime health contract, and `POST /invocations` accepts only
-`{"input":{"probe":"bedrock"}}`. The invocation makes one fixed structured call through the existing Bedrock adapter
-and returns bounded provider/model telemetry without returning prompts or unrestricted model output.
+`Dockerfile.agentcore` packages the same one-agent LangGraph workflow behind AgentCore's HTTP contract. `GET /ping`
+implements process health without touching session storage. `POST /invocations` accepts a strict `action` union for a
+bounded Bedrock probe, starting a diagnosis handoff, reading a run, or submitting a digest-bound approval. The required
+AgentCore runtime session header must be a canonical UUID and is also the remediation run ID.
 
 The image workflow publishes `linux/arm64` commit-SHA tags to
 `734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent`. Configure the repository secret
@@ -441,14 +441,27 @@ immutable commit-SHA image URI. Configure these non-secret environment variables
 AIOS_LLM_PROVIDER=bedrock
 AIOS_LLM_MODEL=apac.amazon.nova-micro-v1:0
 AIOS_AWS_REGION=ap-southeast-1
-AIOS_POLICY_FILE=/app/config/policies/reference.json
+AIOS_POLICY_FILE=/app/config/policies/agentcore-demo.json
+AIOS_GITHUB_REPOSITORY=MtechSE-ArchAI-Team7/aios-remediation-demo
+AIOS_GITHUB_WRITES_ENABLED=true
+AIOS_AGENTCORE_MEMORY_ID=<memory-id>
+AIOS_RUNTIME_SECRET_ARN=<secrets-manager-arn>
+AIOS_ARTIFACT_BUCKET=aios-remediation-agent-artifacts-734849394833-ap-southeast-1
+AIOS_WORKSPACE_ROOT=/mnt/workspace/runs
+AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 ```
 
-The Runtime execution role needs ECR read access for only `aios/remediation-agent`, CloudWatch runtime-log permissions,
-and `bedrock:InvokeModel` for the configured inference profile and its Nova Micro foundation-model resources. No
-PostgreSQL DSN, checkpoint key, GitHub token, Docker daemon, or writable remediation workspace is used by this smoke
-entry point. Full remediation on AgentCore remains deferred until a non-Docker validation backend and durable runtime
-dependencies are implemented.
+Mount managed session storage at `/mnt/workspace`. Store a two-field JSON secret containing `github_token` and an exact
+32-byte UTF-8 `checkpoint_encryption_key`; neither value belongs in environment variables. The execution role needs
+scoped ECR/logging and Nova Micro access, AgentCore Memory event access, Code Interpreter session operations, exact
+secret read access, and object access only to the dedicated artifact bucket.
+
+AgentCore Memory stores encrypted LangGraph checkpoints using actor `resolution-remediation-agent` and the run UUID as
+thread ID. Git operations use the mounted disposable workspace. Validation copies a secret-free archive to a fresh
+Code Interpreter session, runs only operator-owned JSON argv through a fixed `shell=False` runner, and always stops the
+session. The initial hosted policy supports pytest and JSON validation using an offline tool bundle; no package download
+or repository network access is allowed inside validation. Artifacts and audit events are redacted before immutable,
+digest-addressed S3 writes. GitHub writes remain double-gated and can create a draft PR but never merge it.
 
 ## Sandbox and policy boundary
 

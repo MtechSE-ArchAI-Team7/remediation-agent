@@ -53,7 +53,7 @@ docker-build:
 	docker build -t aios-remediation-agent:local .
 
 agentcore-docker-build:
-	docker build --platform linux/arm64 -f Dockerfile.agentcore -t aios-remediation-agentcore-smoke:local .
+	docker build --platform linux/arm64 -f Dockerfile.agentcore -t aios-remediation-agentcore:local .
 
 sandbox-build:
 	docker build -f docker/sandbox.Dockerfile -t aios-remediation-sandbox:local .

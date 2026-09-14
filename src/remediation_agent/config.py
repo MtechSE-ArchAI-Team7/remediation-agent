@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8080, ge=1, le=65535)
     prompt_version: str = "remediation-v1"
 
+    agentcore_memory_id: str | None = None
+    runtime_secret_arn: str | None = None
+    artifact_bucket: str | None = None
+    code_interpreter_identifier: str = "aws.codeinterpreter.v1"
+    code_interpreter_bundle: Path = Path("/app/validation/pytest_vendor.tar.gz")
+    invocation_timeout_seconds: float = Field(default=840.0, gt=0, le=840.0)
+
     @field_validator(
         "llm_model",
         "aws_region",
@@ -80,6 +87,9 @@ class Settings(BaseSettings):
         "checkpoint_encryption_key",
         "github_token",
         "github_repository",
+        "agentcore_memory_id",
+        "runtime_secret_arn",
+        "artifact_bucket",
         mode="before",
     )
     @classmethod
@@ -116,7 +126,7 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_KEY is required for OpenAI")
         if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
             raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
-        if self.github_writes_enabled and self.github_token is None:
+        if self.github_writes_enabled and self.github_token is None and self.runtime_secret_arn is None:
             raise ValueError("AIOS_GITHUB_TOKEN is required when GitHub writes are enabled")
         if self.github_writes_enabled and self.github_repository is None:
             raise ValueError("AIOS_GITHUB_REPOSITORY is required when GitHub writes are enabled")
@@ -133,3 +143,23 @@ class Settings(BaseSettings):
         if self.github_token is None:
             raise ValueError("AIOS_GITHUB_TOKEN is required for hosted GitHub MCP inspection")
         return self.github_token.get_secret_value()
+
+    def require_agentcore_configuration(self) -> tuple[str, str, str]:
+        """Return the identifiers required by the hosted AgentCore composition root."""
+
+        missing = [
+            name
+            for name, value in (
+                ("AIOS_AGENTCORE_MEMORY_ID", self.agentcore_memory_id),
+                ("AIOS_RUNTIME_SECRET_ARN", self.runtime_secret_arn),
+                ("AIOS_ARTIFACT_BUCKET", self.artifact_bucket),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(f"AgentCore runtime configuration is incomplete: {', '.join(missing)}")
+        return (
+            cast(str, self.agentcore_memory_id),
+            cast(str, self.runtime_secret_arn),
+            cast(str, self.artifact_bucket),
+        )

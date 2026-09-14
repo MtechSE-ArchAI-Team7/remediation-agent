@@ -79,3 +79,16 @@ async def test_scenario_c_security_weakening_is_rejected_without_side_effects() 
     assert sandbox.tasks_run == []
     assert pr.requests == []
     assert audit.requests
+
+
+async def test_explicit_run_id_makes_duplicate_start_idempotent() -> None:
+    service, model, _, _, _, _, _ = build_test_service(scripted_responses())
+    run_id = "2db1f13e-7351-4a1f-a4c6-630646366d52"
+
+    first = await service.start(diagnosis_handoff(), run_id=run_id)
+    request_count = len(model.requests)
+    second = await service.start(diagnosis_handoff(), run_id=run_id)
+
+    assert first == second
+    assert first.run_id == run_id
+    assert len(model.requests) == request_count

@@ -1,0 +1,73 @@
+{
+  "policy_id": "aios-remediation-agentcore-demo-v1",
+  "version": "1.0",
+  "repositories": {
+    "allowed_providers": ["GITHUB"],
+    "allowed_url_patterns": [
+      "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git"
+    ]
+  },
+  "paths": {
+    "autonomous": ["src/**", "tests/**", "config/**", "*.py", "*.json", "*.toml", "*.yaml", "*.yml"],
+    "approval_required": [
+      ".github/workflows/**", "Dockerfile", "docker/**", "compose.yaml", "pyproject.toml", "uv.lock",
+      "requirements*.txt", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+      "migrations/**", "**/migrations/**", "**/auth/**", "**/*auth*.py", "**/security/**", "**/iam/**",
+      "*iam*.json", "*.tf", "**/*.tf", "k8s/**", "**/k8s/**", "kubernetes/**", "**/kubernetes/**",
+      "helm/**", "**/helm/**", "**/Chart.yaml"
+    ],
+    "forbidden": [
+      ".git", ".git/**", ".env", ".env.*", "**/.env", "**/.env.*", "*.pem", "**/*.pem",
+      "*.key", "**/*.key", "credentials*", "**/credentials*", "secrets/**", "**/secrets/**"
+    ]
+  },
+  "limits": {
+    "autonomous_max_changed_files": 5,
+    "absolute_max_changed_files": 10,
+    "autonomous_max_diff_lines": 400,
+    "absolute_max_diff_lines": 800,
+    "max_validation_attempts": 2,
+    "max_model_format_retries": 2,
+    "max_tree_entries": 500,
+    "max_file_bytes": 65536,
+    "max_search_results": 50,
+    "max_context_bytes": 262144,
+    "max_inspection_rounds": 8,
+    "max_inspection_tool_calls": 12,
+    "max_mcp_tool_timeout_seconds": 30,
+    "max_task_timeout_seconds": 120,
+    "max_task_output_bytes": 1048576,
+    "max_validation_tasks_per_attempt": 2,
+    "max_model_output_tokens": 4096,
+    "max_active_runs": 2
+  },
+  "default_validation_tasks": ["unit_tests"],
+  "validation_tasks": {
+    "unit_tests": {
+      "argv": ["python", "-m", "pytest", "-q"],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 120,
+      "output_limit_bytes": 1048576,
+      "retryable": false
+    },
+    "config_validation": {
+      "argv": ["python", "-m", "json.tool", "config/service.json"],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 30,
+      "output_limit_bytes": 65536,
+      "retryable": false
+    }
+  },
+  "mandatory_tasks": [
+    {"path_patterns": ["src/**", "tests/**", "*.py"], "task_names": ["unit_tests"]},
+    {"path_patterns": ["config/**", "*.json"], "task_names": ["config_validation"]}
+  ],
+  "artifacts": {
+    "retention_days": 7,
+    "write_audit_jsonl": true,
+    "include_full_diff": true
+  },
+  "github": {"writes_enabled": true}
+}

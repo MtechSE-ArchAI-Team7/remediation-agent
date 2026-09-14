@@ -50,7 +50,6 @@ class LocalGitRepository:
         credential_provider: GitCredentialProvider | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
         self.command_timeout_seconds = command_timeout_seconds
         self.author_name = author_name
         self.author_email = author_email
@@ -58,6 +57,7 @@ class LocalGitRepository:
         self.credential_provider = credential_provider or NoGitCredentials()
 
     async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef:
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
         workspace_path = Path(tempfile.mkdtemp(prefix="remediation-", dir=self.workspace_root)).resolve()
         command = [
             "git",
@@ -85,6 +85,11 @@ class LocalGitRepository:
             self._safe_remove_workspace(workspace_path)
             raise
         return WorkspaceRef(workspace_id=workspace_path.name, path=str(workspace_path), base_commit=base_commit)
+
+    async def remove_workspace(self, workspace: WorkspaceRef) -> None:
+        """Remove one validated workspace without invoking validation-container cleanup."""
+
+        self._safe_remove_workspace(self._workspace_root(workspace))
 
     async def list_tree(self, request: TreeRequest) -> TreeResult:
         root = self._workspace_root(request.workspace)

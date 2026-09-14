@@ -127,5 +127,17 @@ class ReadinessProbe(Protocol):
     async def ready(self) -> bool: ...
 
 
+class WorkspaceRecoveryPort(Protocol):
+    """Recover an absent disposable workspace from its immutable repository reference."""
+
+    async def ensure(
+        self,
+        repository: RepositoryRef,
+        workspace: WorkspaceRef,
+        *,
+        recovery_is_safe: bool,
+    ) -> WorkspaceRef: ...
+
+
 class StructuredOutputRunnable(Protocol):
     async def ainvoke(self, input: object) -> BaseModel: ...
