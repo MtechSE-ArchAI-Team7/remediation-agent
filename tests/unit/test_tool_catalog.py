@@ -46,6 +46,17 @@ def test_catalog_contains_seventeen_unique_real_operations() -> None:
         boundary = _WORKFLOW_BOUNDARIES[item.boundary]
         assert hasattr(boundary, item.operation), f"catalogued operation is not implemented: {item.tool_id}"
 
+    assert {
+        item.operation: item.arguments
+        for item in OPERATIONAL_TOOL_CATALOG
+        if item.execution_mode is not OperationalToolExecutionMode.DETERMINISTIC_WORKFLOW
+    } == {
+        "get_repository_tree": ("owner", "repo", "tree_sha", "recursive", "path_filter"),
+        "get_file_contents": ("owner", "repo", "path", "ref", "sha", "fields"),
+        "search_code": ("query", "sort", "order", "fields", "page", "perPage"),
+        "finish_inspection": ("rationale",),
+    }
+
 
 def test_committed_tool_catalog_document_matches_typed_catalogue() -> None:
     document = Path(__file__).parents[2] / "docs" / "TOOL_CATALOG.md"

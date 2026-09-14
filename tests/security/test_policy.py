@@ -25,9 +25,10 @@ def test_demo_policy_is_exactly_scoped_and_reference_writes_stay_disabled() -> N
 
     assert reference.github.writes_enabled is False
     assert demo.github.writes_enabled is True
+    assert reference.repositories.allowed_providers == ["GITHUB"]
+    assert demo.repositories.allowed_providers == ["GITHUB"]
     assert demo.repositories.allowed_url_patterns == [
-        "file:///**",
-        "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git",
+        "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git"
     ]
 
 

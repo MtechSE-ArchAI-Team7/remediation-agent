@@ -53,11 +53,22 @@ async def test_tool_catalog_is_read_only_and_reports_stable_counts() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["catalog_version"] == "1.0"
+    assert body["catalog_version"] == "1.1"
     assert body["total_tools"] == 17
     assert body["model_callable_tools"] == 4
     assert body["workflow_only_tools"] == 13
     assert len(body["tools"]) == 17
+    model_tools = {
+        item["operation"]: item["arguments"]
+        for item in body["tools"]
+        if item["execution_mode"] != "DETERMINISTIC_WORKFLOW"
+    }
+    assert model_tools == {
+        "get_repository_tree": ["owner", "repo", "tree_sha", "recursive", "path_filter"],
+        "get_file_contents": ["owner", "repo", "path", "ref", "sha", "fields"],
+        "search_code": ["query", "sort", "order", "fields", "page", "perPage"],
+        "finish_inspection": ["rationale"],
+    }
     assert model.requests == []
     assert model.tool_turn_messages == []
     assert repository.created is False

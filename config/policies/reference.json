@@ -2,10 +2,8 @@
   "policy_id": "reference-v1",
   "version": "1.0",
   "repositories": {
-    "allowed_providers": ["LOCAL", "GITHUB"],
+    "allowed_providers": ["GITHUB"],
     "allowed_url_patterns": [
-      "fixture-repository",
-      "file:///**",
       "https://github.com/MtechSE-ArchAI-Team7/**"
     ]
   },

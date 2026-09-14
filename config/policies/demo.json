@@ -2,9 +2,8 @@
   "policy_id": "aios-remediation-demo-v1",
   "version": "1.0",
   "repositories": {
-    "allowed_providers": ["LOCAL", "GITHUB"],
+    "allowed_providers": ["GITHUB"],
     "allowed_url_patterns": [
-      "file:///**",
       "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git"
     ]
   },

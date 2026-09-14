@@ -6,8 +6,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
-import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,10 +15,10 @@ import httpx
 from pydantic import Field
 
 from remediation_agent.adapters.checkpoint import in_memory_checkpointer
-from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider, NoGitCredentials
+from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
 from remediation_agent.adapters.fakes import FakeStructuredModel
-from remediation_agent.adapters.mcp import StdioMcpInspectionTools
+from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
@@ -29,7 +27,6 @@ from remediation_agent.domain.enums import (
     FinalStatus,
     ModelOperation,
     PolicyDecision,
-    RepositoryProvider,
     RiskLevel,
 )
 from remediation_agent.domain.models import (
@@ -39,13 +36,11 @@ from remediation_agent.domain.models import (
     PatchCandidate,
     RemediationPlan,
     RemediationRunView,
-    RepositoryRef,
     RiskAssessment,
     StrictModel,
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
-from remediation_agent.ports.protocols import GitCredentialProvider
 from remediation_agent.service import RemediationService
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
@@ -160,35 +155,6 @@ def _read_bounded(repository_root: Path, relative_path: str) -> str:
     if len(value.encode("utf-8")) > 2_000_000:
         raise ValueError(f"demo file exceeds the patch limit: {relative_path}")
     return value
-
-
-async def _create_local_mirror(repository_root: Path) -> tuple[tempfile.TemporaryDirectory[str], Path]:
-    git = shutil.which("git")
-    if git is None:
-        raise RuntimeError("Git is required for scripted demo runs")
-    temporary_root = Path(tempfile.gettempdir()).resolve()
-    if str(temporary_root).startswith(("/Users/", "/home/")):
-        raise RuntimeError("temporary root must not contain a user-specific path")
-    temporary = tempfile.TemporaryDirectory(prefix="aios-demo-source-", dir=temporary_root)
-    mirror = Path(temporary.name) / "source.git"
-    process = await asyncio.create_subprocess_exec(  # noqa: S603
-        git,
-        "clone",
-        "--quiet",
-        "--mirror",
-        "--no-hardlinks",
-        "--",
-        str(repository_root.resolve()),
-        str(mirror),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        temporary.cleanup()
-        detail = (stderr or stdout).decode("utf-8", errors="replace")[:4_000]
-        raise RuntimeError(f"could not create disposable demo source mirror: {detail}")
-    return temporary, mirror
 
 
 async def _check_duplicate(scenario: DemoScenario, *, allow_duplicate: bool) -> None:
@@ -334,27 +300,11 @@ async def run_scripted(
 ) -> None:
     if github_writes:
         await _check_duplicate(scenario, allow_duplicate=allow_duplicate)
-    original_handoff = load_handoff(repository_root, scenario)
-    handoff = original_handoff
+    handoff = load_handoff(repository_root, scenario)
     token = os.environ.get("AIOS_GITHUB_TOKEN")
-    temporary_source: tempfile.TemporaryDirectory[str] | None = None
-    if github_writes:
-        if not token:
-            raise RuntimeError("AIOS_GITHUB_TOKEN is required for scripted GitHub writes")
-        credential_provider: GitCredentialProvider = GitHubAskpassCredentialProvider(token)
-    else:
-        credential_provider = NoGitCredentials()
-        temporary_source, mirror = await _create_local_mirror(repository_root)
-        handoff = original_handoff.model_copy(
-            update={
-                "repository": RepositoryRef(
-                    provider=RepositoryProvider.LOCAL,
-                    url=mirror.resolve().as_uri(),
-                    base_branch=scenario.branch,
-                    commit_sha=scenario.commit_sha,
-                )
-            }
-        )
+    if not token:
+        raise RuntimeError("AIOS_GITHUB_TOKEN is required for hosted GitHub MCP inspection")
+    credential_provider = GitHubAskpassCredentialProvider(token)
     policy = PolicyEngine(load_policy(policy_file.resolve()))
     repository = LocalGitRepository(workspace_root.resolve(), credential_provider=credential_provider)
     model = FakeStructuredModel(scripted_responses(repository_root, scenario, handoff))
@@ -362,7 +312,7 @@ async def run_scripted(
         policy=policy,
         model=model,
         repository=repository,
-        inspection_tools=StdioMcpInspectionTools(workspace_root.resolve(), policy_file.resolve()),
+        inspection_tools=GitHubRemoteMcpInspectionTools(token, policy),
         sandbox=DockerSandboxExecutor(workspace_root.resolve(), sandbox_image),
         pr_provider=DraftPullRequestProvider(token=token, writes_enabled=github_writes),
         artifact_store=LocalArtifactStore(artifact_root.resolve()),
@@ -372,14 +322,10 @@ async def run_scripted(
         github_repository=manifest.repository,
     )
     service = RemediationService(build_graph(nodes, in_memory_checkpointer()), max_active_runs=1)
-    try:
-        view = await service.start(handoff)
-        view = await _resolve_approvals(view, reviewer=reviewer, resume=service.approve)
-        _assert_expected(view, scenario, github_writes=github_writes)
-        _print_result(view)
-    finally:
-        if temporary_source is not None:
-            temporary_source.cleanup()
+    view = await service.start(handoff)
+    view = await _resolve_approvals(view, reviewer=reviewer, resume=service.approve)
+    _assert_expected(view, scenario, github_writes=github_writes)
+    _print_result(view)
 
 
 def _parser() -> argparse.ArgumentParser:

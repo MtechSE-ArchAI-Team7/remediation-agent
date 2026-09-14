@@ -79,7 +79,11 @@ class GitCredentialProvider(Protocol):
 
 
 class InspectionToolProvider(Protocol):
-    def session(self, workspace: WorkspaceRef) -> AbstractAsyncContextManager[Sequence[BaseTool]]: ...
+    def session(
+        self,
+        repository: RepositoryRef,
+        workspace: WorkspaceRef,
+    ) -> AbstractAsyncContextManager[Sequence[BaseTool]]: ...
 
 
 class SandboxExecutor(Protocol):

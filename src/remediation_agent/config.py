@@ -128,3 +128,8 @@ class Settings(BaseSettings):
         if self.checkpoint_encryption_key is None:
             raise ValueError("AIOS_CHECKPOINT_ENCRYPTION_KEY is required for persisted checkpoints")
         return self.postgres_dsn.get_secret_value(), self.checkpoint_encryption_key.get_secret_value()
+
+    def require_github_token(self) -> str:
+        if self.github_token is None:
+            raise ValueError("AIOS_GITHUB_TOKEN is required for hosted GitHub MCP inspection")
+        return self.github_token.get_secret_value()

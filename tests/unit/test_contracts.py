@@ -53,18 +53,20 @@ def test_settings_require_model_for_live_provider(tmp_path: Path) -> None:
 
 
 def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
-    settings = Settings(  # type: ignore[call-arg]
-        policy_file=tmp_path / "policy.json",
-        llm_provider="fake",
-        llm_model="",
-        aws_region="",
-        github_repository="",
-        github_token="",
-        OPENAI_API_KEY="",
-        DEEPSEEK_API_KEY="",
-        postgres_dsn="",
-        checkpoint_encryption_key="",
-        _env_file=None,
+    settings = Settings.model_validate(
+        {
+            "policy_file": tmp_path / "policy.json",
+            "llm_provider": "fake",
+            "llm_model": "",
+            "aws_region": "",
+            "github_repository": "",
+            "github_token": "",
+            "github_writes_enabled": False,
+            "OPENAI_API_KEY": "",
+            "DEEPSEEK_API_KEY": "",
+            "postgres_dsn": "",
+            "checkpoint_encryption_key": "",
+        }
     )
     assert settings.llm_model is None
     assert settings.github_repository is None
@@ -84,6 +86,22 @@ def test_settings_require_complete_github_write_configuration(tmp_path: Path, mi
     values[missing] = None
     with pytest.raises(ValidationError, match="required when GitHub writes are enabled"):
         Settings.model_validate(values)
+
+
+def test_production_runtime_requires_github_token_for_hosted_mcp(tmp_path: Path) -> None:
+    settings = Settings(policy_file=tmp_path / "policy.json", llm_provider="fake", _env_file=None)  # type: ignore[call-arg]
+
+    with pytest.raises(ValueError, match="hosted GitHub MCP inspection"):
+        settings.require_github_token()
+
+    configured = Settings.model_validate(
+        {
+            "policy_file": tmp_path / "policy.json",
+            "llm_provider": "fake",
+            "github_token": "github_pat_" + "a" * 32,
+        }
+    )
+    assert configured.require_github_token() == "github_pat_" + "a" * 32
 
 
 def test_policy_unknown_fields_fail_closed(tmp_path: Path) -> None:

@@ -832,6 +832,13 @@ components:
           maxLength: 1000
           minLength: 1
           title: Description
+        arguments:
+          items:
+            type: string
+            minLength: 1
+          type: array
+          maxItems: 20
+          title: Arguments
         controls:
           items:
             type: string
@@ -1112,9 +1119,9 @@ components:
       properties:
         catalog_version:
           type: string
-          const: '1.0'
+          const: '1.1'
           title: Catalog Version
-          default: '1.0'
+          default: '1.1'
         total_tools:
           type: integer
           minimum: 1.0

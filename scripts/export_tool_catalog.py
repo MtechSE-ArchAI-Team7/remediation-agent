@@ -29,7 +29,8 @@ def render_tool_catalog_markdown() -> str:
         '    Model["Configured model"] -->|exact allowlist| Inspect["3 read-only MCP tools"]',
         '    Model --> Finish["finish_inspection control"]',
         '    Workflow["Deterministic LangGraph workflow"] --> Host["13 typed operational tools"]',
-        '    Inspect --> Workspace["Disposable workspace"]',
+        '    Inspect --> GitHub["GitHub hosted MCP server"]',
+        '    GitHub --> Repository["Authorized GitHub repository"]',
         "    Host --> Workspace",
         '    Host -->|double gated| Remote["Optional branch and draft PR"]',
         '    Host --> Evidence["Redacted local evidence"]',
@@ -41,15 +42,16 @@ def render_tool_catalog_markdown() -> str:
         "",
         "## Implemented tools",
         "",
-        "| Tool ID | Description | Operation / typed boundary | Category | Execution | Effect | Availability | "
-        "Controls |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Tool ID | Description | Operation / typed boundary | Arguments | Category | Execution | Effect | "
+        "Availability | Controls |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for item in OPERATIONAL_TOOL_CATALOG:
         controls = "<br>".join(_escape(value) for value in item.controls)
+        arguments = ", ".join(f"`{_escape(value)}`" for value in item.arguments) or "—"
         lines.append(
             f"| `{_escape(item.tool_id)}` | {_escape(item.description)} | `{_escape(item.operation)}` / "
-            f"`{_escape(item.boundary)}` | `{item.category}` | `{item.execution_mode}` | "
+            f"`{_escape(item.boundary)}` | {arguments} | `{item.category}` | `{item.execution_mode}` | "
             f"`{item.effect}` | `{item.availability}` | {controls} |"
         )
     lines.extend(
@@ -63,11 +65,13 @@ def render_tool_catalog_markdown() -> str:
     )
     for item in OPERATIONAL_TOOL_CATALOG:
         if item.execution_mode is not OperationalToolExecutionMode.DETERMINISTIC_WORKFLOW:
-            lines.append(f"- `{item.operation}` — {item.description}")
+            signature = ", ".join(item.arguments)
+            lines.append(f"- `{item.operation}({signature})` — {item.description}")
     lines.extend(
         [
             "",
-            "The first three operations are discovered from the fixed run-scoped stdio MCP server. "
+            "The first three operations are discovered from GitHub's hosted run-scoped MCP session and are "
+            "restricted to the authorized repository and immutable commit. "
             "`finish_inspection` is a local control with no repository authority. Every other catalogue entry is "
             "workflow-only and is never included in model-visible tool schemas.",
             "",

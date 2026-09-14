@@ -32,7 +32,7 @@ class ReadinessResponse(StrictModel):
 class ToolCatalogResponse(StrictModel):
     """Versioned public inventory of implemented operational tools."""
 
-    catalog_version: Literal["1.0"] = "1.0"
+    catalog_version: Literal["1.1"] = "1.1"
     total_tools: int = Field(ge=1)
     model_callable_tools: int = Field(ge=0)
     workflow_only_tools: int = Field(ge=0)

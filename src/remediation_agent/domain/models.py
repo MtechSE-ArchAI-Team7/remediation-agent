@@ -137,16 +137,30 @@ class FinishInspectionArgs(StrictModel):
     rationale: str = Field(min_length=1, max_length=4_000)
 
 
-class ListRepositoryTreeArgs(StrictModel):
-    relative_path: RepositoryPathStr = "."
+class GetRepositoryTreeArgs(StrictModel):
+    owner: str = Field(min_length=1, max_length=100)
+    repo: str = Field(min_length=1, max_length=100)
+    tree_sha: str | None = Field(default=None, min_length=7, max_length=64)
+    recursive: bool = False
+    path_filter: RepositoryPathStr | None = None
 
 
-class ReadRepositoryFileArgs(StrictModel):
-    relative_path: RepositoryPathStr
+class GetFileContentsArgs(StrictModel):
+    owner: str = Field(min_length=1, max_length=100)
+    repo: str = Field(min_length=1, max_length=100)
+    path: RepositoryPathStr | None = None
+    ref: str | None = Field(default=None, min_length=1, max_length=300)
+    sha: str | None = Field(default=None, min_length=7, max_length=64)
+    fields: list[str] | None = Field(default=None, max_length=20)
 
 
-class SearchRepositoryArgs(StrictModel):
-    query: SearchQueryStr
+class SearchCodeArgs(StrictModel):
+    query: str = Field(min_length=1, max_length=256)
+    sort: Literal["indexed"] | None = None
+    order: Literal["asc", "desc"] | None = None
+    fields: list[str] | None = Field(default=None, max_length=20)
+    page: int = Field(default=1, ge=1, le=1)
+    perPage: int = Field(default=30, ge=1, le=100)
 
 
 class OperationalToolDescriptor(StrictModel):
@@ -160,6 +174,7 @@ class OperationalToolDescriptor(StrictModel):
     effect: OperationalToolEffect
     availability: OperationalToolAvailability
     description: str = Field(min_length=1, max_length=1_000)
+    arguments: tuple[NonEmptyStr, ...] = Field(default_factory=tuple, max_length=20)
     controls: tuple[NonEmptyStr, ...] = Field(min_length=1, max_length=10)
 
 

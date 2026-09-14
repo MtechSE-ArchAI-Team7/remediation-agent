@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-mcp test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build sandbox-build db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-mcp test-mcp-live test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build agentcore-docker-build sandbox-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -24,6 +24,9 @@ test:
 test-mcp:
 	uv run pytest tests/mcp tests/graph/test_mcp_inspection.py tests/unit/test_model_adapter.py
 
+test-mcp-live:
+	uv run pytest -m live_mcp tests/mcp/test_repository_mcp.py
+
 test-integration:
 	uv run pytest -m integration
 
@@ -48,6 +51,9 @@ build:
 
 docker-build:
 	docker build -t aios-remediation-agent:local .
+
+agentcore-docker-build:
+	docker build --platform linux/arm64 -f Dockerfile.agentcore -t aios-remediation-agentcore-smoke:local .
 
 sandbox-build:
 	docker build -f docker/sandbox.Dockerfile -t aios-remediation-sandbox:local .

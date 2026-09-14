@@ -66,6 +66,7 @@ class FinalStatus(StrEnum):
 
 
 class ModelOperation(StrEnum):
+    AGENTCORE_SMOKE = "AGENTCORE_SMOKE"
     INSPECTION = "INSPECTION"
     PLANNING = "PLANNING"
     RISK = "RISK"

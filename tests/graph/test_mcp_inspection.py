@@ -11,12 +11,13 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from remediation_agent.domain.enums import FinalStatus, InspectionToolStatus
 from remediation_agent.domain.models import (
+    GetFileContentsArgs,
+    GetRepositoryTreeArgs,
     InspectionArtifact,
     InspectionPlan,
     InspectionToolCallRecord,
-    ListRepositoryTreeArgs,
-    ReadRepositoryFileArgs,
-    SearchRepositoryArgs,
+    RepositoryRef,
+    SearchCodeArgs,
     WorkspaceRef,
 )
 from tests.conftest import build_test_service, diagnosis_handoff, scripted_responses
@@ -36,43 +37,60 @@ def _turn(index: int, name: str, arguments: dict[str, object]) -> AIMessage:
     )
 
 
+_OWNER = "MtechSE-ArchAI-Team7"
+_REPO = "example-service"
+_COMMIT = "a" * 40
+
+
+def _tree_args(*, owner: str = _OWNER, repo: str = _REPO, commit: str = _COMMIT) -> dict[str, object]:
+    return {"owner": owner, "repo": repo, "tree_sha": commit, "recursive": True}
+
+
+def _file_args(path: str, *, owner: str = _OWNER, repo: str = _REPO, commit: str = _COMMIT) -> dict[str, object]:
+    return {"owner": owner, "repo": repo, "path": path, "sha": commit}
+
+
+def _search_args(query: str) -> dict[str, object]:
+    return {"query": f"{query} repo:{_OWNER}/{_REPO}"}
+
+
 class _MalformedInspectionProvider:
     @asynccontextmanager
-    async def session(self, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
-        _ = workspace
+    async def session(self, repository: RepositoryRef, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
+        _ = (repository, workspace)
 
-        async def list_repository_tree(relative_path: str = ".") -> tuple[str, dict[str, object]]:
-            _ = relative_path
+        async def get_repository_tree(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             return "{}", {"structured_content": {"unexpected": True}}
 
-        async def read_repository_file(relative_path: str) -> tuple[str, dict[str, object]]:
-            _ = relative_path
+        async def get_file_contents(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             return "{}", {"structured_content": {"unexpected": True}}
 
-        async def search_repository(query: str) -> tuple[str, dict[str, object]]:
-            _ = query
+        async def search_code(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             return "{}", {"structured_content": {"unexpected": True}}
 
         yield [
             StructuredTool.from_function(
-                coroutine=list_repository_tree,
-                name="list_repository_tree",
+                coroutine=get_repository_tree,
+                name="get_repository_tree",
                 description="Malformed fixture tree tool.",
-                args_schema=ListRepositoryTreeArgs,
+                args_schema=GetRepositoryTreeArgs,
                 response_format="content_and_artifact",
             ),
             StructuredTool.from_function(
-                coroutine=read_repository_file,
-                name="read_repository_file",
+                coroutine=get_file_contents,
+                name="get_file_contents",
                 description="Malformed fixture read tool.",
-                args_schema=ReadRepositoryFileArgs,
+                args_schema=GetFileContentsArgs,
                 response_format="content_and_artifact",
             ),
             StructuredTool.from_function(
-                coroutine=search_repository,
-                name="search_repository",
+                coroutine=search_code,
+                name="search_code",
                 description="Malformed fixture search tool.",
-                args_schema=SearchRepositoryArgs,
+                args_schema=SearchCodeArgs,
                 response_format="content_and_artifact",
             ),
         ]
@@ -80,50 +98,50 @@ class _MalformedInspectionProvider:
 
 class _FailingInspectionProvider:
     @asynccontextmanager
-    async def session(self, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
-        _ = workspace
+    async def session(self, repository: RepositoryRef, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
+        _ = (repository, workspace)
         raise RuntimeError("MCP process unavailable")
         yield []  # pragma: no cover - establishes the async-context-manager type
 
 
 class _TimeoutInspectionProvider:
     @asynccontextmanager
-    async def session(self, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
-        _ = workspace
+    async def session(self, repository: RepositoryRef, workspace: WorkspaceRef) -> AsyncIterator[Sequence[BaseTool]]:
+        _ = (repository, workspace)
 
-        async def list_repository_tree(relative_path: str = ".") -> tuple[str, dict[str, object]]:
-            _ = relative_path
+        async def get_repository_tree(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             await asyncio.sleep(2)
             return "{}", {"structured_content": {"unexpected": True}}
 
-        async def read_repository_file(relative_path: str) -> tuple[str, dict[str, object]]:
-            _ = relative_path
+        async def get_file_contents(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             return "{}", {"structured_content": {"unexpected": True}}
 
-        async def search_repository(query: str) -> tuple[str, dict[str, object]]:
-            _ = query
+        async def search_code(**arguments: object) -> tuple[str, dict[str, object]]:
+            _ = arguments
             return "{}", {"structured_content": {"unexpected": True}}
 
         yield [
             StructuredTool.from_function(
-                coroutine=list_repository_tree,
-                name="list_repository_tree",
+                coroutine=get_repository_tree,
+                name="get_repository_tree",
                 description="Slow fixture tree tool.",
-                args_schema=ListRepositoryTreeArgs,
+                args_schema=GetRepositoryTreeArgs,
                 response_format="content_and_artifact",
             ),
             StructuredTool.from_function(
-                coroutine=read_repository_file,
-                name="read_repository_file",
+                coroutine=get_file_contents,
+                name="get_file_contents",
                 description="Fixture read tool.",
-                args_schema=ReadRepositoryFileArgs,
+                args_schema=GetFileContentsArgs,
                 response_format="content_and_artifact",
             ),
             StructuredTool.from_function(
-                coroutine=search_repository,
-                name="search_repository",
+                coroutine=search_code,
+                name="search_code",
                 description="Fixture search tool.",
-                args_schema=SearchRepositoryArgs,
+                args_schema=SearchCodeArgs,
                 response_format="content_and_artifact",
             ),
         ]
@@ -132,10 +150,10 @@ class _TimeoutInspectionProvider:
 async def test_model_adapts_across_tool_results_and_plan_is_reconstructed_from_history() -> None:
     turns = [
         _turn(1, "finish_inspection", {"rationale": "Too early."}),
-        _turn(2, "read_repository_file", {"relative_path": ".env"}),
-        _turn(3, "list_repository_tree", {"relative_path": "."}),
-        _turn(4, "read_repository_file", {"relative_path": "src/app.py"}),
-        _turn(5, "search_repository", {"query": "int("}),
+        _turn(2, "get_file_contents", _file_args(".env")),
+        _turn(3, "get_repository_tree", _tree_args()),
+        _turn(4, "get_file_contents", _file_args("src/app.py")),
+        _turn(5, "search_code", _search_args("int(")),
         _turn(6, "finish_inspection", {"rationale": "The source and matching call site are sufficient."}),
     ]
     service, model, repository, _, _, _, _ = build_test_service(
@@ -152,7 +170,7 @@ async def test_model_adapts_across_tool_results_and_plan_is_reconstructed_from_h
 
     assert result.status is FinalStatus.DRAFT_PR_PREPARED
     assert plan.paths_to_read == ["src/app.py"]
-    assert plan.search_queries == ["int("]
+    assert plan.search_queries == [f"int( repo:{_OWNER}/{_REPO}"]
     assert plan.rationale == "The source and matching call site are sufficient."
     assert [item.status for item in calls] == [
         InspectionToolStatus.DENIED,
@@ -162,7 +180,7 @@ async def test_model_adapts_across_tool_results_and_plan_is_reconstructed_from_h
         InspectionToolStatus.SUCCEEDED,
         InspectionToolStatus.SUCCEEDED,
     ]
-    assert [item.kind for item in artifacts] == ["TREE", "FILE", "SEARCH"]
+    assert [item.kind for item in artifacts] == ["TREE", "FILE"]
     assert repository.read_paths == ["src/app.py"]
     assert repository.search_queries == ["int("]
     assert any(isinstance(message, ToolMessage) for message in model.tool_turn_messages[1])
@@ -188,12 +206,57 @@ async def test_finish_without_success_cannot_bypass_inspection_and_round_limit_c
     assert sandbox.destroyed
 
 
+async def test_search_result_alone_is_not_persisted_evidence_and_cannot_finish() -> None:
+    turns = [
+        _turn(1, "search_code", _search_args("int(")),
+        _turn(2, "finish_inspection", {"rationale": "Search should be sufficient."}),
+    ]
+    service, _, _, sandbox, _, _, _ = build_test_service({}, tool_turns=turns)
+
+    result = await service.start(diagnosis_handoff())
+    snapshot = await service.graph.aget_state({"configurable": {"thread_id": result.run_id}})
+    calls = [InspectionToolCallRecord.model_validate(item) for item in snapshot.values["inspection_tool_calls"]]
+
+    assert result.status is FinalStatus.INTERNAL_ERROR
+    assert [item.status for item in calls] == [InspectionToolStatus.SUCCEEDED, InspectionToolStatus.DENIED]
+    assert snapshot.values["inspection_artifacts"] == []
+    assert sandbox.destroyed
+
+
+async def test_cross_repository_call_is_denied_audited_and_can_recover() -> None:
+    turns = [
+        _turn(1, "get_file_contents", _file_args("src/app.py", owner="attacker")),
+        _turn(2, "get_file_contents", _file_args("src/app.py")),
+        _turn(3, "finish_inspection", {"rationale": "Pinned source is sufficient."}),
+    ]
+    service, _, _, _, _, _, _ = build_test_service(
+        scripted_responses(),
+        files={"src/app.py": "value = int(raw)\n"},
+        tool_turns=turns,
+    )
+
+    result = await service.start(diagnosis_handoff())
+    snapshot = await service.graph.aget_state({"configurable": {"thread_id": result.run_id}})
+    calls = [InspectionToolCallRecord.model_validate(item) for item in snapshot.values["inspection_tool_calls"]]
+
+    assert result.status is FinalStatus.DRAFT_PR_PREPARED
+    assert [item.status for item in calls] == [
+        InspectionToolStatus.DENIED,
+        InspectionToolStatus.SUCCEEDED,
+        InspectionToolStatus.SUCCEEDED,
+    ]
+    assert any(
+        event.event_type == "INSPECTION_TOOL_CALL" and event.result_code == "DENIED"
+        for event in snapshot.values["audit_events"]
+    )
+
+
 async def test_multiple_or_unknown_tool_calls_fail_closed_without_executing_mutation() -> None:
     multiple = AIMessage(
         content="",
         tool_calls=[
-            {"name": "list_repository_tree", "args": {"relative_path": "."}, "id": "one", "type": "tool_call"},
-            {"name": "search_repository", "args": {"query": "secret"}, "id": "two", "type": "tool_call"},
+            {"name": "get_repository_tree", "args": _tree_args(), "id": "one", "type": "tool_call"},
+            {"name": "search_code", "args": _search_args("secret"), "id": "two", "type": "tool_call"},
         ],
     )
     service, _, repository, sandbox, _, _, _ = build_test_service({}, tool_turns=[multiple])
@@ -222,7 +285,7 @@ async def test_multiple_or_unknown_tool_calls_fail_closed_without_executing_muta
 async def test_malformed_tool_output_and_mcp_start_failure_are_audited_then_cleaned() -> None:
     malformed_service, _, _, malformed_sandbox, _, _, _ = build_test_service(
         {},
-        tool_turns=[_turn(1, "read_repository_file", {"relative_path": "src/app.py"})],
+        tool_turns=[_turn(1, "get_file_contents", _file_args("src/app.py"))],
         inspection_tool_provider=_MalformedInspectionProvider(),
     )
 
@@ -260,9 +323,9 @@ async def test_tool_call_and_timeout_limits_fail_closed_with_attempt_evidence() 
     limited_service, _, limited_repository, limited_sandbox, _, _, _ = build_test_service(
         {},
         tool_turns=[
-            _turn(1, "list_repository_tree", {"relative_path": "."}),
-            _turn(2, "search_repository", {"query": "int("}),
-            _turn(3, "read_repository_file", {"relative_path": "src/app.py"}),
+            _turn(1, "get_repository_tree", _tree_args()),
+            _turn(2, "search_code", _search_args("int(")),
+            _turn(3, "get_file_contents", _file_args("src/app.py")),
         ],
         max_inspection_tool_calls=2,
     )
@@ -282,7 +345,7 @@ async def test_tool_call_and_timeout_limits_fail_closed_with_attempt_evidence() 
 
     timeout_service, _, _, timeout_sandbox, _, _, _ = build_test_service(
         {},
-        tool_turns=[_turn(1, "list_repository_tree", {"relative_path": "."})],
+        tool_turns=[_turn(1, "get_repository_tree", _tree_args())],
         inspection_tool_provider=_TimeoutInspectionProvider(),
         max_mcp_tool_timeout_seconds=1,
     )

@@ -9,9 +9,9 @@ from typing import Annotated
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, Request, status
 
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
-from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider, NoGitCredentials
+from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
-from remediation_agent.adapters.mcp import StdioMcpInspectionTools
+from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
@@ -59,15 +59,15 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
         )
-        github_token = settings.github_token.get_secret_value() if settings.github_token else None
-        credential_provider = GitHubAskpassCredentialProvider(github_token) if github_token else NoGitCredentials()
+        github_token = settings.require_github_token()
+        credential_provider = GitHubAskpassCredentialProvider(github_token)
         repository = LocalGitRepository(
             settings.workspace_root,
             author_name=settings.git_author_name,
             author_email=settings.git_author_email,
             credential_provider=credential_provider,
         )
-        inspection_tools = StdioMcpInspectionTools(settings.workspace_root, settings.policy_file)
+        inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
         sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
         pr_provider = DraftPullRequestProvider(
             token=github_token,

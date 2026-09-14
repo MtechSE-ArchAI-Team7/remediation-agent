@@ -30,7 +30,7 @@ checkpointer, model abstraction, policy engine, tool boundary, and final outcome
 flowchart LR
     Intake["Validate intake"] --> Analysis["Analysis workflow subgraph"]
     Analysis --> Workspace["Create immutable-base workspace"]
-    Workspace --> Inspect["Model ↔ scoped MCP inspection loop"]
+    Workspace --> Inspect["Model ↔ GitHub hosted MCP inspection loop"]
     Inspect --> Plan["Create structured remediation plan"]
     Plan --> Risk["Policy and risk assessment"]
     Risk -->|sensitive| Approval["Checkpointed approval interrupt"]
@@ -50,8 +50,8 @@ The lifecycle is:
 
 1. Validate the versioned handoff, evidence references, remediation type, and repository policy.
 2. Create and checkpoint a disposable workspace at the immutable base commit.
-3. Start a workspace-scoped stdio MCP session. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
-4. Require at least one successful MCP repository call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session.
+3. Start a run-scoped Streamable HTTP session with GitHub's fixed hosted MCP endpoint. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
+4. Require at least one successful commit-pinned tree or file call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session. Search results are locator hints and are not persisted as planning evidence.
 5. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
 6. Interrupt for approval when the plan or exact patch crosses an approval boundary.
 7. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
@@ -70,11 +70,12 @@ three read-only MCP tools; every mutation remains a deterministic workflow actio
 The versioned operational catalogue contains **17 implemented tools**: four model-callable inspection/control tools
 and thirteen deterministic workflow-only tools. `GET /v1/tools` exposes the same strict metadata used to generate
 [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md), including each tool's typed boundary, authority, availability gate,
-description, and safety controls. Catalogue entries are operations of this one agent, not agents or subagents.
+description, model-visible argument names, and safety controls. Catalogue entries are operations of this one agent, not
+agents or subagents. The hosted-tool migration advances the catalogue response to version `1.1`.
 
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
-| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `StdioMcpInspectionTools` launches the fixed `remediation-repository-mcp` server. The model can list a tree, read one UTF-8 file, or run fixed-string search under policy, redaction, and output bounds. |
+| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects only to GitHub's hosted read-only MCP endpoint. Repository identity, immutable SHA, paths, search scope, schemas, redaction, and output bounds are enforced by the host adapter. |
 | Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
 | Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` preflights/applies a unified patch, restores the base, runs named tasks, collects artifacts, and destroys the workspace. |
 | Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
@@ -101,14 +102,16 @@ tasks based on changed paths, and resolves each selected name to a trusted `argv
 
 The analysis stage binds exactly four LangChain tools to the configured model:
 
-- `list_repository_tree(relative_path=".")`
-- `read_repository_file(relative_path)`
-- `search_repository(query)`
+- `get_repository_tree(owner, repo, tree_sha, recursive, path_filter)`
+- `get_file_contents(owner, repo, path, sha, fields)`
+- `search_code(query, sort, order, fields, page, perPage)`
 - `finish_inspection(rationale)`
 
-The first three are discovered from the scoped MCP server through `langchain-mcp-adapters`. `finish_inspection` is a
-local LangChain `@tool`; it is a control signal with no repository authority. The model must make exactly one call per
-round and cannot finish until at least one MCP inspection succeeds.
+The first three are discovered from `https://api.githubcopilot.com/mcp/` through `langchain-mcp-adapters` and retain
+their native GitHub names and schemas. Discovery must return exactly this allowlist with compatible security-critical
+arguments. `finish_inspection` is a local LangChain `@tool`; it is a control signal with no repository authority. The
+model must make exactly one call per round and cannot finish until a commit-pinned tree or file inspection succeeds.
+`search_code` is default-branch indexed and is used only to locate candidate paths for a subsequent pinned file read.
 
 Planning, risk, patch, and revision still use `with_structured_output(...)`. Tool decorators are not used for clone,
 checkout, diff, patch application, validation, branch, commit, push, draft PR, artifacts, approvals, or cleanup because
@@ -116,14 +119,25 @@ those capabilities have side effects or determine security outcomes and therefor
 
 ### Why MCP is limited to inspection
 
-The stdio server is created for one run and receives its workspace root, workspace ID, immutable base commit, and policy
-file from the host process. Those values never appear in tool schemas or model arguments. It exposes exactly three
-read-only operations and reuses the repository adapter's path, symlink, UTF-8, forbidden-file, redaction, and size controls.
+GitHub hosts the endpoint; see its [remote-server documentation](https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md)
+and [setup guidance](https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp-in-your-ide/set-up-the-github-mcp-server).
+Authentication, API limits, availability, and feature-specific entitlements still apply.
+
+The hosted MCP adapter is created for one run and receives the validated GitHub repository reference, disposable
+workspace, immutable base commit, token, and operator policy from the host process. It connects only to the fixed HTTPS
+endpoint with certificate verification, redirects disabled, ambient proxy settings disabled, and the headers
+`X-MCP-Tools`, `X-MCP-Readonly: true`, and `X-MCP-Lockdown: true`. The bearer token is never model-visible.
+
+Every native call is rebound to the handoff's exact `https://github.com/{owner}/{repo}.git` target. Tree and file calls
+must use the cloned base commit; mutable `ref` reads are denied. Search must contain exactly the matching
+`repo:owner/repo` qualifier. Host-side checks also reject traversal, forbidden/secret paths, binary or external-resource
+content, symlinks, submodules, unsupported response shapes, and policy-limit violations. GitHub manages the remote
+server, so missing tools or incompatible schema drift fail closed.
 
 Provider messages and the MCP session are transient. Checkpoints retain only typed redacted artifacts, normalized call
 records and digests, model metadata, and the reconstructed inspection plan. Generic filesystem/shell MCP and arbitrary
-server commands, URLs, or tool allowlists are not accepted. The MCP server is infrastructure inside the same workflow,
-not another agent.
+server commands, URLs, redirects, or tool allowlists are not accepted. The hosted MCP connection is an infrastructure
+boundary inside the same workflow, not another agent.
 
 The runtime pins MCP SDK v1 (`mcp>=1.28,<2`) with `langchain-mcp-adapters>=0.3.1,<0.4` while the adapter's
 [MCP SDK v2 compatibility issue](https://github.com/langchain-ai/langchain-mcp-adapters/issues/578) remains unresolved.
@@ -188,15 +202,13 @@ remediation-agent/
 │   │   └── models.py               # Typed requests/results crossing infrastructure boundaries
 │   ├── adapters/
 │   │   ├── models.py               # Bedrock, OpenAI, and DeepSeek structured/tool-call adapters
-│   │   ├── mcp.py                  # Fixed stdio MCP client, discovery, and schema validation
+│   │   ├── mcp.py                  # Fixed GitHub hosted MCP client, scoping, and schema validation
 │   │   ├── repository.py           # Bounded local Git workspace implementation
 │   │   ├── sandbox.py              # Restricted Docker patch/validation implementation
 │   │   ├── checkpoint.py           # Encrypted in-memory/PostgreSQL checkpoint support
 │   │   ├── pr.py                   # Draft-PR preparation and optional GitHub creation
 │   │   ├── evidence.py             # Redaction, artifacts, and hash-chained audit evidence
 │   │   └── fakes.py                # External-service-free deterministic test adapters
-│   ├── mcp/
-│   │   └── server.py               # Three-tool run-scoped repository inspection server
 │   ├── tools/
 │   │   ├── catalog.py              # Typed inventory of all 17 operational tools
 │   │   └── inspection.py           # Local finish_inspection control tool
@@ -210,7 +222,7 @@ remediation-agent/
     ├── api/                         # HTTP behavior and OpenAPI contract tests
     ├── unit/                        # Deterministic component tests
     ├── graph/                       # Routes, retries, approvals, and one-agent invariants
-    ├── mcp/                         # Real local stdio discovery and round-trip tests
+    ├── mcp/                         # Hosted-transport fixtures, contract, and opt-in live tests
     ├── security/                    # Policy, injection, path, secret, and patch controls
     └── integration/                 # Opt-in Git, Docker, and PostgreSQL tests
 ```
@@ -232,7 +244,7 @@ uv run remediation-agent
 ```
 
 Before starting the service, set a local PostgreSQL password/DSN, checkpoint encryption key, reviewed policy path, and
-model-provider settings in `.env`. Never commit that file or place credentials in policy JSON.
+model-provider settings and `AIOS_GITHUB_TOKEN` in `.env`. Never commit that file or place credentials in policy JSON.
 
 The default service address is `http://127.0.0.1:8080`. Useful local documentation endpoints are:
 
@@ -257,21 +269,27 @@ The runtime fails closed when required settings are absent.
 | `AIOS_SANDBOX_IMAGE` | Restricted validation image; defaults to `aios-remediation-sandbox:local` |
 | `AIOS_GITHUB_WRITES_ENABLED` | Application-side gate for branch/push/draft creation; defaults to `false` |
 | `AIOS_GITHUB_REPOSITORY` | Required `owner/repository` target when GitHub writes are enabled; it must match the handoff URL |
-| `AIOS_GITHUB_TOKEN` | Optional fine-grained token for private GitHub HTTPS clone; required for push and draft creation |
+| `AIOS_GITHUB_TOKEN` | Required production bearer token for hosted MCP inspection and GitHub HTTPS clone; also reused for optional push and draft creation |
 
 The reference policy also requires `max_inspection_rounds`, `max_inspection_tool_calls`, and
 `max_mcp_tool_timeout_seconds`. Its committed values are 8 rounds, 12 calls, and 30 seconds. Requests and model output
 cannot change these limits or select a different MCP server.
 
+Production accepts only canonical `https://github.com/{owner}/{repo}.git` handoffs. `LOCAL`, GitLab, generic Git, and
+credential-bearing URLs fail deterministic intake validation before workspace creation. The shared v1 handoff schema is
+unchanged so other agents retain wire compatibility.
+
 GitHub creation also requires `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled. The Git
 adapter uses the injected token only through a trusted askpass process for exact-host `https://github.com` remotes; it
 never places credentials in URLs, argv, workflow state, checkpoints, model input, artifacts, or validation containers.
-Use a fine-grained token restricted to the target repository with Contents and Pull Requests read/write permission.
-Automatic merge is not implemented.
+For inspection-only deployments, grant only repository read access needed by the hosted MCP server and cloning. Add
+Contents and Pull Requests write permission only when draft-PR writes are intentionally enabled. Automatic merge is not
+implemented. GitHub authentication, availability, API limits, hosted-server changes, and feature entitlements remain
+external runtime dependencies.
 
-`config/policies/demo.json` is a deliberately write-enabled policy scoped only to the Team 7 demo repository and local
-`file://` rehearsal clones. The reference policy remains write-disabled and should remain the safer starting point for
-other operators.
+`config/policies/demo.json` is a deliberately write-enabled policy scoped only to the Team 7 GitHub demo repository.
+The reference policy is also GitHub-only but remains write-disabled and should remain the safer starting point for other
+operators.
 
 ## Ten-scenario demonstration
 
@@ -282,8 +300,8 @@ handoffs. List them from this repository with:
 uv run python scripts/run_demo.py list
 ```
 
-Run a deterministic local rehearsal through the real LangGraph workflow, stdio MCP inspection server, and Docker
-sandbox without creating remote state:
+Run a deterministic-model rehearsal through the real LangGraph workflow, GitHub's hosted MCP server, and Docker sandbox
+without creating remote state. This mode still requires `AIOS_GITHUB_TOKEN` and network access for clone and inspection:
 
 ```bash
 uv run python scripts/run_demo.py scripted 01
@@ -375,13 +393,16 @@ make format-check
 make typecheck
 make test
 make test-mcp
+make test-mcp-live
 make security
 make build
 ```
 
-`make test` uses fake providers, a local stdio MCP process, and in-memory checkpoints. It requires no cloud credentials,
-network access, GitHub repository, Docker daemon, PostgreSQL, EKS, or deployed service. `make test-mcp` runs the focused
-MCP discovery, transport, and security suite.
+`make test` uses fake providers, an in-process GitHub-shaped MCP fixture, and in-memory checkpoints. It requires no cloud
+credentials, network access, GitHub repository, Docker daemon, PostgreSQL, EKS, or deployed service. `make test-mcp`
+runs the focused discovery, Streamable HTTP lifecycle, contract, and security suite. `make test-mcp-live` is explicitly
+opt-in and requires `AIOS_GITHUB_TOKEN`, `AIOS_LIVE_GITHUB_MCP_REPOSITORY_URL`, and
+`AIOS_LIVE_GITHUB_MCP_COMMIT_SHA` for an immutable public fixture; it is excluded from the default suite.
 
 Opt-in integration and image commands are:
 
@@ -390,6 +411,7 @@ make test-integration
 make test-sandbox-integration
 make sandbox-build
 make docker-build
+make agentcore-docker-build
 make db-up
 make db-init
 make db-down
@@ -399,10 +421,41 @@ Docker tests skip when the daemon or `aios-remediation-sandbox:local` image is u
 test uses `AIOS_TEST_POSTGRES_DSN` when set, then the local `AIOS_POSTGRES_DSN`; it skips when neither is configured.
 Live model tests require their explicit marker/environment gate and never run in the default suite.
 
+## Bedrock AgentCore smoke deployment
+
+`Dockerfile.agentcore` packages a smoke-only FastAPI entry point for Amazon Bedrock AgentCore Runtime. It does not run
+the remediation workflow. `GET /ping` implements the Runtime health contract, and `POST /invocations` accepts only
+`{"input":{"probe":"bedrock"}}`. The invocation makes one fixed structured call through the existing Bedrock adapter
+and returns bounded provider/model telemetry without returning prompts or unrestricted model output.
+
+The image workflow publishes `linux/arm64` commit-SHA tags to
+`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent`. Configure the repository secret
+`AWS_ROLE_ARN=arn:aws:iam::734849394833:role/github-actions-ecr` for the initial test deployment. That existing role has
+account-wide ECR PowerUser access and is therefore test-only; replace it with a role scoped to this repository before a
+non-test deployment.
+
+Create the AgentCore Runtime manually with HTTP protocol, IAM/SigV4 inbound authentication, public networking, and the
+immutable commit-SHA image URI. Configure these non-secret environment variables:
+
+```text
+AIOS_LLM_PROVIDER=bedrock
+AIOS_LLM_MODEL=apac.amazon.nova-micro-v1:0
+AIOS_AWS_REGION=ap-southeast-1
+AIOS_POLICY_FILE=/app/config/policies/reference.json
+```
+
+The Runtime execution role needs ECR read access for only `aios/remediation-agent`, CloudWatch runtime-log permissions,
+and `bedrock:InvokeModel` for the configured inference profile and its Nova Micro foundation-model resources. No
+PostgreSQL DSN, checkpoint key, GitHub token, Docker daemon, or writable remediation workspace is used by this smoke
+entry point. Full remediation on AgentCore remains deferred until a non-Docker validation backend and durable runtime
+dependencies are implemented.
+
 ## Sandbox and policy boundary
 
-The service never exposes a generic shell to the model. MCP inspection and patch paths reject absolute paths, traversal,
-NULs, forbidden files, unsupported diff features, binary changes, and symlink components. Autonomous and absolute
+The service never exposes a generic shell to the model. Hosted MCP inspection and patch paths reject absolute paths,
+traversal, NULs, forbidden files, unsupported diff features, binary changes, external resources, and symlink components.
+Repository content remains untrusted and may contain prompt injection; the native tool allowlist, exact repository/SHA
+binding, search-as-locator rule, deterministic guards, and bounded context limit its authority. Autonomous and absolute
 file/diff limits are enforced before patch application.
 
 The Docker executor uses no shell, no network, no Docker socket, a non-root UID, dropped capabilities,

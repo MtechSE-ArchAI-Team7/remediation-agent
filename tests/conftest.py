@@ -71,8 +71,8 @@ def diagnosis_handoff(
         ],
         acceptance_criteria=["Malformed values return a typed client error."],
         repository=RepositoryRef(
-            provider=RepositoryProvider.LOCAL,
-            url="fixture-repository",
+            provider=RepositoryProvider.GITHUB,
+            url="https://github.com/MtechSE-ArchAI-Team7/example-service.git",
             base_branch="main",
             commit_sha="a" * 40,
         ),

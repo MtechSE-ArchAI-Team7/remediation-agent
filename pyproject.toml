@@ -38,7 +38,6 @@ dev = [
 [project.scripts]
 remediation-agent = "remediation_agent.main:main"
 remediation-db-init = "remediation_agent.db:main"
-remediation-repository-mcp = "remediation_agent.mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -53,9 +52,10 @@ testpaths = ["tests"]
 markers = [
   "integration: requires Docker or PostgreSQL and is excluded from the default suite",
   "live_model: calls a configured external LLM provider and is excluded by default",
-  "mcp: exercises the local stdio MCP transport and inspection tool boundary",
+  "mcp: exercises the hosted GitHub MCP transport and inspection tool boundary",
+  "live_mcp: calls GitHub's hosted MCP endpoint and is excluded by default",
 ]
-addopts = "-m 'not integration and not live_model'"
+addopts = "-m 'not integration and not live_model and not live_mcp'"
 asyncio_mode = "auto"
 
 [tool.ruff]

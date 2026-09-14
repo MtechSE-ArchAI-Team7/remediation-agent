@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from remediation_agent.domain.enums import FinalStatus, ModelOperation, RemediationType
+import pytest
+
+from remediation_agent.domain.enums import FinalStatus, ModelOperation, RemediationType, RepositoryProvider
 from tests.conftest import build_test_service, diagnosis_handoff, patch_for, scripted_responses
 
 
@@ -47,6 +49,31 @@ async def test_disallowed_repository_fails_closed_before_inspection() -> None:
     assert not repository.created
     assert not model.requests
     assert ModelOperation.INSPECTION in responses
+
+
+@pytest.mark.parametrize(
+    ("provider", "url"),
+    [
+        (RepositoryProvider.LOCAL, "file:///private/tmp/repository"),
+        (RepositoryProvider.GITLAB, "https://gitlab.com/example/repository.git"),
+        (RepositoryProvider.GENERIC_GIT, "https://git.example/repository.git"),
+        (RepositoryProvider.GITHUB, "https://github.com/MtechSE-ArchAI-Team7/repository"),
+    ],
+)
+async def test_non_github_repository_providers_are_rejected_before_workspace_creation(
+    provider: RepositoryProvider,
+    url: str,
+) -> None:
+    service, model, repository, _, _, _, _ = build_test_service(scripted_responses())
+    payload = diagnosis_handoff().model_dump(mode="json")
+    payload["repository"]["provider"] = provider
+    payload["repository"]["url"] = url
+
+    result = await service.start(diagnosis_handoff().model_validate(payload))
+
+    assert result.status is FinalStatus.INVALID_REQUEST
+    assert not repository.created
+    assert not model.requests
 
 
 async def test_github_write_target_must_match_handoff_repository() -> None:
