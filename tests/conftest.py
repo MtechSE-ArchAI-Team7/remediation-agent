@@ -136,6 +136,7 @@ def build_test_service(
     max_mcp_tool_timeout_seconds: int | None = None,
     github_writes_enabled: bool = False,
     github_repository: str | None = None,
+    invocation_timeout_seconds: float | None = None,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -192,7 +193,11 @@ def build_test_service(
     )
     graph = build_graph(nodes, in_memory_checkpointer())
     return (
-        RemediationService(graph, max_active_runs=2),
+        RemediationService(
+            graph,
+            max_active_runs=2,
+            invocation_timeout_seconds=invocation_timeout_seconds,
+        ),
         model,
         repository,
         sandbox,

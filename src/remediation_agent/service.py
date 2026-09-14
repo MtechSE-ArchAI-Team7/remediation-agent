@@ -16,6 +16,7 @@ from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
     DiagnosisHandoffV1,
+    ErrorRecord,
     RemediationHandoffV1,
     RemediationRunView,
 )
@@ -126,12 +127,68 @@ class RemediationService:
                     async with asyncio.timeout(self._invocation_timeout_seconds):
                         raw = await self.graph.ainvoke(value, config=config)
             except TimeoutError as exc:
-                raise InvocationDeadlineError("remediation invocation exceeded its execution deadline") from exc
+                return await self._finish_after_deadline(run_id, exc)
         state = cast(RemediationState, raw)
         snapshot = await self._snapshot(run_id)
         if snapshot.values:
             state = cast(RemediationState, snapshot.values)
         return self._view(state, run_id, approval_request=self._pending_approval(state, snapshot))
+
+    async def _finish_after_deadline(self, run_id: str, cause: TimeoutError) -> RemediationRunView:
+        """Resume at the normal cleanup boundary after cancelling an overlong stage."""
+
+        config = self._config(run_id)
+        snapshot = await self.graph.aget_state(config)
+        if not snapshot.values:
+            raise InvocationDeadlineError("remediation invocation exceeded its execution deadline") from cause
+        state = cast(RemediationState, snapshot.values)
+        for task in snapshot.tasks:
+            if task.name not in {"analysis_workflow", "repair_workflow"} or not isinstance(task.state, dict):
+                continue
+            child_snapshot = await self.graph.aget_state(task.state)
+            if child_snapshot.values:
+                state = cast(RemediationState, child_snapshot.values)
+                break
+        handoff = state.get("handoff")
+        if handoff is None:
+            raise InvocationDeadlineError("remediation invocation exceeded its execution deadline") from cause
+        message = "The AgentCore invocation deadline expired; the workspace was routed through cleanup."
+        next_node = next(iter(snapshot.next), None)
+        if next_node is None:
+            raise InvocationDeadlineError("remediation invocation exceeded its execution deadline") from cause
+        deadline_update = cast(
+            RemediationState,
+            {
+                **state,
+                "case_id": state.get("case_id", handoff.case_id),
+                "final_status": FinalStatus.INTERNAL_ERROR,
+                "errors": [
+                    *state.get("errors", []),
+                    ErrorRecord(
+                        code="INVOCATION_DEADLINE_EXCEEDED",
+                        stage="runtime",
+                        message=message,
+                        retryable=True,
+                    ),
+                ],
+                "residual_risks": [*state.get("residual_risks", []), message],
+            },
+        )
+        await self.graph.aupdate_state(config, deadline_update, as_node=next_node)
+        try:
+            async with asyncio.timeout(30.0):
+                raw = await self.graph.ainvoke(None, config=config)
+        except TimeoutError as exc:
+            raise InvocationDeadlineError("deadline cleanup did not complete") from exc
+        completed = cast(RemediationState, raw)
+        completed_snapshot = await self._snapshot(run_id)
+        if completed_snapshot.values:
+            completed = cast(RemediationState, completed_snapshot.values)
+        return self._view(
+            completed,
+            run_id,
+            approval_request=self._pending_approval(completed, completed_snapshot),
+        )
 
     async def _snapshot(self, run_id: str) -> StateSnapshot:
         snapshot = await self.graph.aget_state(self._config(run_id))

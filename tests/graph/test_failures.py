@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from remediation_agent.domain.enums import FinalStatus, ModelOperation, RemediationType, RepositoryProvider
@@ -16,6 +18,26 @@ async def test_workspace_is_cleaned_when_model_fails_after_clone() -> None:
     assert result.status is FinalStatus.INTERNAL_ERROR
     assert result.result is not None
     assert result.result.errors[0].code == "INSPECTION_FAILED"
+
+
+async def test_invocation_deadline_routes_through_normal_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, model, repository, sandbox, _, _, _ = build_test_service(
+        scripted_responses(),
+        invocation_timeout_seconds=0.01,
+    )
+
+    async def wait_past_deadline(*_: object) -> None:
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(model, "generate_tool_turn", wait_past_deadline)
+
+    result = await service.start(diagnosis_handoff())
+
+    assert repository.created
+    assert sandbox.destroyed, result.model_dump()
+    assert result.status is FinalStatus.INTERNAL_ERROR
+    assert result.result is not None
+    assert result.result.errors[-1].code == "INVOCATION_DEADLINE_EXCEEDED"
 
 
 async def test_cleanup_failure_is_visible_in_final_result() -> None:
