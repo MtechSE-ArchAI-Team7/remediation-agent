@@ -32,7 +32,7 @@ class ApprovalConflictError(ValueError):
 
 CompiledRemediationGraph = CompiledStateGraph[
     RemediationState,
-    None,
+    None, 
     RemediationState,
     RemediationState,
 ]
