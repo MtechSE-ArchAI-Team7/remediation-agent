@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from langchain_core.tools import StructuredTool
 
@@ -11,6 +12,7 @@ from remediation_agent.adapters.mcp import (
     GITHUB_MCP_ENDPOINT,
     INSPECTION_MCP_TOOL_NAMES,
     GitHubRemoteMcpInspectionTools,
+    _mcp_failure_code,
 )
 from remediation_agent.domain.enums import RepositoryProvider
 from remediation_agent.domain.models import (
@@ -120,3 +122,19 @@ def test_target_parser_requires_resolved_full_commit_sha() -> None:
 
     with pytest.raises(ValueError, match="full immutable commit SHA"):
         GitHubRemoteMcpInspectionTools._target(repository, workspace)
+
+
+def test_mcp_failure_code_unwraps_status_without_provider_text() -> None:
+    request = httpx.Request("POST", GITHUB_MCP_ENDPOINT)
+    response = httpx.Response(403, request=request)
+    failure = httpx.HTTPStatusError("secret provider response", request=request, response=response)
+
+    assert _mcp_failure_code(ExceptionGroup("wrapper", [failure])) == "HTTP_403"
+
+
+def test_mcp_failure_code_classifies_nested_transport_failures() -> None:
+    request = httpx.Request("POST", GITHUB_MCP_ENDPOINT)
+    failure = httpx.ConnectError("secret connection detail", request=request)
+
+    assert _mcp_failure_code(ExceptionGroup("wrapper", [failure])) == "CONNECT_ERROR"
+    assert _mcp_failure_code(RuntimeError("secret provider response")) == "SESSION_ERROR"

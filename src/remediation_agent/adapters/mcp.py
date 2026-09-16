@@ -138,7 +138,7 @@ class GitHubRemoteMcpInspectionTools:
                         self._validate_tools(discovered)
                         yield self._bounded_tools(client, target, workspace)
         except Exception as exc:  # noqa: BLE001 - normalize the external MCP transport boundary
-            raise RuntimeError(f"GitHub MCP session failed: {type(exc).__name__}") from exc
+            raise RuntimeError(f"GitHub MCP session failed: {_mcp_failure_code(exc)}") from exc
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -529,3 +529,33 @@ def _truncate_utf8(value: str, max_bytes: int) -> tuple[str, bool]:
 
 def _tool_response(response: InspectionToolResponse) -> tuple[str, dict[str, object]]:
     return response.model_dump_json(), {"structured_content": response.model_dump(mode="json")}
+
+
+def _mcp_failure_code(error: BaseException) -> str:
+    """Return a bounded diagnostic category without exposing provider error text."""
+
+    pending = [error]
+    visited: set[int] = set()
+    fallback = "SESSION_ERROR"
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError):
+            return f"HTTP_{current.response.status_code}"
+        if isinstance(current, (TimeoutError, httpx.TimeoutException)):
+            fallback = "TIMEOUT"
+        elif isinstance(current, httpx.ConnectError):
+            fallback = "CONNECT_ERROR"
+        elif isinstance(current, httpx.RemoteProtocolError):
+            fallback = "REMOTE_PROTOCOL_ERROR"
+        elif isinstance(current, httpx.TransportError) and fallback == "SESSION_ERROR":
+            fallback = "TRANSPORT_ERROR"
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return fallback

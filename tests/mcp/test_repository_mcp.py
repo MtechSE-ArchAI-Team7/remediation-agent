@@ -505,7 +505,7 @@ async def test_authentication_failures_are_normalized_without_token(
     workspace_path = tmp_path / "workspace"
     workspace_path.mkdir()
 
-    with pytest.raises(RuntimeError, match="GitHub MCP session failed: HTTPStatusError") as caught:
+    with pytest.raises(RuntimeError, match=f"GitHub MCP session failed: HTTP_{status_code}") as caught:
         async with _provider(token).session(_repository(), _workspace(workspace_path)):
             pass
 
@@ -523,7 +523,7 @@ async def test_transport_timeout_is_normalized(tmp_path: Path, monkeypatch: pyte
     workspace_path = tmp_path / "workspace"
     workspace_path.mkdir()
 
-    with pytest.raises(RuntimeError, match="GitHub MCP session failed: TimeoutError"):
+    with pytest.raises(RuntimeError, match="GitHub MCP session failed: TIMEOUT"):
         async with _provider().session(_repository(), _workspace(workspace_path)):
             pass
 
