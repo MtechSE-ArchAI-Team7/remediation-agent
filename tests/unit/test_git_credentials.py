@@ -112,11 +112,19 @@ async def test_repository_redacts_token_echoed_by_git(tmp_path: Path, monkeypatc
     assert not any((tmp_path / "workspaces").iterdir())
 
 
-def test_base_git_environment_disables_ambient_credentials() -> None:
-    environment = LocalGitRepository._git_environment()
+def test_base_git_environment_disables_ambient_credentials(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    repository = LocalGitRepository(workspace_root)
+    environment = repository._git_environment(workspace_root)
     assert environment["GIT_ASKPASS"] == "/bin/false"
     assert environment["GIT_TERMINAL_PROMPT"] == "0"
+    assert environment["GIT_CONFIG_COUNT"] == "2"
     assert environment["GIT_CONFIG_VALUE_0"] == ""
+    assert environment["GIT_CONFIG_KEY_1"] == "safe.directory"
+    assert environment["GIT_CONFIG_VALUE_1"] == str(workspace_root)
     assert "AIOS_GITHUB_TOKEN" not in environment
     assert "GITHUB_TOKEN" not in environment
     assert os.environ.get("AIOS_GITHUB_TOKEN") not in environment.values()
+    with pytest.raises(RepositoryError, match="outside the workspace root"):
+        repository._git_environment(tmp_path / "outside")

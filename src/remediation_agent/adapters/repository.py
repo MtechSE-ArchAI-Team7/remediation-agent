@@ -277,7 +277,7 @@ class LocalGitRepository:
         cwd: Path,
         extra_environment: dict[str, str] | None = None,
     ) -> str:
-        environment = self._git_environment()
+        environment = self._git_environment(cwd)
         if extra_environment:
             environment.update(extra_environment)
         process = await asyncio.create_subprocess_exec(
@@ -335,15 +335,19 @@ class LocalGitRepository:
     def _is_forbidden(path: str, patterns: list[str]) -> bool:
         return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
-    @staticmethod
-    def _git_environment() -> dict[str, str]:
+    def _git_environment(self, cwd: Path) -> dict[str, str]:
+        safe_directory = cwd.resolve()
+        if safe_directory != self.workspace_root and not safe_directory.is_relative_to(self.workspace_root):
+            raise RepositoryError("refused Git configuration outside the workspace root")
         return {
             "GIT_ASKPASS": "/bin/false",
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_COUNT": "2",
             "GIT_CONFIG_KEY_0": "credential.helper",
             "GIT_CONFIG_VALUE_0": "",
+            "GIT_CONFIG_KEY_1": "safe.directory",
+            "GIT_CONFIG_VALUE_1": str(safe_directory),
             "GIT_TERMINAL_PROMPT": "0",
             "LC_ALL": "C",
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
