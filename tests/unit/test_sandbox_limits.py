@@ -65,3 +65,28 @@ async def test_docker_task_argv_enforces_isolation_and_read_only_git(
     assert "no-new-privileges" in captured
     assert f"{workspace_path / '.git'}:/workspace/.git:ro" in captured
     assert captured[-5:] == ["sandbox-image:test", "python", "-m", "pytest", "-q"]
+
+
+async def test_restore_scopes_git_safe_directory_to_validated_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_root = tmp_path / "workspaces"
+    workspace_path = workspace_root / "run"
+    workspace_path.mkdir(parents=True)
+    executor = DockerSandboxExecutor(workspace_root, "unused")
+    calls: list[list[str]] = []
+
+    async def fake_run(argv: list[str], *, cwd: Path, timeout: float) -> None:
+        assert cwd == workspace_path
+        assert timeout == 60.0
+        calls.append(argv)
+
+    monkeypatch.setattr(executor, "_run", fake_run)
+    await executor.restore_base(WorkspaceRef(workspace_id="run", path=str(workspace_path), base_commit="a" * 40))
+
+    safe_config = ["git", "-c", f"safe.directory={workspace_path}"]
+    assert calls == [
+        [*safe_config, "reset", "--hard", "a" * 40],
+        [*safe_config, "clean", "-fdx"],
+    ]

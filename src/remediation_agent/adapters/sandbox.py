@@ -40,8 +40,8 @@ class DockerSandboxExecutor:
 
     async def restore_base(self, workspace: WorkspaceRef) -> None:
         root = self._workspace(workspace)
-        await self._run(["git", "reset", "--hard", workspace.base_commit], cwd=root, timeout=60.0)
-        await self._run(["git", "clean", "-fdx"], cwd=root, timeout=60.0)
+        await self._run(self._git_argv(root, "reset", "--hard", workspace.base_commit), cwd=root, timeout=60.0)
+        await self._run(self._git_argv(root, "clean", "-fdx"), cwd=root, timeout=60.0)
 
     async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult:
         root = self._workspace(request.workspace)
@@ -164,7 +164,7 @@ class DockerSandboxExecutor:
         return root
 
     async def _run_git_apply(self, root: Path, patch: bytes, *, check_only: bool) -> None:
-        argv = ["git", "apply", "--whitespace=error"]
+        argv = self._git_argv(root, "apply", "--whitespace=error")
         if check_only:
             argv.append("--check")
         process = await asyncio.create_subprocess_exec(
@@ -183,6 +183,16 @@ class DockerSandboxExecutor:
         if process.returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[:4_000]
             raise SandboxError(f"git apply failed: {detail}")
+
+    def _git_argv(self, root: Path, *arguments: str) -> list[str]:
+        validated_root = self._workspace_path(root)
+        return ["git", "-c", f"safe.directory={validated_root}", *arguments]
+
+    def _workspace_path(self, root: Path) -> Path:
+        resolved = root.resolve()
+        if resolved == self.workspace_root or not resolved.is_relative_to(self.workspace_root):
+            raise SandboxError("refused Git configuration outside the workspace root")
+        return resolved
 
     async def _run(self, argv: list[str], *, cwd: Path, timeout: float) -> None:
         return_code, _, stderr, _ = await self._run_capped(

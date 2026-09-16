@@ -9,7 +9,7 @@ COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 COPY config ./config
 RUN uv pip install --target /app/validation/pytest_vendor "pytest==8.4.2" && \
-    /app/.venv/bin/python -c "import tarfile; tarfile.open('/app/validation/pytest_vendor.tar.gz', 'w:gz').add('/app/validation/pytest_vendor', arcname='.')"
+    /app/.venv/bin/python -c "import tarfile; archive = tarfile.open('/app/validation/pytest_vendor.tar.gz', 'w:gz'); archive.add('/app/validation/pytest_vendor', arcname='.'); archive.close(); tarfile.open('/app/validation/pytest_vendor.tar.gz', 'r:gz').getmembers()"
 RUN /app/.venv/bin/python -c "from remediation_agent.api.agentcore import create_agentcore_app; assert callable(create_agentcore_app)"
 
 FROM python:3.12-slim-trixie
