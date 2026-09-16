@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     aws_region: str | None = None
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
+    openai_secret_arn: str | None = None
     deepseek_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPSEEK_API_KEY")
     openai_base_url: str | None = None
     deepseek_base_url: str | None = None
@@ -82,6 +83,7 @@ class Settings(BaseSettings):
         "openai_base_url",
         "deepseek_base_url",
         "openai_api_key",
+        "openai_secret_arn",
         "deepseek_api_key",
         "postgres_dsn",
         "checkpoint_encryption_key",
@@ -122,8 +124,8 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_LLM_MODEL is required for live model providers")
         if self.llm_provider == "bedrock" and not self.aws_region:
             raise ValueError("AIOS_AWS_REGION is required for Bedrock")
-        if self.llm_provider == "openai" and self.openai_api_key is None:
-            raise ValueError("OPENAI_API_KEY is required for OpenAI")
+        if self.llm_provider == "openai" and self.openai_api_key is None and self.openai_secret_arn is None:
+            raise ValueError("OPENAI_API_KEY or AIOS_OPENAI_SECRET_ARN is required for OpenAI")
         if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
             raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
         if self.github_writes_enabled and self.github_token is None and self.runtime_secret_arn is None:

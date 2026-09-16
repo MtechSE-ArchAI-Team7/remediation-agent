@@ -11,7 +11,7 @@ from typing import Protocol, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, messages_to_dict
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 from remediation_agent.config import Settings
 from remediation_agent.domain.models import ModelCallRecord
@@ -154,6 +154,8 @@ def build_structured_model(
     settings: Settings,
     max_output_tokens: int,
     max_format_retries: int,
+    *,
+    openai_api_key: SecretStr | None = None,
 ) -> ProviderStructuredModel:
     if settings.llm_provider == "fake":
         raise ValueError("the fake provider must be injected with explicit scripted responses")
@@ -177,18 +179,22 @@ def build_structured_model(
     elif settings.llm_provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        if settings.openai_base_url:
+        resolved_openai_key = openai_api_key or settings.openai_api_key
+        if resolved_openai_key is None:
+            raise ValueError("OpenAI API key is required to construct the model adapter")
+        if settings.llm_model.startswith("gpt-5.6"):
             chat_model = cast(
                 _ChatModel,
                 ChatOpenAI(
                     model=settings.llm_model,
-                    api_key=settings.openai_api_key,
+                    api_key=resolved_openai_key,
                     base_url=settings.openai_base_url,
-                    temperature=settings.model_temperature,
                     max_completion_tokens=max_output_tokens,
                     timeout=settings.model_timeout_seconds,
                     max_retries=settings.model_transport_retries,
                     use_responses_api=True,
+                    store=False,
+                    reasoning_effort="medium",
                 ),
             )
         else:
@@ -196,12 +202,14 @@ def build_structured_model(
                 _ChatModel,
                 ChatOpenAI(
                     model=settings.llm_model,
-                    api_key=settings.openai_api_key,
+                    api_key=resolved_openai_key,
+                    base_url=settings.openai_base_url,
                     temperature=settings.model_temperature,
                     max_completion_tokens=max_output_tokens,
                     timeout=settings.model_timeout_seconds,
                     max_retries=settings.model_transport_retries,
                     use_responses_api=True,
+                    store=False,
                 ),
             )
     else:

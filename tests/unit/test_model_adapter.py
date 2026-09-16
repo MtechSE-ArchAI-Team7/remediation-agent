@@ -10,7 +10,7 @@ from typing import Literal
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from remediation_agent.adapters.models import ProviderStructuredModel, build_structured_model
 from remediation_agent.config import Settings
@@ -18,6 +18,8 @@ from remediation_agent.domain.enums import ModelOperation
 from remediation_agent.domain.models import InspectionPlan
 from remediation_agent.ports.models import ModelRequest
 from remediation_agent.tools import finish_inspection
+
+_OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
 
 
 class _Runnable:
@@ -246,3 +248,44 @@ def test_bedrock_converse_adapter_uses_current_constructor(
     assert adapter.provider == "bedrock"
     assert captured["model"] == "fixture-inference-profile"
     assert captured["region_name"] == "ap-southeast-1"
+
+
+def test_gpt_5_6_terra_uses_private_responses_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import langchain_openai
+
+    captured: dict[str, object] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
+            _ = schema, include_raw
+            return _Runnable(deque())
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeOpenAI)
+    settings = Settings(
+        policy_file=Path("config/policies/reference.json"),
+        llm_provider="openai",
+        llm_model="gpt-5.6-terra",
+        openai_secret_arn=_OPENAI_CREDENTIAL_REFERENCE,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    adapter = build_structured_model(
+        settings,
+        max_output_tokens=4096,
+        max_format_retries=2,
+        openai_api_key=SecretStr("sk-hosted-secret"),
+    )
+
+    assert adapter.provider == "openai"
+    assert captured["model"] == "gpt-5.6-terra"
+    assert captured["max_completion_tokens"] == 4096
+    assert captured["use_responses_api"] is True
+    assert captured["store"] is False
+    assert captured["reasoning_effort"] == "medium"
+    assert "temperature" not in captured
+    assert captured["api_key"] == SecretStr("sk-hosted-secret")

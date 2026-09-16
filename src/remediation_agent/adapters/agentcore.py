@@ -39,6 +39,19 @@ class AgentCoreRuntimeSecret(StrictModel):
         return value
 
 
+class AgentCoreOpenAISecret(StrictModel):
+    """The exact OpenAI credential document accepted by the hosted runtime."""
+
+    OPENAI_APIKEY: SecretStr
+
+    @field_validator("OPENAI_APIKEY")
+    @classmethod
+    def openai_key_is_not_blank(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("OPENAI_APIKEY must not be blank")
+        return value
+
+
 class _SecretsManagerClient(Protocol):
     def get_secret_value(self, **kwargs: object) -> Mapping[str, object]: ...
 
@@ -73,6 +86,34 @@ class SecretsManagerRuntimeSecretProvider:
         except json.JSONDecodeError as exc:
             raise ValueError("runtime secret is not valid JSON") from exc
         return AgentCoreRuntimeSecret.model_validate(payload)
+
+
+class SecretsManagerOpenAISecretProvider:
+    """Fetch and strictly validate the separately managed OpenAI credential."""
+
+    def __init__(
+        self,
+        secret_arn: str,
+        *,
+        region_name: str,
+        client: _SecretsManagerClient | None = None,
+    ) -> None:
+        self.secret_arn = secret_arn
+        self._client = client or cast(
+            _SecretsManagerClient,
+            boto3.client("secretsmanager", region_name=region_name),
+        )
+
+    async def load(self) -> AgentCoreOpenAISecret:
+        response = await asyncio.to_thread(self._client.get_secret_value, SecretId=self.secret_arn)
+        raw = response.get("SecretString")
+        if not isinstance(raw, str):
+            raise ValueError("OpenAI secret must be stored as a JSON SecretString")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("OpenAI secret is not valid JSON") from exc
+        return AgentCoreOpenAISecret.model_validate(payload)
 
 
 class S3ArtifactStore:

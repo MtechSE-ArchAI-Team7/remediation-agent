@@ -15,6 +15,7 @@ from remediation_agent.adapters.agentcore import (
     AgentCoreWorkspaceRecovery,
     S3ArtifactStore,
     S3AuditSink,
+    SecretsManagerOpenAISecretProvider,
     SecretsManagerRuntimeSecretProvider,
 )
 from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterpreterSandbox
@@ -53,7 +54,7 @@ _SESSION_HEADER = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 
 
 class AgentCoreProbeInput(StrictModel):
-    probe: Literal["bedrock"]
+    probe: Literal["bedrock", "openai"]
 
 
 class AgentCoreProbeInvocation(StrictModel):
@@ -112,6 +113,8 @@ class AgentCorePingResponse(StrictModel):
 def create_agentcore_app(
     model: StructuredModel | None = None,
     service: RemediationService | None = None,
+    *,
+    probe_provider: Literal["bedrock", "openai"] | None = None,
 ) -> FastAPI:
     """Create the AgentCore application with injectable boundaries for offline tests."""
 
@@ -119,6 +122,8 @@ def create_agentcore_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if model is not None:
             application.state.structured_model = model
+        if probe_provider is not None:
+            application.state.probe_provider = probe_provider
         if service is not None:
             application.state.remediation_service = service
         if model is not None or service is not None:
@@ -126,20 +131,30 @@ def create_agentcore_app(
             return
 
         settings = Settings()  # type: ignore[call-arg]
-        if settings.llm_provider != "bedrock" or settings.aws_region is None:
-            raise ValueError("AgentCore deployment requires the Bedrock provider and AWS Region")
+        _validate_agentcore_provider(settings)
+        region_name = cast(str, settings.aws_region)
         memory_id, secret_arn, artifact_bucket = settings.require_agentcore_configuration()
         policy_config = load_policy(settings.policy_file)
         policy = PolicyEngine(policy_config)
         runtime_secret = await SecretsManagerRuntimeSecretProvider(
             secret_arn,
-            region_name=settings.aws_region,
+            region_name=region_name,
         ).load()
         github_token = runtime_secret.github_token.get_secret_value()
+        openai_api_key = None
+        if settings.llm_provider == "openai":
+            if settings.openai_secret_arn is None:
+                raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
+            openai_secret = await SecretsManagerOpenAISecretProvider(
+                settings.openai_secret_arn,
+                region_name=region_name,
+            ).load()
+            openai_api_key = openai_secret.OPENAI_APIKEY
         structured_model = build_structured_model(
             settings,
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
+            openai_api_key=openai_api_key,
         )
         credential_provider = GitHubAskpassCredentialProvider(github_token)
         repository = LocalGitRepository(
@@ -155,7 +170,7 @@ def create_agentcore_app(
             inspection_tools=GitHubRemoteMcpInspectionTools(github_token, policy),
             sandbox=AgentCoreCodeInterpreterSandbox(
                 settings.workspace_root,
-                region_name=settings.aws_region,
+                region_name=region_name,
                 code_interpreter_identifier=settings.code_interpreter_identifier,
                 validation_bundle=settings.code_interpreter_bundle,
             ),
@@ -163,8 +178,8 @@ def create_agentcore_app(
                 token=github_token,
                 writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
             ),
-            artifact_store=S3ArtifactStore(artifact_bucket, region_name=settings.aws_region),
-            audit_sink=S3AuditSink(artifact_bucket, region_name=settings.aws_region),
+            artifact_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
+            audit_sink=S3AuditSink(artifact_bucket, region_name=region_name),
             prompt_version=settings.prompt_version,
             github_writes_enabled=settings.github_writes_enabled,
             github_repository=settings.github_repository,
@@ -172,9 +187,10 @@ def create_agentcore_app(
         checkpointer = agentcore_memory_checkpointer(
             memory_id,
             runtime_secret.checkpoint_encryption_key.get_secret_value(),
-            region_name=settings.aws_region,
+            region_name=region_name,
         )
         application.state.structured_model = structured_model
+        application.state.probe_provider = settings.llm_provider
         application.state.remediation_service = RemediationService(
             build_graph(nodes, checkpointer),
             max_active_runs=policy_config.limits.max_active_runs,
@@ -243,9 +259,12 @@ def create_agentcore_app(
 
 
 async def _invoke_probe(invocation: AgentCoreProbeInvocation, request: Request) -> AgentCoreProbeResponse:
+    configured_provider = getattr(request.app.state, "probe_provider", None)
+    if configured_provider is not None and invocation.input.probe != configured_provider:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="PROBE_PROVIDER_MISMATCH")
     structured_model = getattr(request.app.state, "structured_model", None)
     if structured_model is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="BEDROCK_PROBE_NOT_CONFIGURED")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MODEL_PROBE_NOT_CONFIGURED")
     try:
         generation = await structured_model.generate(
             ModelRequest(
@@ -260,13 +279,20 @@ async def _invoke_probe(invocation: AgentCoreProbeInvocation, request: Request) 
             AgentCoreProbeResult,
         )
     except Exception as exc:  # noqa: BLE001 - redact the external provider boundary
-        _LOGGER.warning("AgentCore Bedrock smoke probe failed: %s", type(exc).__name__)
-        if _is_bedrock_throttling(exc):
+        provider = invocation.input.probe
+        _LOGGER.warning("AgentCore %s smoke probe failed: %s", provider, type(exc).__name__)
+        if provider == "bedrock" and _is_bedrock_throttling(exc):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="BEDROCK_THROTTLED",
             ) from exc
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="BEDROCK_PROBE_FAILED") from exc
+        if provider == "openai" and _is_openai_rate_limit(exc):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="OPENAI_RATE_LIMITED",
+            ) from exc
+        detail = "BEDROCK_PROBE_FAILED" if provider == "bedrock" else "OPENAI_PROBE_FAILED"
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
     record = generation.record
     return AgentCoreProbeResponse(
         output=AgentCoreProbeOutput(
@@ -292,6 +318,15 @@ def _validate_session_id(value: str) -> str:
     return canonical
 
 
+def _validate_agentcore_provider(settings: Settings) -> None:
+    if settings.llm_provider not in {"bedrock", "openai"} or settings.aws_region is None:
+        raise ValueError("AgentCore deployment requires the Bedrock or OpenAI provider and AWS Region")
+    if settings.llm_provider == "openai" and settings.openai_api_key is not None:
+        raise ValueError("AgentCore OpenAI credentials must be loaded from Secrets Manager")
+    if settings.llm_provider == "openai" and settings.openai_secret_arn is None:
+        raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
+
+
 def _require_matching_run(run_id: str, session_id: str) -> None:
     if run_id != session_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="RUN_SESSION_MISMATCH")
@@ -311,6 +346,22 @@ def _is_bedrock_throttling(error: BaseException) -> bool:
             provider_error = response.get("Error")
             if isinstance(provider_error, dict) and provider_error.get("Code") == "ThrottlingException":
                 return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _is_openai_rate_limit(error: BaseException) -> bool:
+    """Recognize OpenAI rate limiting without exposing the provider response."""
+
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if type(current).__name__ == "RateLimitError" or getattr(current, "status_code", None) == 429:
+            return True
+        response = getattr(current, "response", None)
+        if getattr(response, "status_code", None) == 429:
+            return True
         current = current.__cause__ or current.__context__
     return False
 

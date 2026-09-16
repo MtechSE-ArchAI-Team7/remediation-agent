@@ -1,7 +1,8 @@
-"""Bedrock AgentCore smoke HTTP contract tests."""
+"""AgentCore HTTP contract tests."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
@@ -9,7 +10,8 @@ import httpx
 import pytest
 
 from remediation_agent.adapters.fakes import FakeStructuredModel
-from remediation_agent.api.agentcore import create_agentcore_app
+from remediation_agent.api.agentcore import _validate_agentcore_provider, create_agentcore_app
+from remediation_agent.config import Settings
 from remediation_agent.domain.enums import FinalStatus, ModelOperation
 from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
 from remediation_agent.service import RemediationService
@@ -50,6 +52,21 @@ async def test_agentcore_ping_implements_runtime_health_contract() -> None:
     assert model.requests == []
 
 
+def test_agentcore_openai_rejects_inline_api_key() -> None:
+    settings = Settings.model_validate(
+        {
+            "policy_file": Path("config/policies/agentcore-demo.json"),
+            "llm_provider": "openai",
+            "llm_model": "gpt-5.6-terra",
+            "aws_region": "ap-southeast-1",
+            "OPENAI_API_KEY": "sk-inline-secret",
+        }
+    )
+
+    with pytest.raises(ValueError, match="must be loaded from Secrets Manager"):
+        _validate_agentcore_provider(settings)
+
+
 async def test_agentcore_invocation_returns_only_bounded_model_metadata() -> None:
     model = FakeStructuredModel({ModelOperation.AGENTCORE_SMOKE: [{"status": "ok"}]})
     app = create_agentcore_app(model)
@@ -79,6 +96,40 @@ async def test_agentcore_invocation_returns_only_bounded_model_metadata() -> Non
     assert request.operation is ModelOperation.AGENTCORE_SMOKE
     assert request.prompt_version == "agentcore-smoke-v1"
     assert request.payload == {"probe": "bedrock"}
+
+
+async def test_agentcore_openai_probe_returns_bounded_model_metadata() -> None:
+    model = FakeStructuredModel({ModelOperation.AGENTCORE_SMOKE: [{"status": "ok"}]})
+    app = create_agentcore_app(model, probe_provider="openai")
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                json={"action": "probe", "input": {"probe": "openai"}},
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 200
+    assert response.json()["output"]["provider"] == "fake"
+    assert model.requests[0].payload == {"probe": "openai"}
+
+
+async def test_agentcore_probe_rejects_configured_provider_mismatch() -> None:
+    model = FakeStructuredModel({})
+    app = create_agentcore_app(model, probe_provider="openai")
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                json={"action": "probe", "input": {"probe": "bedrock"}},
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "PROBE_PROVIDER_MISMATCH"}
+    assert model.requests == []
 
 
 async def test_agentcore_invocation_rejects_unexpected_or_free_form_input() -> None:
@@ -150,6 +201,56 @@ async def test_agentcore_bedrock_throttling_is_distinct_and_redacted(monkeypatch
     assert response.status_code == 429
     assert response.json() == {"detail": "BEDROCK_THROTTLED"}
     assert "account quota detail" not in response.text
+
+
+async def test_agentcore_openai_rate_limit_is_distinct_and_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    class RateLimitError(RuntimeError):
+        status_code = 429
+
+    model = FakeStructuredModel({})
+
+    async def rate_limited(*_: object, **__: object) -> None:
+        try:
+            raise RateLimitError("secret provider response")
+        except RateLimitError as exc:
+            raise RuntimeError("provider wrapper") from exc
+
+    monkeypatch.setattr(model, "generate", rate_limited)
+    app = create_agentcore_app(model, probe_provider="openai")
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                json={"action": "probe", "input": {"probe": "openai"}},
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "OPENAI_RATE_LIMITED"}
+    assert "secret provider response" not in response.text
+
+
+async def test_agentcore_openai_failure_is_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = FakeStructuredModel({})
+
+    async def failed(*_: object, **__: object) -> None:
+        raise RuntimeError("secret provider response")
+
+    monkeypatch.setattr(model, "generate", failed)
+    app = create_agentcore_app(model, probe_provider="openai")
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                json={"action": "probe", "input": {"probe": "openai"}},
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "OPENAI_PROBE_FAILED"}
+    assert "secret provider response" not in response.text
 
 
 async def test_agentcore_requires_a_canonical_uuid_session_header() -> None:

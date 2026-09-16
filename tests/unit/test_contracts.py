@@ -14,6 +14,8 @@ from remediation_agent.policy.loader import PolicyLoadError, load_policy
 from remediation_agent.policy.models import PolicyConfig
 from tests.conftest import diagnosis_handoff
 
+_OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
+
 
 def test_diagnosis_handoff_is_strict_and_versioned() -> None:
     payload = diagnosis_handoff().model_dump(mode="json")
@@ -72,6 +74,38 @@ def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
     assert settings.github_repository is None
     assert settings.openai_api_key is None
     assert settings.postgres_dsn is None
+
+
+def test_openai_settings_accept_either_local_key_or_hosted_secret_arn(tmp_path: Path) -> None:
+    hosted = Settings(
+        policy_file=tmp_path / "policy.json",
+        llm_provider="openai",
+        llm_model="gpt-5.6-terra",
+        openai_secret_arn=_OPENAI_CREDENTIAL_REFERENCE,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+    local = Settings.model_validate(
+        {
+            "policy_file": tmp_path / "policy.json",
+            "llm_provider": "openai",
+            "llm_model": "gpt-5.6-terra",
+            "OPENAI_API_KEY": "sk-local",
+        }
+    )
+
+    assert hosted.openai_api_key is None
+    assert hosted.openai_secret_arn is not None
+    assert local.openai_api_key is not None
+
+
+def test_openai_settings_reject_missing_local_key_and_hosted_secret(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="OPENAI_API_KEY or AIOS_OPENAI_SECRET_ARN"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="openai",
+            llm_model="gpt-5.6-terra",
+            _env_file=None,
+        )  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize("missing", ["github_token", "github_repository"])

@@ -12,9 +12,11 @@ from typing import cast
 import pytest
 
 from remediation_agent.adapters.agentcore import (
+    AgentCoreOpenAISecret,
     AgentCoreRuntimeSecret,
     S3ArtifactStore,
     S3AuditSink,
+    SecretsManagerOpenAISecretProvider,
     SecretsManagerRuntimeSecretProvider,
 )
 from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterpreterSandbox
@@ -86,6 +88,37 @@ async def test_runtime_secret_is_strict_and_requires_a_32_byte_key() -> None:
     assert fake.requests == [{"SecretId": "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:runtime"}]
     with pytest.raises(ValueError):
         AgentCoreRuntimeSecret.model_validate({"github_token": "token", "checkpoint_encryption_key": "short"})
+
+
+async def test_openai_secret_is_strict_and_loaded_without_exposure() -> None:
+    fake = _FakeSecrets(json.dumps({"OPENAI_APIKEY": "sk-secret-value"}))
+    provider = SecretsManagerOpenAISecretProvider(
+        "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai",
+        region_name="ap-southeast-1",
+        client=fake,
+    )
+
+    secret = await provider.load()
+
+    assert isinstance(secret, AgentCoreOpenAISecret)
+    assert secret.OPENAI_APIKEY.get_secret_value() == "sk-secret-value"
+    assert "sk-secret-value" not in repr(secret)
+    assert fake.requests == [{"SecretId": "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"}]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"OPENAI_APIKEY": ""},
+        {"OPENAI_APIKEY": "   "},
+        {"OPENAI_APIKEY": "sk-secret", "unexpected": "value"},
+        {"OPENAI_API_KEY": "sk-wrong-name"},
+    ],
+)
+def test_openai_secret_rejects_missing_blank_or_unknown_fields(payload: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        AgentCoreOpenAISecret.model_validate(payload)
 
 
 async def test_s3_artifacts_are_redacted_digest_addressed_and_immutable() -> None:

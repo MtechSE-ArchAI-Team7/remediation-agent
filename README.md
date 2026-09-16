@@ -421,11 +421,11 @@ Docker tests skip when the daemon or `aios-remediation-sandbox:local` image is u
 test uses `AIOS_TEST_POSTGRES_DSN` when set, then the local `AIOS_POSTGRES_DSN`; it skips when neither is configured.
 Live model tests require their explicit marker/environment gate and never run in the default suite.
 
-## Bedrock AgentCore deployment
+## AgentCore deployment
 
 `Dockerfile.agentcore` packages the same one-agent LangGraph workflow behind AgentCore's HTTP contract. `GET /ping`
 implements process health without touching session storage. `POST /invocations` accepts a strict `action` union for a
-bounded Bedrock probe, starting a diagnosis handoff, reading a run, or submitting a digest-bound approval. The required
+bounded provider probe, starting a diagnosis handoff, reading a run, or submitting a digest-bound approval. The required
 AgentCore runtime session header must be a canonical UUID and is also the remediation run ID.
 
 The image workflow publishes `linux/arm64` commit-SHA tags to
@@ -438,9 +438,10 @@ Create the AgentCore Runtime manually with HTTP protocol, IAM/SigV4 inbound auth
 immutable commit-SHA image URI. Configure these non-secret environment variables:
 
 ```text
-AIOS_LLM_PROVIDER=bedrock
-AIOS_LLM_MODEL=apac.amazon.nova-micro-v1:0
+AIOS_LLM_PROVIDER=openai
+AIOS_LLM_MODEL=gpt-5.6-terra
 AIOS_AWS_REGION=ap-southeast-1
+AIOS_OPENAI_SECRET_ARN=<openai-secrets-manager-arn>
 AIOS_POLICY_FILE=/app/config/policies/agentcore-demo.json
 AIOS_GITHUB_REPOSITORY=MtechSE-ArchAI-Team7/aios-remediation-demo
 AIOS_GITHUB_WRITES_ENABLED=true
@@ -451,10 +452,13 @@ AIOS_WORKSPACE_ROOT=/mnt/workspace/runs
 AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 ```
 
-Mount managed session storage at `/mnt/workspace`. Store a two-field JSON secret containing `github_token` and an exact
-32-byte UTF-8 `checkpoint_encryption_key`; neither value belongs in environment variables. The execution role needs
-scoped ECR/logging and Nova Micro access, AgentCore Memory event access, Code Interpreter session operations, exact
-secret read access, and object access only to the dedicated artifact bucket.
+Mount managed session storage at `/mnt/workspace`. Store a two-field runtime JSON secret containing `github_token` and
+an exact 32-byte UTF-8 `checkpoint_encryption_key`. Store the OpenAI credential separately as the exact JSON document
+`{"OPENAI_APIKEY":"..."}` and grant the execution role read access only to those two secret ARNs. Never set
+`OPENAI_API_KEY` in AgentCore. The OpenAI adapter uses the Responses API with medium reasoning, a 4,096 completion-token
+limit, and provider response storage disabled. Keep Nova Micro invocation access only while a reversible Bedrock runtime
+version is required. The role also needs scoped ECR/logging, AgentCore Memory event access, Code Interpreter session
+operations, and object access only to the dedicated artifact bucket.
 
 AgentCore Memory stores encrypted LangGraph checkpoints using actor `resolution-remediation-agent` and the run UUID as
 thread ID. Git operations use the mounted disposable workspace. Validation copies a secret-free archive to a fresh
