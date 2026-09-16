@@ -261,6 +261,11 @@ async def _invoke_probe(invocation: AgentCoreProbeInvocation, request: Request) 
         )
     except Exception as exc:  # noqa: BLE001 - redact the external provider boundary
         _LOGGER.warning("AgentCore Bedrock smoke probe failed: %s", type(exc).__name__)
+        if _is_bedrock_throttling(exc):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="BEDROCK_THROTTLED",
+            ) from exc
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="BEDROCK_PROBE_FAILED") from exc
     record = generation.record
     return AgentCoreProbeResponse(
@@ -290,6 +295,24 @@ def _validate_session_id(value: str) -> str:
 def _require_matching_run(run_id: str, session_id: str) -> None:
     if run_id != session_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="RUN_SESSION_MISMATCH")
+
+
+def _is_bedrock_throttling(error: BaseException) -> bool:
+    """Recognize provider throttling through redacted wrapper exception chains."""
+
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if type(current).__name__ == "ThrottlingException":
+            return True
+        response = getattr(current, "response", None)
+        if isinstance(response, dict):
+            provider_error = response.get("Error")
+            if isinstance(provider_error, dict) and provider_error.get("Code") == "ThrottlingException":
+                return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 app = create_agentcore_app()

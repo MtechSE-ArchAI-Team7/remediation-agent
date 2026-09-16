@@ -6,6 +6,7 @@ from typing import cast
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from remediation_agent.adapters.fakes import FakeStructuredModel
 from remediation_agent.api.agentcore import create_agentcore_app
@@ -121,6 +122,34 @@ async def test_agentcore_provider_failure_is_redacted() -> None:
     assert response.status_code == 503
     assert response.json() == {"detail": "BEDROCK_PROBE_FAILED"}
     assert "fake response" not in response.text
+
+
+async def test_agentcore_bedrock_throttling_is_distinct_and_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ThrottlingException(RuntimeError):
+        pass
+
+    model = FakeStructuredModel({})
+
+    async def throttled(*_: object, **__: object) -> None:
+        try:
+            raise ThrottlingException("account quota detail")
+        except ThrottlingException as exc:
+            raise RuntimeError("provider wrapper") from exc
+
+    monkeypatch.setattr(model, "generate", throttled)
+    app = create_agentcore_app(model)
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations",
+                json={"action": "probe", "input": {"probe": "bedrock"}},
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "BEDROCK_THROTTLED"}
+    assert "account quota detail" not in response.text
 
 
 async def test_agentcore_requires_a_canonical_uuid_session_header() -> None:
