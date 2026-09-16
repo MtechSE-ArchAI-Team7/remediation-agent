@@ -210,7 +210,14 @@ class RiskAssessment(StrictModel):
 
 
 class PatchCandidate(StrictModel):
-    unified_diff: str = Field(min_length=1, max_length=2_000_000)
+    unified_diff: str = Field(
+        min_length=1,
+        max_length=2_000_000,
+        description=(
+            "One complete syntactically valid unified diff whose hunk source and target counts exactly match "
+            "the context, removed, and added lines in each hunk body."
+        ),
+    )
     rationale: NonEmptyStr
     proposed_validation_tasks: list[str] = Field(default_factory=list, max_length=10)
 

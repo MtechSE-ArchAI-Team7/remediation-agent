@@ -12,9 +12,11 @@ from typing import Protocol, cast
 from langchain_core.messages import AIMessage, BaseMessage, messages_to_dict
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, SecretStr, ValidationError
+from unidiff import PatchSet  # type: ignore[attr-defined]
+from unidiff.errors import UnidiffParseError
 
 from remediation_agent.config import Settings
-from remediation_agent.domain.models import ModelCallRecord
+from remediation_agent.domain.models import ModelCallRecord, PatchCandidate
 from remediation_agent.ports.models import ModelGeneration, ModelRequest, TModel
 
 
@@ -71,6 +73,7 @@ class ProviderStructuredModel:
                     parsed = raw.get("parsed")
                     response_message = raw.get("raw")
                 value = parsed if isinstance(parsed, output_schema) else output_schema.model_validate(parsed)
+                _validate_provider_value(value)
                 input_tokens, output_tokens = _usage_tokens(response_message)
                 duration_ms = int((time.monotonic() - started) * 1_000)
                 return ModelGeneration(
@@ -252,6 +255,17 @@ def build_structured_model(
 
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _validate_provider_value(value: BaseModel) -> None:
+    """Reject malformed provider artifacts while the bounded format retry is still available."""
+
+    if not isinstance(value, PatchCandidate):
+        return
+    try:
+        PatchSet(value.unified_diff.splitlines(keepends=True))
+    except (UnidiffParseError, ValueError) as exc:
+        raise ValueError(f"provider patch failed unified-diff validation: {type(exc).__name__}") from exc
 
 
 def _usage_tokens(message: object | None) -> tuple[int | None, int | None]:

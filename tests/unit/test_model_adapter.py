@@ -15,7 +15,7 @@ from pydantic import BaseModel, SecretStr
 from remediation_agent.adapters.models import ProviderStructuredModel, build_structured_model
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import ModelOperation
-from remediation_agent.domain.models import InspectionPlan
+from remediation_agent.domain.models import InspectionPlan, PatchCandidate
 from remediation_agent.ports.models import ModelRequest
 from remediation_agent.tools import finish_inspection
 
@@ -73,6 +73,36 @@ async def test_schema_failure_receives_one_bounded_retry() -> None:
     assert generation.value.paths_to_read == ["src/app.py"]
     assert generation.record.provider == "fake-chat"
     assert generation.record.input_digest.startswith("sha256:")
+
+
+async def test_malformed_unified_diff_receives_one_bounded_format_retry() -> None:
+    malformed = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1,2 +1,2 @@\n-old\n+new\n"
+    valid = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1 +1 @@\n-old\n+new\n"
+    model = ProviderStructuredModel(
+        _ChatModel(
+            [
+                {"unified_diff": malformed, "rationale": "First attempt."},
+                {"unified_diff": valid, "rationale": "Recounted hunk."},
+            ]
+        ),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=1,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PATCH,
+            prompt_version="test-v1",
+            system_instruction="Return an exact unified diff.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == valid
+    assert generation.value.rationale == "Recounted hunk."
 
 
 async def test_tool_turn_binds_tools_and_normalizes_call_metadata() -> None:
