@@ -23,11 +23,11 @@ async def test_workspace_is_cleaned_when_model_fails_after_clone() -> None:
 async def test_invocation_deadline_routes_through_normal_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     service, model, repository, sandbox, _, _, _ = build_test_service(
         scripted_responses(),
-        invocation_timeout_seconds=0.01,
+        invocation_timeout_seconds=1.0,
     )
 
     async def wait_past_deadline(*_: object) -> None:
-        await asyncio.sleep(1)
+        await asyncio.sleep(60)
 
     monkeypatch.setattr(model, "generate_tool_turn", wait_past_deadline)
 
