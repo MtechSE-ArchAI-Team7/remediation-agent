@@ -16,3 +16,4 @@ bandit.json
 pip-audit.json
 .env
 .env.*
+demo-ui

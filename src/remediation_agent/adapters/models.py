@@ -19,6 +19,17 @@ from remediation_agent.config import Settings
 from remediation_agent.domain.models import ModelCallRecord, PatchCandidate
 from remediation_agent.ports.models import ModelGeneration, ModelRequest, TModel
 
+_PATCH_FORMAT_RETRY_INSTRUCTION = (
+    "Trusted retry instruction: the previous candidate failed deterministic unified-diff parsing because one or "
+    "more hunk header line counts did not match the hunk body. Recreate the complete patch from the original "
+    "request, recount every old and new hunk line exactly, and return only the corrected structured response. "
+    "Do not add files, change the reviewed scope, or include commentary outside the schema."
+)
+
+
+class _PatchFormatError(ValueError):
+    """Identify a locally detected malformed patch without retaining provider content."""
+
 
 class _ChatModel(Protocol):
     def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable: ...
@@ -95,6 +106,10 @@ class ProviderStructuredModel:
                 last_error = exc
                 if attempt >= self.retries:
                     break
+                if isinstance(exc, _PatchFormatError) and _PATCH_FORMAT_RETRY_INSTRUCTION not in {
+                    content for role, content in messages if role == "system"
+                }:
+                    messages.append(("system", _PATCH_FORMAT_RETRY_INSTRUCTION))
             except Exception as exc:  # noqa: BLE001 - normalize an untrusted provider boundary
                 raise RuntimeError(f"structured model provider failed: {type(exc).__name__}") from exc
         raise RuntimeError(f"structured model generation failed after bounded retries: {last_error}") from last_error
@@ -265,7 +280,7 @@ def _validate_provider_value(value: BaseModel) -> None:
     try:
         PatchSet(value.unified_diff.splitlines(keepends=True))
     except (UnidiffParseError, ValueError) as exc:
-        raise ValueError(f"provider patch failed unified-diff validation: {type(exc).__name__}") from exc
+        raise _PatchFormatError(f"provider patch failed unified-diff validation: {type(exc).__name__}") from exc
 
 
 def _usage_tokens(message: object | None) -> tuple[int | None, int | None]:

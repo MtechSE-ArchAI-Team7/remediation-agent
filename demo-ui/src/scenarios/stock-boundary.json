@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "case_id": "CASE-DEMO-02",
+  "issue_summary": "GitHub issue #2: an order equal to available stock is incorrectly rejected.",
+  "remediation_type": "CODE",
+  "diagnosis": {
+    "summary": "The stock predicate uses a strict comparison and excludes the exact inventory boundary.",
+    "confidence": 0.99,
+    "evidence_ids": ["demo-ev-02"],
+    "contradictions": [],
+    "unresolved_questions": []
+  },
+  "supporting_evidence": [
+    {
+      "evidence_id": "demo-ev-02",
+      "source_type": "github_issue",
+      "source_locator": "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo/issues/2",
+      "observed_at": "2026-08-17T01:02:00Z",
+      "digest": "sha256:ccd2e5fc75b9ae9533c6ef7c77865b671051b2c68839e75b8ff547f9fd0ca22c",
+      "excerpt": "Order equal to available stock is incorrectly rejected."
+    }
+  ],
+  "acceptance_criteria": [
+    "A request equal to available stock is accepted.",
+    "A request above available stock remains rejected."
+  ],
+  "repository": {
+    "provider": "GITHUB",
+    "url": "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git",
+    "base_branch": "scenario/02-stock-boundary",
+    "commit_sha": "682521399d767c1f6e0caee6b15757d6acff4e07"
+  },
+  "upstream_correlation_id": "demo-investigation-02",
+  "upstream_audit_refs": ["audit://demo/CASE-DEMO-02"]
+}

@@ -5,6 +5,10 @@ This service implements the **Resolution/Remediation Agent**, for **AIOS: Agenti
 The implementation changes only disposable repository workspaces. It cannot merge a pull request, deploy, mutate production, or perform identity and
 privileged-access operations. The HTTP API does not implement caller authentication; deployment and network controls must restrict access to authorized operators.
 
+The presentation-only [`demo-ui`](demo-ui/README.md) provides a React dashboard and public Lambda Function URL gateway
+for manually submitting the Agent 2 handoff to the hosted AgentCore runtime. It intentionally has no end-user
+authentication and must not be treated as a production interface.
+
 ## Agent details
 
 | Property | Implementation |
@@ -171,6 +175,7 @@ remediation-agent/
 ├── Dockerfile                      # API service image
 ├── docker/
 │   └── sandbox.Dockerfile          # Separate restricted validation image
+├── demo-ui/                         # React presentation UI and standalone Lambda gateway
 ├── docs/
 │   └── TOOL_CATALOG.md             # Generated 17-tool catalogue and authority boundary
 ├── config/

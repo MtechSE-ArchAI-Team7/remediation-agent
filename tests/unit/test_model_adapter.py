@@ -23,10 +23,12 @@ _OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:7348493948
 
 
 class _Runnable:
-    def __init__(self, responses: deque[object]) -> None:
+    def __init__(self, responses: deque[object], inputs: list[object] | None = None) -> None:
         self.responses = responses
+        self.inputs = inputs if inputs is not None else []
 
     async def ainvoke(self, input: object) -> object:
+        self.inputs.append(list(input) if isinstance(input, list) else input)
         _ = input
         value = self.responses.popleft()
         if isinstance(value, Exception):
@@ -37,15 +39,16 @@ class _Runnable:
 class _ChatModel:
     def __init__(self, responses: list[object]) -> None:
         self.responses = deque(responses)
+        self.inputs: list[object] = []
 
     def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
         _ = schema
         assert include_raw
-        return _Runnable(self.responses)
+        return _Runnable(self.responses, self.inputs)
 
     def bind_tools(self, tools: Sequence[BaseTool]) -> _Runnable:
         _ = tools
-        return _Runnable(self.responses)
+        return _Runnable(self.responses, self.inputs)
 
 
 async def test_schema_failure_receives_one_bounded_retry() -> None:
@@ -78,13 +81,14 @@ async def test_schema_failure_receives_one_bounded_retry() -> None:
 async def test_malformed_unified_diff_receives_one_bounded_format_retry() -> None:
     malformed = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1,2 +1,2 @@\n-old\n+new\n"
     valid = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1 +1 @@\n-old\n+new\n"
+    chat_model = _ChatModel(
+        [
+            {"unified_diff": malformed, "rationale": "First attempt."},
+            {"unified_diff": valid, "rationale": "Recounted hunk."},
+        ]
+    )
     model = ProviderStructuredModel(
-        _ChatModel(
-            [
-                {"unified_diff": malformed, "rationale": "First attempt."},
-                {"unified_diff": valid, "rationale": "Recounted hunk."},
-            ]
-        ),
+        chat_model,
         provider="fake-chat",
         model="fixture-model",
         timeout_seconds=1,
@@ -103,6 +107,15 @@ async def test_malformed_unified_diff_receives_one_bounded_format_retry() -> Non
 
     assert generation.value.unified_diff == valid
     assert generation.value.rationale == "Recounted hunk."
+    assert len(chat_model.inputs) == 2
+    first_messages = chat_model.inputs[0]
+    retry_messages = chat_model.inputs[1]
+    assert isinstance(first_messages, list)
+    assert isinstance(retry_messages, list)
+    assert len(first_messages) == 2
+    assert len(retry_messages) == 3
+    assert "recount every old and new hunk line exactly" in retry_messages[-1][1]
+    assert malformed not in str(retry_messages)
 
 
 async def test_tool_turn_binds_tools_and_normalizes_call_metadata() -> None:

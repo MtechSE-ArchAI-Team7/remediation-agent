@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-mcp test-mcp-live test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build agentcore-docker-build sandbox-build db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-mcp test-mcp-live test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -57,6 +57,12 @@ agentcore-docker-build:
 
 sandbox-build:
 	docker build -f docker/sandbox.Dockerfile -t aios-remediation-sandbox:local .
+
+demo-ui-test:
+	cd demo-ui && npm ci && npm run typecheck && npm test
+
+demo-ui-build:
+	cd demo-ui && npm ci && npm run build
 
 db-up:
 	docker compose up -d postgres
