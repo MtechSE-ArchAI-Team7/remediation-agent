@@ -374,8 +374,13 @@ async def test_session_uses_streamable_http_and_closes(
     workspace_path = tmp_path / "workspace"
     workspace_path.mkdir()
 
-    async with _provider().session(_repository(), _workspace(workspace_path)) as tools:
-        assert {tool.name for tool in tools} == {"get_repository_tree", "get_file_contents", "search_code"}
+    class ThrottlingException(Exception):
+        pass
+
+    with pytest.raises(ThrottlingException, match="model quota"):
+        async with _provider().session(_repository(), _workspace(workspace_path)) as tools:
+            assert {tool.name for tool in tools} == {"get_repository_tree", "get_file_contents", "search_code"}
+            raise ThrottlingException("model quota")
 
     assert observed["url"] == GITHUB_MCP_ENDPOINT
     assert observed["http_arguments"] == {

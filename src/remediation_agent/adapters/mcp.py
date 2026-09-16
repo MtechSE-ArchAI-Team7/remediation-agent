@@ -123,6 +123,7 @@ class GitHubRemoteMcpInspectionTools:
         workspace: WorkspaceRef,
     ) -> AsyncIterator[Sequence[BaseTool]]:
         target = self._target(repository, workspace)
+        consumer_error: BaseException | None = None
         try:
             async with httpx.AsyncClient(
                 headers=self._headers(),
@@ -137,8 +138,14 @@ class GitHubRemoteMcpInspectionTools:
                             await client.initialize()
                             discovered = await load_mcp_tools(client, handle_tool_errors=False)
                         self._validate_tools(discovered)
-                        yield self._bounded_tools(client, target, workspace)
+                        try:
+                            yield self._bounded_tools(client, target, workspace)
+                        except BaseException as exc:
+                            consumer_error = exc
+                            raise
         except Exception as exc:  # noqa: BLE001 - normalize the external MCP transport boundary
+            if consumer_error is not None:
+                raise consumer_error.with_traceback(consumer_error.__traceback__) from None
             raise RuntimeError(f"GitHub MCP session failed: {_mcp_failure_code(exc)}") from exc
 
     def _headers(self) -> dict[str, str]:
