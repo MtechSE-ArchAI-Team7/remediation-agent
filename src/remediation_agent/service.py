@@ -11,7 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, StateSnapshot
 
 from remediation_agent.adapters.evidence import SecretRedactor
-from remediation_agent.domain.enums import FinalStatus
+from remediation_agent.domain.enums import ApprovalStatus, FinalStatus
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
@@ -81,10 +81,14 @@ class RemediationService:
         self._validate_run_id(run_id)
         snapshot = await self._snapshot(run_id)
         state = cast(RemediationState, snapshot.values)
+        redacted_decision = ApprovalDecisionV1.model_validate(self._redact_data(decision.model_dump(mode="python")))
         request = self._pending_approval(state, snapshot)
         if request is None:
+            if self._is_matching_approval_retry(state, redacted_decision):
+                if redacted_decision.status is ApprovalStatus.APPROVED and snapshot.next:
+                    return await self._invoke(None, run_id)
+                return self._view(state, run_id, approval_request=None)
             raise ApprovalConflictError("run is not waiting for approval")
-        redacted_decision = ApprovalDecisionV1.model_validate(self._redact_data(decision.model_dump(mode="python")))
         if (
             redacted_decision.approval_id != request.approval_id
             or redacted_decision.scope_digest != request.scope_digest
@@ -117,7 +121,7 @@ class RemediationService:
             return False
         return True
 
-    async def _invoke(self, value: RemediationState | Command[object], run_id: str) -> RemediationRunView:
+    async def _invoke(self, value: RemediationState | Command[object] | None, run_id: str) -> RemediationRunView:
         config = self._config(run_id)
         async with self._run_slots:
             try:
@@ -242,6 +246,19 @@ class RemediationService:
             except ValueError:
                 continue
         return state.get("approval_request") if state.get("final_status") is FinalStatus.AWAITING_APPROVAL else None
+
+    @staticmethod
+    def _is_matching_approval_retry(state: RemediationState, decision: ApprovalDecisionV1) -> bool:
+        """Accept only a semantically identical retry of a decision already checkpointed."""
+
+        return any(
+            existing.approval_id == decision.approval_id
+            and existing.scope_digest == decision.scope_digest
+            and existing.status is decision.status
+            and existing.reviewer_id == decision.reviewer_id
+            and existing.comment == decision.comment
+            for existing in state.get("approval_history", [])
+        )
 
     @staticmethod
     def _validate_run_id(run_id: str) -> None:

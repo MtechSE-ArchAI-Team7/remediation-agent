@@ -55,6 +55,52 @@ async def test_plan_approval_interrupt_can_resume_same_run() -> None:
     assert sandbox.applied_patches
 
 
+async def test_identical_approval_retry_resumes_failed_in_progress_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = scripted_responses(risk_level=RiskLevel.MEDIUM, risk_decision=PolicyDecision.ALLOW)
+    service, _, _, sandbox, _, _, _ = build_test_service(responses)
+    waiting = await service.start(diagnosis_handoff())
+    request = waiting.approval_request
+    assert request is not None
+    decision = ApprovalDecisionV1(
+        approval_id=request.approval_id,
+        scope_digest=request.scope_digest,
+        status=ApprovalStatus.APPROVED,
+        reviewer_id="Arabasta",
+        decided_at=datetime.now(UTC),
+        comment="Approved for the AgentCore demonstration.",
+    )
+    original_run_task = sandbox.run_task
+    calls = 0
+
+    class TransientCloudError(Exception):
+        pass
+
+    async def flaky_run_task(task: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TransientCloudError("temporary hosted sandbox denial")
+        return await original_run_task(task)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(sandbox, "run_task", flaky_run_task)
+
+    with pytest.raises(TransientCloudError):
+        await service.approve(waiting.run_id, decision)
+
+    completed = await service.approve(waiting.run_id, decision)
+
+    assert completed.status is FinalStatus.DRAFT_PR_PREPARED
+    assert completed.result is not None
+    assert completed.result.approvals == [decision]
+    assert calls == 2
+
+    with pytest.raises(ApprovalConflictError, match="not waiting"):
+        await service.approve(
+            waiting.run_id,
+            decision.model_copy(update={"reviewer_id": "different-reviewer"}),
+        )
+
+
 async def test_rejected_approval_makes_no_patch() -> None:
     responses = scripted_responses(risk_level=RiskLevel.HIGH, risk_decision=PolicyDecision.REQUIRE_APPROVAL)
     service, _, _, sandbox, _, _, _ = build_test_service(responses)

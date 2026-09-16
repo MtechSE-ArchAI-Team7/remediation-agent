@@ -194,6 +194,50 @@ async def test_code_interpreter_runs_fixed_python_runner_and_always_stops(tmp_pa
     assert fake.stopped == ["ci-session"]
 
 
+async def test_code_interpreter_redacts_unexpected_cloud_failure_and_stops(tmp_path: Path) -> None:
+    class UnexpectedCloudFailure(Exception):
+        pass
+
+    class FailingCodeInterpreter(_FakeCodeInterpreter):
+        def invoke_code_interpreter(self, **kwargs: object) -> Mapping[str, object]:
+            raise UnexpectedCloudFailure("credential=do-not-expose")
+
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "run-1"
+    workspace.mkdir(parents=True)
+    (workspace / "test_example.py").write_text("def test_ok(): assert True\n", encoding="utf-8")
+    bundle = tmp_path / "vendor.tar.gz"
+    with tarfile.open(bundle, "w:gz"):
+        pass
+    fake = FailingCodeInterpreter()
+    sandbox = AgentCoreCodeInterpreterSandbox(
+        workspace_root,
+        region_name="ap-southeast-1",
+        validation_bundle=bundle,
+        client=fake,
+    )
+    task = ValidationTaskConfig(
+        argv=["python", "-m", "pytest", "-q"],
+        cwd=".",
+        environment={},
+        timeout_seconds=30,
+        output_limit_bytes=4096,
+        retryable=False,
+    )
+
+    with pytest.raises(SandboxError, match="UnexpectedCloudFailure") as failure:
+        await sandbox.run_task(
+            ValidationTaskRequest(
+                workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
+                task_name="unit_tests",
+                task=task,
+            )
+        )
+
+    assert "do-not-expose" not in str(failure.value)
+    assert fake.stopped == ["ci-session"]
+
+
 async def test_code_interpreter_rejects_workspace_symlinks_before_cloud_call(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspaces"
     workspace = workspace_root / "run-1"

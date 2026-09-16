@@ -104,7 +104,7 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 duration_ms=int((time.monotonic() - started) * 1_000),
                 stderr="Validation task exceeded its configured timeout.",
             )
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - normalize cloud SDK failures at the adapter boundary
             raise SandboxError(f"AgentCore validation failed: {type(exc).__name__}") from exc
         finally:
             if session_id is not None:
