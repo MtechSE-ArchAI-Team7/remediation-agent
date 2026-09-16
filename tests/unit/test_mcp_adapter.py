@@ -137,4 +137,10 @@ def test_mcp_failure_code_classifies_nested_transport_failures() -> None:
     failure = httpx.ConnectError("secret connection detail", request=request)
 
     assert _mcp_failure_code(ExceptionGroup("wrapper", [failure])) == "CONNECT_ERROR"
-    assert _mcp_failure_code(RuntimeError("secret provider response")) == "SESSION_ERROR"
+    assert _mcp_failure_code(RuntimeError("secret provider response")) == "SESSION_RUNTIME_ERROR"
+
+
+def test_mcp_failure_code_extracts_only_embedded_http_status() -> None:
+    failure = RuntimeError("provider secret: HTTP response status code 403")
+
+    assert _mcp_failure_code(ExceptionGroup("wrapper", [failure])) == "HTTP_403"

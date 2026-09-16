@@ -52,6 +52,7 @@ _EXPECTED_ARGUMENTS = {
     "search_code": {"query", "sort", "order", "fields", "page", "perPage"},
 }
 _SEARCH_SCOPE = re.compile(r"(?<![A-Za-z0-9_])(repo|org|user):([^\s]+)", re.IGNORECASE)
+_HTTP_STATUS_IN_ERROR = re.compile(r"\b(?:HTTP|status(?:\s+code)?)\D{0,20}([45]\d{2})\b", re.IGNORECASE)
 _SAFE_DIRECTORY_FIELDS = ["name", "path", "sha", "size", "type"]
 _SAFE_SEARCH_FIELDS = ["name", "path", "sha", "repository"]
 
@@ -537,6 +538,7 @@ def _mcp_failure_code(error: BaseException) -> str:
     pending = [error]
     visited: set[int] = set()
     fallback = "SESSION_ERROR"
+    leaf_type = "ERROR"
     while pending:
         current = pending.pop()
         if id(current) in visited:
@@ -544,6 +546,9 @@ def _mcp_failure_code(error: BaseException) -> str:
         visited.add(id(current))
         if isinstance(current, httpx.HTTPStatusError):
             return f"HTTP_{current.response.status_code}"
+        status_match = _HTTP_STATUS_IN_ERROR.search(str(current))
+        if status_match is not None:
+            return f"HTTP_{status_match.group(1)}"
         if isinstance(current, (TimeoutError, httpx.TimeoutException)):
             fallback = "TIMEOUT"
         elif isinstance(current, httpx.ConnectError):
@@ -554,8 +559,12 @@ def _mcp_failure_code(error: BaseException) -> str:
             fallback = "TRANSPORT_ERROR"
         if isinstance(current, BaseExceptionGroup):
             pending.extend(current.exceptions)
+        else:
+            leaf_type = re.sub(r"(?<!^)(?=[A-Z])", "_", type(current).__name__).upper()
         if current.__cause__ is not None:
             pending.append(current.__cause__)
         if current.__context__ is not None:
             pending.append(current.__context__)
-    return fallback
+    if fallback != "SESSION_ERROR":
+        return fallback
+    return f"SESSION_{leaf_type}"
