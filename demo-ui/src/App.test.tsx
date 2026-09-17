@@ -12,7 +12,7 @@ function runView(status: string, extra: Record<string, unknown> = {}) {
   return { output: { run_id: RUN_ID, status, approval_request: null, result: null, ...extra } };
 }
 
-describe("AgentCore demo console", () => {
+describe("AIOS remediation console", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {
@@ -31,9 +31,9 @@ describe("AgentCore demo console", () => {
     fetchMock.mockResolvedValue(response(runView("DRAFT_PR_CREATED")));
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start remediation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
 
-    expect(await screen.findByRole("heading", { name: "DRAFT PR CREATED" })).toBeInTheDocument();
+    expect((await screen.findAllByText("DRAFT PR CREATED")).length).toBeGreaterThan(0);
     expect(localStorage.getItem("aios-remediation-demo-run-id")).toBe(RUN_ID);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/runs",
@@ -46,9 +46,11 @@ describe("AgentCore demo console", () => {
     fetchMock.mockResolvedValue(response(runView("INTERNAL_ERROR")));
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Resume saved run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh saved run" }));
 
-    expect(await screen.findByRole("heading", { name: "INTERNAL ERROR" })).toBeInTheDocument();
+    const errorStatuses = await screen.findAllByText("INTERNAL ERROR");
+    expect(errorStatuses.length).toBeGreaterThan(0);
+    expect(errorStatuses.some((item) => item.classList.contains("error"))).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
       `/api/runs/${RUN_ID}`,
       expect.objectContaining({ headers: expect.any(Object) }),
@@ -66,7 +68,7 @@ describe("AgentCore demo console", () => {
               kind: "PATCH",
               scope_digest: "sha256:abc",
               summary: "Review the patch scope",
-              reasons: ["A sensitive path requires approval."],
+              reasons: ["Review the patch scope", "A sensitive path requires approval."],
               requested_at: "2026-09-16T00:00:00Z",
               status: "PENDING",
             },
@@ -75,7 +77,9 @@ describe("AgentCore demo console", () => {
       )
       .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")));
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Start remediation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
+    expect(await screen.findAllByText("Review the patch scope")).toHaveLength(1);
+    expect(screen.getAllByText("AWAITING APPROVAL").some((item) => item.classList.contains("warning"))).toBe(true);
     fireEvent.click(await screen.findByRole("button", { name: "Approve and continue" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -88,7 +92,87 @@ describe("AgentCore demo console", () => {
   it("shows stable gateway failures in readable form", async () => {
     fetchMock.mockResolvedValue(response({ error: "AGENTCORE_TIMEOUT" }, 504));
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Test OpenAI connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
     expect(await screen.findByText("agentcore timeout")).toBeInTheDocument();
+  });
+
+  it("presents workflow, validation, evidence, and the draft PR as console results", async () => {
+    fetchMock.mockResolvedValue(
+      response(
+        runView("DRAFT_PR_CREATED", {
+          result: {
+            final_status: "DRAFT_PR_CREATED",
+            changed_files: ["src/orders.py", "tests/test_orders.py"],
+            remediation_plan_summary: "Correct the inclusive stock boundary and add regression coverage.",
+            risk_summary: "The change is limited to order availability behavior.",
+            validation_attempts: [
+              {
+                attempt: 1,
+                patch_digest: "sha256:patch",
+                outcome: "PASSED",
+                results: [
+                  {
+                    task_name: "unit_tests",
+                    outcome: "PASSED",
+                    exit_code: 0,
+                    duration_ms: 1842,
+                    stdout: "2 passed",
+                    stderr: "",
+                    output_truncated: false,
+                  },
+                ],
+              },
+            ],
+            errors: [],
+            draft_pr: {
+              created: true,
+              url: "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo/pull/2",
+              payload: {
+                title: "Fix stock boundary",
+                head_branch: "aios/remediation-demo",
+                base_branch: "scenario/02-stock-boundary",
+              },
+            },
+            artifact_manifest: {
+              artifacts: [
+                {
+                  name: "validation-results.json",
+                  path: "s3://demo/runs/run/validation-results.json",
+                  digest: "sha256:validation",
+                  media_type: "application/json",
+                },
+                {
+                  name: "patch.diff",
+                  path: "s3://demo/runs/run/patch.diff",
+                  digest: "sha256:patch",
+                  media_type: "text/x-diff",
+                },
+              ],
+            },
+            audit_bundle_ref: {
+              name: "audit-manifest.json",
+              path: "s3://demo/runs/run/audit-manifest.json",
+              digest: "sha256:audit",
+              media_type: "application/json",
+            },
+          },
+        }),
+      ),
+    );
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
+
+    expect((await screen.findAllByText("DRAFT PR CREATED")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Open draft pull request ↗" })).toHaveAttribute(
+      "href",
+      "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo/pull/2",
+    );
+    expect(screen.getByText("unit_tests")).toBeInTheDocument();
+    expect(screen.getAllByText("PASSED").some((item) => item.classList.contains("success"))).toBe(true);
+    expect(screen.getByText("validation-results.json")).toBeInTheDocument();
+    expect(screen.getByText("patch.diff")).toBeInTheDocument();
+    expect(screen.getByText("Audit bundle")).toBeInTheDocument();
+    expect(screen.getAllByText("complete")).toHaveLength(5);
   });
 });
