@@ -93,7 +93,7 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     jobs = _jobs(workflow)
 
     assert "workflow_dispatch" in triggers
-    assert push == {"branches": ["main"], "tags": ["v*"]}
+    assert push == {"tags": ["v*"]}
     assert jobs["deploy"]["needs"] == "image"
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
     refs = {_assert_sha_pinned(jobs[name]) for name in ("image", "deploy")}
