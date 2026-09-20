@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "ApprovalStatus": {
+      "enum": [
+        "NOT_REQUIRED",
+        "PENDING",
+        "APPROVED",
+        "REJECTED"
+      ],
+      "title": "ApprovalStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approval_id": {
+      "minLength": 1,
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "case_id": {
+      "minLength": 1,
+      "title": "Case Id",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "PLAN",
+        "PATCH"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "reasons": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "scope_digest": {
+      "minLength": 1,
+      "title": "Scope Digest",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ApprovalStatus",
+      "default": "PENDING"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approval_id",
+    "case_id",
+    "kind",
+    "scope_digest",
+    "summary",
+    "reasons",
+    "requested_at"
+  ],
+  "title": "ApprovalRequest",
+  "type": "object"
+}

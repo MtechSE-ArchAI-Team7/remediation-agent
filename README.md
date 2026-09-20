@@ -32,7 +32,9 @@ checkpointer, model abstraction, policy engine, tool boundary, and final outcome
 
 ```mermaid
 flowchart LR
-    Intake["Validate intake"] --> Analysis["Analysis workflow subgraph"]
+    A2A["Hosted A2A 1.0 task"] --> Intake["Validate intake"]
+    REST["Operator REST /v1"] --> Intake
+    Intake --> Analysis["Analysis workflow subgraph"]
     Analysis --> Workspace["Create immutable-base workspace"]
     Workspace --> Inspect["Model ↔ GitHub hosted MCP inspection loop"]
     Inspect --> Plan["Create structured remediation plan"]
@@ -48,6 +50,8 @@ flowchart LR
     Validate -->|passed or exhausted| Evidence
     Evidence --> Draft["Prepare draft-PR payload"]
     Draft --> Cleanup["Destroy disposable workspace"]
+    Cleanup --> Artifact["Authoritative remediation handoff"]
+    Artifact -. optional successful outcomes .-> Agent4["Agent 4 A2A delivery"]
 ```
 
 The lifecycle is:
@@ -428,19 +432,37 @@ Live model tests require their explicit marker/environment gate and never run in
 
 ## AgentCore deployment
 
-`Dockerfile.agentcore` packages the same one-agent LangGraph workflow behind AgentCore's HTTP contract. `GET /ping`
-implements process health without touching session storage. `POST /invocations` accepts a strict `action` union for a
-bounded provider probe, starting a diagnosis handoff, reading a run, or submitting a digest-bound approval. The required
-AgentCore runtime session header must be a canonical UUID and is also the remediation run ID.
+`Dockerfile.agentcore` packages the same one-agent LangGraph workflow behind A2A Protocol 1.0 on port `9000`. The
+hosted surface is JSON-RPC at `/`, discovery at `/.well-known/agent-card.json`, and health at `/ping`. The Agent Card
+advertises SigV4, streaming, `remediate_repository`, and `runtime_readiness_probe`; push notifications and A2A v0.3
+compatibility are disabled. The local/operator FastAPI `/v1` endpoints remain available in the standard image.
 
-The image workflow publishes `linux/arm64` commit-SHA tags to
-`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent`. Configure the repository secret
-`AWS_ROLE_ARN=arn:aws:iam::734849394833:role/github-actions-ecr` for the initial test deployment. That existing role has
-account-wide ECR PowerUser access and is therefore test-only; replace it with a role scoped to this repository before a
-non-test deployment.
+AgentCore's runtime session ID and A2A context ID remain transport scope; the server-generated A2A task UUID is bound
+to the LangGraph `run_id`. Diagnosis, approval, handoff, delivery receipt, and provider-probe data parts use versioned
+`application/vnd.aios.*.v1+json` media types. Hosted task projections exclude inbound history, are redacted and bounded,
+and are scoped by caller/session beneath `AIOS_A2A_TASK_STORE_PREFIX` in the artifact bucket.
 
-Create the AgentCore Runtime manually with HTTP protocol, IAM/SigV4 inbound authentication, public networking, and the
-immutable commit-SHA image URI. Configure these non-secret environment variables:
+After CI succeeds on a push to `main`, the release workflow publishes a `linux/arm64` commit-SHA tag to
+`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent` and updates the existing AgentCore Runtime
+with the immutable image digest. Pull requests run CI without publishing, tags publish without deploying, and a manual
+dispatch may publish and deploy. Configure these GitHub repository values before enabling the release:
+
+| Kind | Name | Purpose |
+|---|---|---|
+| Variable | `AGENTCORE_RUNTIME_ID` | Existing AgentCore Runtime identifier |
+| Secret | `AWS_ROLE_ARN` | OIDC role used only to publish the image to ECR |
+| Secret | `AWS_AGENTCORE_DEPLOY_ROLE_ARN` | OIDC role used only to update and probe the existing runtime |
+
+The image-publishing role currently documented for the initial test deployment has account-wide ECR PowerUser access
+and is therefore test-only; replace it with a repository-scoped role before a non-test deployment. Keep the AgentCore
+deployment role separate. It needs `GetAgentRuntime`, `UpdateAgentRuntime`, and `InvokeAgentRuntime` only on the exact
+runtime plus `iam:PassRole` only on the existing runtime execution role, conditioned on
+`iam:PassedToService=bedrock-agentcore.amazonaws.com`. Its OIDC trust must be restricted to this repository and
+`refs/heads/main`.
+
+Create the initial AgentCore Runtime manually with A2A protocol, IAM/SigV4 inbound authentication, public networking,
+and an immutable image URI. The release workflow never creates IAM, Memory, storage, secrets, runtimes, or endpoints.
+Configure these non-secret environment variables during that initial provisioning:
 
 ```text
 AIOS_LLM_PROVIDER=openai
@@ -453,6 +475,8 @@ AIOS_GITHUB_WRITES_ENABLED=true
 AIOS_AGENTCORE_MEMORY_ID=<memory-id>
 AIOS_RUNTIME_SECRET_ARN=<secrets-manager-arn>
 AIOS_ARTIFACT_BUCKET=aios-remediation-agent-artifacts-734849394833-ap-southeast-1
+AIOS_A2A_TASK_STORE_PREFIX=a2a/tasks
+AIOS_A2A_TASK_STORE_MAX_BYTES=524288
 AIOS_WORKSPACE_ROOT=/mnt/workspace/runs
 AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 ```
@@ -471,6 +495,19 @@ Code Interpreter session, runs only operator-owned JSON argv through a fixed `sh
 session. The initial hosted policy supports pytest and JSON validation using an offline tool bundle; no package download
 or repository network access is allowed inside validation. Artifacts and audit events are redacted before immutable,
 digest-addressed S3 writes. GitHub writes remain double-gated and can create a draft PR but never merge it.
+
+Optional direct Agent 4 delivery is disabled by default. When `AIOS_AGENT4_DELIVERY_ENABLED=true`, the runtime also
+requires `AIOS_AGENT4_RUNTIME_ARN` and `AIOS_AGENT4_REGION`; it discovers Agent 4's compatible 1.0 card and sends only
+`DRAFT_PR_PREPARED` or `DRAFT_PR_CREATED` handoffs with deterministic IDs. There is no application retry. Its bounded
+receipt is checkpointed, audited, and returned separately as `downstream_delivery`; failure never changes remediation
+status. The caller-facing `RemediationHandoffV1` remains authoritative.
+
+Each successful runtime update creates an immutable AgentCore version and `DEFAULT` follows that version. The release
+waits for the exact version, invokes the bounded OpenAI A2A probe, and restores both the previous container image and
+server protocol if readiness or probing fails. A restored release still fails in GitHub Actions so operators can
+investigate it.
+This host-release automation deploys the remediation service itself; it does not expand the workflow's authority to
+deploy customer changes, merge pull requests, mutate production, or execute rollback instructions.
 
 ## Sandbox and policy boundary
 

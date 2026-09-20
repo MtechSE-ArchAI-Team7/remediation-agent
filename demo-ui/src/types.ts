@@ -60,6 +60,8 @@ export interface RemediationResult {
 
 export interface RemediationRunView {
   run_id: string;
+  task_id: string;
+  session_id: string;
   status: string;
   approval_request: ApprovalRequest | null;
   result: RemediationResult | null;

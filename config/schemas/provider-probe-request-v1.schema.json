@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "description": "Fixed provider readiness request used by the release smoke check.",
+  "properties": {
+    "probe": {
+      "enum": [
+        "bedrock",
+        "openai"
+      ],
+      "title": "Probe",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "probe"
+  ],
+  "title": "ProviderProbeRequestV1",
+  "type": "object"
+}

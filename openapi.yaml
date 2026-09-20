@@ -621,6 +621,69 @@ components:
       - repository
       title: DiagnosisHandoffV1
       description: Provisional versioned handoff from Agent 2 to Agent 3.
+    DownstreamDeliveryReceiptV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        delivery_id:
+          type: string
+          minLength: 1
+          title: Delivery Id
+        message_id:
+          type: string
+          minLength: 1
+          title: Message Id
+        attempted:
+          type: boolean
+          title: Attempted
+        succeeded:
+          type: boolean
+          title: Succeeded
+        attempted_at:
+          type: string
+          format: date-time
+          title: Attempted At
+        request_digest:
+          type: string
+          minLength: 1
+          title: Request Digest
+        response_digest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Response Digest
+        remote_task_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Remote Task Id
+        remote_context_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Remote Context Id
+        error_code:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Error Code
+      additionalProperties: false
+      type: object
+      required:
+      - delivery_id
+      - message_id
+      - attempted
+      - succeeded
+      - attempted_at
+      - request_digest
+      title: DownstreamDeliveryReceiptV1
+      description: Bounded evidence for the optional Agent 4 A2A delivery attempt.
     DraftPrMetadata:
       properties:
         payload:
@@ -1012,6 +1075,10 @@ components:
         result:
           anyOf:
           - $ref: '#/components/schemas/RemediationHandoffV1'
+          - type: 'null'
+        downstream_delivery:
+          anyOf:
+          - $ref: '#/components/schemas/DownstreamDeliveryReceiptV1'
           - type: 'null'
       additionalProperties: false
       type: object

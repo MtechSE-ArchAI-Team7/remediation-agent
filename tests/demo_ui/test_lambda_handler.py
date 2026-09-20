@@ -49,18 +49,39 @@ def handler(monkeypatch: pytest.MonkeyPatch) -> _HandlerModule:
     return cast(_HandlerModule, module)
 
 
-def _event(method: str, path: str, body: object | None = None) -> dict[str, Any]:
+def _event(
+    method: str,
+    path: str,
+    body: object | None = None,
+    *,
+    query: dict[str, str] | None = None,
+) -> dict[str, Any]:
     return {
         "version": "2.0",
         "rawPath": path,
         "requestContext": {"http": {"method": method}},
         "body": json.dumps(body) if body is not None else "",
         "isBase64Encoded": False,
+        "queryStringParameters": query or {},
     }
 
 
 def _upstream(body: object, status: int = 200) -> dict[str, Any]:
     return {"statusCode": status, "response": io.BytesIO(json.dumps(body).encode())}
+
+
+def _task_response(state: str = "TASK_STATE_WORKING", *, direct: bool = False) -> dict[str, Any]:
+    task = {
+        "id": _RUN_ID,
+        "contextId": _RUN_ID,
+        "status": {"state": state},
+        "artifacts": [],
+    }
+    return {
+        "jsonrpc": "2.0",
+        "id": "response-1",
+        "result": task if direct else {"task": task},
+    }
 
 
 def _body(response: dict[str, Any]) -> dict[str, Any]:
@@ -76,7 +97,7 @@ def test_health_does_not_invoke_agentcore(handler: _HandlerModule) -> None:
 
 
 def test_start_translates_to_agentcore_and_preserves_response(handler: _HandlerModule) -> None:
-    fake = _FakeAgentCore(_upstream({"output": {"run_id": _RUN_ID, "status": "PENDING"}}))
+    fake = _FakeAgentCore(_upstream(_task_response()))
     handler._agentcore_client = fake
 
     response = handler.lambda_handler(
@@ -89,19 +110,31 @@ def test_start_translates_to_agentcore_and_preserves_response(handler: _HandlerM
     call = fake.calls[0]
     assert call["runtimeSessionId"] == _RUN_ID
     assert call["qualifier"] == "DEFAULT"
-    assert json.loads(call["payload"]) == {"action": "start", "input": {"schema_version": "1.0"}}
+    payload = json.loads(call["payload"])
+    assert payload["method"] == "SendMessage"
+    assert payload["params"]["message"]["contextId"] == _RUN_ID
+    assert payload["params"]["message"]["parts"] == [
+        {
+            "data": {"schema_version": "1.0"},
+            "mediaType": "application/vnd.aios.diagnosis-handoff.v1+json",
+        }
+    ]
 
 
-def test_get_reuses_run_as_session(handler: _HandlerModule) -> None:
-    fake = _FakeAgentCore(_upstream({"output": {"run_id": _RUN_ID, "status": "PENDING"}}))
+def test_get_uses_separate_task_and_session_ids(handler: _HandlerModule) -> None:
+    fake = _FakeAgentCore(_upstream(_task_response(direct=True)))
     handler._agentcore_client = fake
-    handler.lambda_handler(_event("GET", f"/api/runs/{_RUN_ID}"), None)
-    assert json.loads(fake.calls[0]["payload"]) == {"action": "get", "run_id": _RUN_ID}
+    handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
+    assert json.loads(fake.calls[0]["payload"])["method"] == "GetTask"
+    assert json.loads(fake.calls[0]["payload"])["params"] == {"id": _RUN_ID}
     assert fake.calls[0]["runtimeSessionId"] == _RUN_ID
 
 
 def test_approval_adds_schema_and_server_timestamp(handler: _HandlerModule) -> None:
-    fake = _FakeAgentCore(_upstream({"output": {"run_id": _RUN_ID, "status": "PENDING"}}))
+    fake = _FakeAgentCore(_upstream(_task_response()))
     handler._agentcore_client = fake
     response = handler.lambda_handler(
         _event(
@@ -113,16 +146,19 @@ def test_approval_adds_schema_and_server_timestamp(handler: _HandlerModule) -> N
                 "status": "APPROVED",
                 "reviewer_id": "Arabasta",
                 "comment": "Demo approval.",
+                "session_id": _RUN_ID,
             },
         ),
         None,
     )
     assert response["statusCode"] == 200
     payload = json.loads(fake.calls[0]["payload"])
-    assert payload["action"] == "approve"
-    assert payload["decision"]["schema_version"] == "1.0"
-    assert payload["decision"]["decided_at"].endswith("Z")
-    assert payload["decision"]["reviewer_id"] == "Arabasta"
+    assert payload["method"] == "SendMessage"
+    assert payload["params"]["message"]["taskId"] == _RUN_ID
+    decision = payload["params"]["message"]["parts"][0]["data"]
+    assert decision["schema_version"] == "1.0"
+    assert decision["decided_at"].endswith("Z")
+    assert decision["reviewer_id"] == "Arabasta"
 
 
 @pytest.mark.parametrize("value", ["not-a-uuid", _RUN_ID.upper(), "", None])
@@ -137,7 +173,10 @@ def test_start_rejects_noncanonical_run_ids(handler: _HandlerModule, value: obje
 
 def test_invalid_upstream_payload_is_redacted(handler: _HandlerModule) -> None:
     handler._agentcore_client = _FakeAgentCore({"statusCode": 200, "response": io.BytesIO(b"provider secret")})
-    response = handler.lambda_handler(_event("GET", f"/api/runs/{_RUN_ID}"), None)
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
     assert response["statusCode"] == 502
     assert _body(response) == {"error": "AGENTCORE_INVOCATION_FAILED"}
     assert "provider secret" not in response["body"]
@@ -145,7 +184,10 @@ def test_invalid_upstream_payload_is_redacted(handler: _HandlerModule) -> None:
 
 def test_timeout_has_stable_gateway_code(handler: _HandlerModule) -> None:
     handler._agentcore_client = _FakeAgentCore(ReadTimeoutError(endpoint_url="https://agentcore.example"))
-    response = handler.lambda_handler(_event("GET", f"/api/runs/{_RUN_ID}"), None)
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
     assert response["statusCode"] == 504
     assert _body(response) == {"error": "AGENTCORE_TIMEOUT"}
 
@@ -156,7 +198,10 @@ def test_access_denied_has_stable_gateway_code(handler: _HandlerModule) -> None:
         "InvokeAgentRuntime",
     )
     handler._agentcore_client = _FakeAgentCore(denied)
-    response = handler.lambda_handler(_event("GET", f"/api/runs/{_RUN_ID}"), None)
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
     assert response["statusCode"] == 502
     assert _body(response) == {"error": "AGENTCORE_ACCESS_DENIED"}
     assert "sensitive IAM detail" not in response["body"]

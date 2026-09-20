@@ -14,7 +14,11 @@ contracts at schema version `1.0` and should be ratified by the Agent 2 and Agen
 The machine-readable JSON Schemas are authoritative:
 
 - `config/schemas/diagnosis-handoff-v1.schema.json` — Agent 2 → Agent 3.
+- `config/schemas/approval-decision-v1.schema.json` — digest-bound approval resume.
+- `config/schemas/approval-request-v1.schema.json` — digest-bound approval interrupt emitted by Agent 3.
 - `config/schemas/remediation-handoff-v1.schema.json` — Agent 3 → Agent 4.
+- `config/schemas/delivery-receipt-v1.schema.json` — supplementary direct-delivery evidence.
+- `config/schemas/provider-probe-request-v1.schema.json` and `config/schemas/provider-probe-result-v1.schema.json` — bounded A2A readiness probe.
 
 The source models are `DiagnosisHandoffV1` and `RemediationHandoffV1` in
 `src/remediation_agent/domain/models.py`. Agent 3 validates all contract objects with Pydantic and rejects unknown
@@ -45,6 +49,11 @@ Content-Type: application/json
 
 The HTTP response is a `RemediationRunView`. A `202` response can be terminal or paused at an approval interrupt;
 consumers must inspect `status` rather than assuming completion.
+
+The canonical hosted interface is A2A Protocol 1.0. Send the same object as the single data part with media type
+`application/vnd.aios.diagnosis-handoff.v1+json`; resume the returned task with
+`application/vnd.aios.approval-decision.v1+json`. The A2A task UUID is the Agent 3 `run_id` and is separate from the
+AgentCore runtime session/A2A context ID.
 
 ### Top-level fields
 
@@ -184,6 +193,10 @@ GET /v1/remediations/{run_id}
 While a run is paused, `status` is `AWAITING_APPROVAL`, `approval_request` is populated, and `result` is normally
 `null`. Agent 4 should consume only a terminal, non-null `result`; approval handling belongs to the human approval
 boundary, not Agent 4.
+
+On A2A, the same handoff is attached to every terminal task as an artifact data part with media type
+`application/vnd.aios.remediation-handoff.v1+json`. Optional direct delivery to Agent 4 is supplementary, success-only,
+and disabled by default. Its `application/vnd.aios.delivery-receipt.v1+json` artifact does not modify this handoff.
 
 ### Top-level fields
 

@@ -11,6 +11,7 @@ from uuid import UUID
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from pydantic import Field
 
+from remediation_agent.adapters.a2a_delivery import AgentCoreA2ADelivery
 from remediation_agent.adapters.agentcore import (
     AgentCoreWorkspaceRecovery,
     S3ArtifactStore,
@@ -197,6 +198,8 @@ def create_agentcore_app(
             actor_id=_ACTOR_ID,
             invocation_timeout_seconds=settings.invocation_timeout_seconds,
             workspace_recovery=AgentCoreWorkspaceRecovery(repository),
+            handoff_delivery=_handoff_delivery(settings),
+            delivery_audit_sink=nodes.audit_sink,
         )
         yield
 
@@ -325,6 +328,19 @@ def _validate_agentcore_provider(settings: Settings) -> None:
         raise ValueError("AgentCore OpenAI credentials must be loaded from Secrets Manager")
     if settings.llm_provider == "openai" and settings.openai_secret_arn is None:
         raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
+
+
+def _handoff_delivery(settings: Settings) -> AgentCoreA2ADelivery | None:
+    if not settings.agent4_delivery_enabled:
+        return None
+    if settings.agent4_runtime_arn is None or settings.agent4_region is None:
+        raise ValueError("Agent 4 delivery configuration is incomplete")
+    return AgentCoreA2ADelivery(
+        settings.agent4_runtime_arn,
+        region_name=settings.agent4_region,
+        qualifier=settings.agent4_qualifier,
+        timeout_seconds=settings.agent4_timeout_seconds,
+    )
 
 
 def _require_matching_run(run_id: str, session_id: str) -> None:

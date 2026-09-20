@@ -38,7 +38,7 @@ from remediation_agent.domain.models import (
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
-from remediation_agent.ports.protocols import InspectionToolProvider
+from remediation_agent.ports.protocols import HandoffDeliveryPort, InspectionToolProvider
 from remediation_agent.service import RemediationService
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
@@ -137,6 +137,7 @@ def build_test_service(
     github_writes_enabled: bool = False,
     github_repository: str | None = None,
     invocation_timeout_seconds: float | None = None,
+    handoff_delivery: HandoffDeliveryPort | None = None,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -197,6 +198,8 @@ def build_test_service(
             graph,
             max_active_runs=2,
             invocation_timeout_seconds=invocation_timeout_seconds,
+            handoff_delivery=handoff_delivery,
+            delivery_audit_sink=audit if handoff_delivery is not None else None,
         ),
         model,
         repository,

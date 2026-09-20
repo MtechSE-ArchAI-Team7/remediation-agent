@@ -31,12 +31,13 @@ export function startRun(runId: string, input: Record<string, unknown>): Promise
   return request("/api/runs", { method: "POST", body: JSON.stringify({ run_id: runId, input }) });
 }
 
-export function getRun(runId: string): Promise<RunResponse> {
-  return request(`/api/runs/${runId}`);
+export function getRun(taskId: string, sessionId: string): Promise<RunResponse> {
+  return request(`/api/runs/${taskId}?session_id=${encodeURIComponent(sessionId)}`);
 }
 
 export function decideRun(
   runId: string,
+  sessionId: string,
   decision: {
     approval_id: string;
     scope_digest: string;
@@ -45,5 +46,8 @@ export function decideRun(
     comment: string;
   },
 ): Promise<RunResponse> {
-  return request(`/api/runs/${runId}/approval`, { method: "POST", body: JSON.stringify(decision) });
+  return request(`/api/runs/${runId}/approval`, {
+    method: "POST",
+    body: JSON.stringify({ ...decision, session_id: sessionId }),
+  });
 }

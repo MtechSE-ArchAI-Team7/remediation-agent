@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, Request, status
 
+from remediation_agent.adapters.a2a_delivery import AgentCoreA2ADelivery
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
@@ -92,6 +93,8 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             application.state.remediation_service = RemediationService(
                 build_graph(nodes, checkpointer),
                 max_active_runs=policy_config.limits.max_active_runs,
+                handoff_delivery=_handoff_delivery(settings),
+                delivery_audit_sink=audit_sink,
             )
             yield
 
@@ -270,6 +273,19 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     return application
+
+
+def _handoff_delivery(settings: Settings) -> AgentCoreA2ADelivery | None:
+    if not settings.agent4_delivery_enabled:
+        return None
+    if settings.agent4_runtime_arn is None or settings.agent4_region is None:
+        raise ValueError("Agent 4 delivery configuration is incomplete")
+    return AgentCoreA2ADelivery(
+        settings.agent4_runtime_arn,
+        region_name=settings.agent4_region,
+        qualifier=settings.agent4_qualifier,
+        timeout_seconds=settings.agent4_timeout_seconds,
+    )
 
 
 def _service(request: Request) -> RemediationService:

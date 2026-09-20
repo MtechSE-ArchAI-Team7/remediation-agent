@@ -3,24 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+from datetime import UTC, datetime
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, StateSnapshot
 
-from remediation_agent.adapters.evidence import SecretRedactor
+from remediation_agent.adapters.evidence import AuditTrail, SecretRedactor
 from remediation_agent.domain.enums import ApprovalStatus, FinalStatus
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
     DiagnosisHandoffV1,
+    DownstreamDeliveryReceiptV1,
     ErrorRecord,
     RemediationHandoffV1,
     RemediationRunView,
 )
-from remediation_agent.ports.protocols import WorkspaceRecoveryPort
+from remediation_agent.ports.models import AuditWriteRequest, HandoffDeliveryRequest
+from remediation_agent.ports.protocols import AuditSink, HandoffDeliveryPort, WorkspaceRecoveryPort
 from remediation_agent.workflow.state import RemediationState
 
 
@@ -56,6 +61,8 @@ class RemediationService:
         actor_id: str | None = None,
         invocation_timeout_seconds: float | None = None,
         workspace_recovery: WorkspaceRecoveryPort | None = None,
+        handoff_delivery: HandoffDeliveryPort | None = None,
+        delivery_audit_sink: AuditSink | None = None,
     ) -> None:
         self.graph = graph
         self._run_slots = asyncio.Semaphore(max_active_runs)
@@ -63,6 +70,8 @@ class RemediationService:
         self._actor_id = actor_id
         self._invocation_timeout_seconds = invocation_timeout_seconds
         self._workspace_recovery = workspace_recovery
+        self._handoff_delivery = handoff_delivery
+        self._delivery_audit_sink = delivery_audit_sink
 
     async def start(self, handoff: DiagnosisHandoffV1, *, run_id: str | None = None) -> RemediationRunView:
         run_id = run_id or str(uuid4())
@@ -87,7 +96,7 @@ class RemediationService:
             if self._is_matching_approval_retry(state, redacted_decision):
                 if redacted_decision.status is ApprovalStatus.APPROVED and snapshot.next:
                     return await self._invoke(None, run_id)
-                return self._view(state, run_id, approval_request=None)
+                return await self._view_with_delivery(state, run_id, approval_request=None)
             raise ApprovalConflictError("run is not waiting for approval")
         if (
             redacted_decision.approval_id != request.approval_id
@@ -110,7 +119,11 @@ class RemediationService:
         self._validate_run_id(run_id)
         snapshot = await self._snapshot(run_id)
         state = cast(RemediationState, snapshot.values)
-        return self._view(state, run_id, approval_request=self._pending_approval(state, snapshot))
+        return await self._view_with_delivery(
+            state,
+            run_id,
+            approval_request=self._pending_approval(state, snapshot),
+        )
 
     async def ready(self) -> bool:
         """Probe the configured checkpointer without creating remediation state."""
@@ -136,7 +149,11 @@ class RemediationService:
         snapshot = await self._snapshot(run_id)
         if snapshot.values:
             state = cast(RemediationState, snapshot.values)
-        return self._view(state, run_id, approval_request=self._pending_approval(state, snapshot))
+        return await self._view_with_delivery(
+            state,
+            run_id,
+            approval_request=self._pending_approval(state, snapshot),
+        )
 
     async def _finish_after_deadline(self, run_id: str, cause: TimeoutError) -> RemediationRunView:
         """Resume at the normal cleanup boundary after cancelling an overlong stage."""
@@ -188,7 +205,7 @@ class RemediationService:
         completed_snapshot = await self._snapshot(run_id)
         if completed_snapshot.values:
             completed = cast(RemediationState, completed_snapshot.values)
-        return self._view(
+        return await self._view_with_delivery(
             completed,
             run_id,
             approval_request=self._pending_approval(completed, completed_snapshot),
@@ -218,7 +235,106 @@ class RemediationService:
             status=status,
             approval_request=approval_request,
             result=result,
+            downstream_delivery=state.get("downstream_delivery"),
         )
+
+    async def _view_with_delivery(
+        self,
+        state: RemediationState,
+        run_id: str,
+        *,
+        approval_request: ApprovalRequest | None,
+    ) -> RemediationRunView:
+        view = self._view(state, run_id, approval_request=approval_request)
+        if (
+            self._handoff_delivery is None
+            or view.status not in {FinalStatus.DRAFT_PR_PREPARED, FinalStatus.DRAFT_PR_CREATED}
+            or view.result is None
+        ):
+            return view
+        existing = view.downstream_delivery
+        if existing is not None and existing.attempted:
+            return view
+
+        canonical = json.dumps(view.result.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        request_digest = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+        delivery_id = existing.delivery_id if existing else str(uuid5(NAMESPACE_URL, f"aios-agent4:{run_id}"))
+        message_id = existing.message_id if existing else str(uuid5(NAMESPACE_URL, f"aios-agent4-message:{run_id}"))
+        pending = existing or DownstreamDeliveryReceiptV1(
+            delivery_id=delivery_id,
+            message_id=message_id,
+            attempted=False,
+            succeeded=False,
+            attempted_at=datetime.now(UTC),
+            request_digest=request_digest,
+            error_code="DELIVERY_PENDING",
+        )
+        try:
+            await self.graph.aupdate_state(
+                self._config(run_id),
+                {"downstream_delivery": pending},
+            )
+            receipt = await self._handoff_delivery.deliver(
+                HandoffDeliveryRequest(
+                    delivery_id=delivery_id,
+                    message_id=message_id,
+                    correlation_id=run_id,
+                    request_digest=request_digest,
+                    handoff=view.result,
+                )
+            )
+            if (
+                receipt.delivery_id != delivery_id
+                or receipt.message_id != message_id
+                or receipt.request_digest != request_digest
+            ):
+                raise ValueError("delivery receipt does not match the request")
+        except Exception:  # noqa: BLE001 - delivery failure is supplementary and bounded
+            receipt = DownstreamDeliveryReceiptV1(
+                delivery_id=delivery_id,
+                message_id=message_id,
+                attempted=True,
+                succeeded=False,
+                attempted_at=datetime.now(UTC),
+                request_digest=request_digest,
+                error_code="DOWNSTREAM_DELIVERY_FAILED",
+            )
+        try:
+            audit_events = state.get("audit_events", [])
+            if self._delivery_audit_sink is not None:
+                trail = AuditTrail(
+                    state.get("policy_version", "unknown"),
+                    state.get("prompt_version", "unknown"),
+                    self._redactor,
+                )
+                delivery_event = trail.event(
+                    audit_events,
+                    case_id=view.result.case_id,
+                    run_id=run_id,
+                    event_type="DOWNSTREAM_A2A_DELIVERY",
+                    result_code="SUCCEEDED" if receipt.succeeded else receipt.error_code or "FAILED",
+                    detail=json.dumps(receipt.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
+                    input_value=request_digest,
+                    output_value=receipt.response_digest or receipt.error_code or "",
+                )
+                audit_events = [*audit_events, delivery_event]
+            await self.graph.aupdate_state(
+                self._config(run_id),
+                {
+                    "downstream_delivery": receipt,
+                    "audit_events": audit_events,
+                },
+            )
+            if self._delivery_audit_sink is not None:
+                await self._delivery_audit_sink.write(
+                    AuditWriteRequest(
+                        run_id=run_id,
+                        jsonl=AuditTrail.to_jsonl(audit_events),
+                    )
+                )
+        except Exception:  # noqa: BLE001 - never alter the remediation outcome for receipt persistence
+            receipt = receipt.model_copy(update={"error_code": receipt.error_code or "DELIVERY_RECEIPT_NOT_PERSISTED"})
+        return view.model_copy(update={"downstream_delivery": receipt})
 
     def _config(self, run_id: str) -> RunnableConfig:
         configurable = {"thread_id": run_id}

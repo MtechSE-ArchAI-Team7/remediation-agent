@@ -380,6 +380,22 @@ class RemediationHandoffV1(StrictModel):
     errors: list[ErrorRecord] = Field(default_factory=list)
 
 
+class DownstreamDeliveryReceiptV1(StrictModel):
+    """Bounded evidence for the optional Agent 4 A2A delivery attempt."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    delivery_id: NonEmptyStr
+    message_id: NonEmptyStr
+    attempted: bool
+    succeeded: bool
+    attempted_at: datetime
+    request_digest: NonEmptyStr
+    response_digest: str | None = None
+    remote_task_id: str | None = Field(default=None, max_length=200)
+    remote_context_id: str | None = Field(default=None, max_length=200)
+    error_code: str | None = Field(default=None, max_length=200)
+
+
 class RemediationRunView(StrictModel):
     """Public API view of a running, interrupted, or completed remediation."""
 
@@ -387,3 +403,4 @@ class RemediationRunView(StrictModel):
     status: FinalStatus
     approval_request: ApprovalRequest | None = None
     result: RemediationHandoffV1 | None = None
+    downstream_delivery: DownstreamDeliveryReceiptV1 | None = None

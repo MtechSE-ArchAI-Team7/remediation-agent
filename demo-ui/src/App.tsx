@@ -87,6 +87,9 @@ export default function App() {
     try {
       const response = await startRun(nextRunId, parsedHandoff);
       setRun(response.output);
+      setRunId(response.output.task_id);
+      localStorage.setItem(RUN_STORAGE_KEY, response.output.task_id);
+      localStorage.setItem(`${RUN_STORAGE_KEY}:session`, response.output.session_id);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -102,7 +105,9 @@ export default function App() {
     }
     setBusy("run");
     try {
-      const response = await getRun(runId);
+      const sessionId = localStorage.getItem(`${RUN_STORAGE_KEY}:session`);
+      if (!sessionId) throw new GatewayError("MISSING_RUNTIME_SESSION", 400);
+      const response = await getRun(runId, sessionId);
       setRun(response.output);
     } catch (caught) {
       setError(errorMessage(caught));
@@ -116,7 +121,7 @@ export default function App() {
     setError("");
     setBusy("run");
     try {
-      const response = await decideRun(run.run_id, {
+      const response = await decideRun(run.run_id, run.session_id, {
         approval_id: run.approval_request.approval_id,
         scope_digest: run.approval_request.scope_digest,
         status,

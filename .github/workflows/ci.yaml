@@ -7,7 +7,39 @@ on:
 
 jobs:
   ci:
-    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/python-ci.yaml@main
+    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/python-ci.yaml@c30a46d3ed49304d568753302a59fbc72035cb8a
     with:
       python-version: "3.12"
       coverage-package: "src"
+
+  image:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: ci
+    permissions:
+      contents: read
+      id-token: write
+    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/docker-build-push-ecr.yaml@c30a46d3ed49304d568753302a59fbc72035cb8a
+    with:
+      aws-region: ap-southeast-1
+      ecr-repository: aios/remediation-agent
+      dockerfile: Dockerfile.agentcore
+      platforms: linux/arm64
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+
+  deploy:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: image
+    permissions:
+      contents: read
+      id-token: write
+    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/deploy-agentcore-runtime.yaml@c30a46d3ed49304d568753302a59fbc72035cb8a
+    with:
+      aws-region: ap-southeast-1
+      agent-runtime-id: ${{ vars.AGENTCORE_RUNTIME_ID }}
+      image-uri: ${{ needs.image.outputs.image-uri }}
+      image-digest: ${{ needs.image.outputs.image-digest }}
+      server-protocol: A2A
+      smoke-test-json: '{"jsonrpc":"2.0","id":"release-probe","method":"SendMessage","params":{"message":{"messageId":"00000000-0000-4000-8000-000000000001","role":"ROLE_USER","parts":[{"data":{"schema_version":"1.0","probe":"openai"},"mediaType":"application/vnd.aios.provider-probe-request.v1+json"}]}}}'
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_AGENTCORE_DEPLOY_ROLE_ARN }}

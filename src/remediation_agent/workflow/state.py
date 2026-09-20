@@ -12,6 +12,7 @@ from remediation_agent.domain.models import (
     AuditEvent,
     CleanupResult,
     DiagnosisHandoffV1,
+    DownstreamDeliveryReceiptV1,
     DraftPrMetadata,
     ErrorRecord,
     InspectionArtifact,
@@ -79,3 +80,4 @@ class RemediationState(TypedDict, total=False):
     audit_events: list[AuditEvent]
     final_status: FinalStatus
     final_handoff: RemediationHandoffV1
+    downstream_delivery: DownstreamDeliveryReceiptV1

@@ -73,9 +73,16 @@ class Settings(BaseSettings):
     agentcore_memory_id: str | None = None
     runtime_secret_arn: str | None = None
     artifact_bucket: str | None = None
+    a2a_task_store_prefix: str = "a2a/tasks"
+    a2a_task_store_max_bytes: int = Field(default=524_288, ge=1, le=2_000_000)
     code_interpreter_identifier: str = "aws.codeinterpreter.v1"
     code_interpreter_bundle: Path = Path("/app/validation/pytest_vendor.tar.gz")
     invocation_timeout_seconds: float = Field(default=840.0, gt=0, le=840.0)
+    agent4_delivery_enabled: bool = False
+    agent4_runtime_arn: str | None = None
+    agent4_region: str | None = None
+    agent4_qualifier: str = "DEFAULT"
+    agent4_timeout_seconds: float = Field(default=30.0, gt=0, le=120.0)
 
     @field_validator(
         "llm_model",
@@ -92,6 +99,8 @@ class Settings(BaseSettings):
         "agentcore_memory_id",
         "runtime_secret_arn",
         "artifact_bucket",
+        "agent4_runtime_arn",
+        "agent4_region",
         mode="before",
     )
     @classmethod
@@ -132,6 +141,10 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_GITHUB_TOKEN is required when GitHub writes are enabled")
         if self.github_writes_enabled and self.github_repository is None:
             raise ValueError("AIOS_GITHUB_REPOSITORY is required when GitHub writes are enabled")
+        if self.agent4_delivery_enabled and (self.agent4_runtime_arn is None or self.agent4_region is None):
+            raise ValueError(
+                "AIOS_AGENT4_RUNTIME_ARN and AIOS_AGENT4_REGION are required when Agent 4 delivery is enabled"
+            )
         return self
 
     def require_persistent_checkpointing(self) -> tuple[str, str]:

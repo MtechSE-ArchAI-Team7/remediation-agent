@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from remediation_agent.domain.models import (
     ArtifactManifest,
     CleanupResult,
+    DownstreamDeliveryReceiptV1,
     ModelCallRecord,
     RepositoryRef,
     ValidationTaskResult,
@@ -29,6 +30,7 @@ from remediation_agent.ports.models import (
     DiffResult,
     DraftPrRequest,
     FileContent,
+    HandoffDeliveryRequest,
     ModelGeneration,
     ModelRequest,
     PatchApplyRequest,
@@ -121,6 +123,12 @@ class ArtifactStore(Protocol):
 
 class AuditSink(Protocol):
     async def write(self, request: AuditWriteRequest) -> None: ...
+
+
+class HandoffDeliveryPort(Protocol):
+    """Deliver a completed handoff without granting workflow mutation authority."""
+
+    async def deliver(self, request: HandoffDeliveryRequest) -> DownstreamDeliveryReceiptV1: ...
 
 
 class ReadinessProbe(Protocol):

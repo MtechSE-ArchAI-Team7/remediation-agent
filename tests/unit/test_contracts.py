@@ -8,8 +8,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from remediation_agent.api.a2a_contracts import ProviderProbeRequestV1, ProviderProbeResultV1
 from remediation_agent.config import Settings
-from remediation_agent.domain.models import DiagnosisHandoffV1, RemediationHandoffV1
+from remediation_agent.domain.models import (
+    ApprovalDecisionV1,
+    ApprovalRequest,
+    DiagnosisHandoffV1,
+    DownstreamDeliveryReceiptV1,
+    RemediationHandoffV1,
+)
 from remediation_agent.policy.loader import PolicyLoadError, load_policy
 from remediation_agent.policy.models import PolicyConfig
 from tests.conftest import diagnosis_handoff
@@ -42,6 +49,11 @@ def test_committed_json_schemas_match_models() -> None:
     schema_root = Path(__file__).parents[2] / "config" / "schemas"
     expected = {
         "diagnosis-handoff-v1.schema.json": DiagnosisHandoffV1.model_json_schema(),
+        "approval-decision-v1.schema.json": ApprovalDecisionV1.model_json_schema(),
+        "approval-request-v1.schema.json": ApprovalRequest.model_json_schema(),
+        "delivery-receipt-v1.schema.json": DownstreamDeliveryReceiptV1.model_json_schema(),
+        "provider-probe-request-v1.schema.json": ProviderProbeRequestV1.model_json_schema(),
+        "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),
         "remediation-policy.schema.json": PolicyConfig.model_json_schema(),
     }
@@ -120,6 +132,20 @@ def test_settings_require_complete_github_write_configuration(tmp_path: Path, mi
     values[missing] = None
     with pytest.raises(ValidationError, match="required when GitHub writes are enabled"):
         Settings.model_validate(values)
+
+
+def test_agent4_delivery_is_disabled_by_default_and_fails_closed_when_incomplete(tmp_path: Path) -> None:
+    settings = Settings(policy_file=tmp_path / "policy.json", llm_provider="fake", _env_file=None)  # type: ignore[call-arg]
+    assert settings.agent4_delivery_enabled is False
+
+    with pytest.raises(ValidationError, match="AIOS_AGENT4_RUNTIME_ARN and AIOS_AGENT4_REGION"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="fake",
+            agent4_delivery_enabled=True,
+            agent4_runtime_arn="arn:runtime",
+            _env_file=None,
+        )  # type: ignore[call-arg]
 
 
 def test_production_runtime_requires_github_token_for_hosted_mcp(tmp_path: Path) -> None:

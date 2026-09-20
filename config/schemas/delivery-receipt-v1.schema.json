@@ -1,0 +1,101 @@
+{
+  "additionalProperties": false,
+  "description": "Bounded evidence for the optional Agent 4 A2A delivery attempt.",
+  "properties": {
+    "attempted": {
+      "title": "Attempted",
+      "type": "boolean"
+    },
+    "attempted_at": {
+      "format": "date-time",
+      "title": "Attempted At",
+      "type": "string"
+    },
+    "delivery_id": {
+      "minLength": 1,
+      "title": "Delivery Id",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "message_id": {
+      "minLength": 1,
+      "title": "Message Id",
+      "type": "string"
+    },
+    "remote_context_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remote Context Id"
+    },
+    "remote_task_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Remote Task Id"
+    },
+    "request_digest": {
+      "minLength": 1,
+      "title": "Request Digest",
+      "type": "string"
+    },
+    "response_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Response Digest"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "succeeded": {
+      "title": "Succeeded",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "delivery_id",
+    "message_id",
+    "attempted",
+    "succeeded",
+    "attempted_at",
+    "request_digest"
+  ],
+  "title": "DownstreamDeliveryReceiptV1",
+  "type": "object"
+}

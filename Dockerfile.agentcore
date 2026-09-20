@@ -10,7 +10,7 @@ RUN uv sync --frozen --no-dev --no-editable
 COPY config ./config
 RUN uv pip install --target /app/validation/pytest_vendor "pytest==8.4.2" && \
     /app/.venv/bin/python -c "import tarfile; archive = tarfile.open('/app/validation/pytest_vendor.tar.gz', 'w:gz'); archive.add('/app/validation/pytest_vendor', arcname='.'); archive.close(); tarfile.open('/app/validation/pytest_vendor.tar.gz', 'r:gz').getmembers()"
-RUN /app/.venv/bin/python -c "from remediation_agent.api.agentcore import create_agentcore_app; assert callable(create_agentcore_app)"
+RUN /app/.venv/bin/python -c "from remediation_agent.api.a2a import create_a2a_app; assert callable(create_a2a_app)"
 
 FROM python:3.12-slim-trixie
 
@@ -26,5 +26,5 @@ RUN apt-get update && \
 COPY --from=builder --chown=10001:10001 /app /app
 USER 10001:10001
 
-EXPOSE 8080
-CMD ["uvicorn", "remediation_agent.api.agentcore:app", "--host", "0.0.0.0", "--port", "8080"]
+EXPOSE 9000
+CMD ["uvicorn", "remediation_agent.api.a2a:app", "--host", "0.0.0.0", "--port", "9000"]

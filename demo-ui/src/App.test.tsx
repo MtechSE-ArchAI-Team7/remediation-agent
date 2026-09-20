@@ -9,7 +9,17 @@ function response(body: object, status = 200): Response {
 }
 
 function runView(status: string, extra: Record<string, unknown> = {}) {
-  return { output: { run_id: RUN_ID, status, approval_request: null, result: null, ...extra } };
+  return {
+    output: {
+      run_id: RUN_ID,
+      task_id: RUN_ID,
+      session_id: RUN_ID,
+      status,
+      approval_request: null,
+      result: null,
+      ...extra,
+    },
+  };
 }
 
 describe("AIOS remediation console", () => {
@@ -43,6 +53,7 @@ describe("AIOS remediation console", () => {
 
   it("resumes a saved run", async () => {
     localStorage.setItem("aios-remediation-demo-run-id", RUN_ID);
+    localStorage.setItem("aios-remediation-demo-run-id:session", RUN_ID);
     fetchMock.mockResolvedValue(response(runView("INTERNAL_ERROR")));
     render(<App />);
 
@@ -52,7 +63,7 @@ describe("AIOS remediation console", () => {
     expect(errorStatuses.length).toBeGreaterThan(0);
     expect(errorStatuses.some((item) => item.classList.contains("error"))).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
-      `/api/runs/${RUN_ID}`,
+      `/api/runs/${RUN_ID}?session_id=${RUN_ID}`,
       expect.objectContaining({ headers: expect.any(Object) }),
     );
   });

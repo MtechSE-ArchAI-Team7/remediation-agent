@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Bounded Resolution/Remediation Agent for AIOS."
 requires-python = ">=3.12"
 dependencies = [
+  "a2a-sdk[http-server]>=1.1.4,<2.0.0",
+  "bedrock-agentcore[a2a-v1]>=1.23.1,<2.0.0",
   "boto3>=1.43.62,<2.0.0",
   "fastapi>=0.116.0",
   "httpx>=0.28.0",

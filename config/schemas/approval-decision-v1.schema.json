@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "approval_id": {
+      "minLength": 1,
+      "title": "Approval Id",
+      "type": "string"
+    },
+    "comment": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Comment",
+      "type": "string"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "reviewer_id": {
+      "minLength": 1,
+      "title": "Reviewer Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope_digest": {
+      "minLength": 1,
+      "title": "Scope Digest",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "APPROVED",
+        "REJECTED"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "approval_id",
+    "scope_digest",
+    "status",
+    "reviewer_id",
+    "decided_at"
+  ],
+  "title": "ApprovalDecisionV1",
+  "type": "object"
+}

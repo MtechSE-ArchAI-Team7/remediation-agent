@@ -15,6 +15,7 @@ from remediation_agent.domain.models import (
     DraftPrPayload,
     ModelCallRecord,
     NonEmptyStr,
+    RemediationHandoffV1,
     RepositoryRef,
     StrictModel,
     WorkspaceRef,
@@ -160,6 +161,16 @@ class ArtifactWriteRequest(StrictModel):
 class AuditWriteRequest(StrictModel):
     run_id: NonEmptyStr
     jsonl: str
+
+
+class HandoffDeliveryRequest(StrictModel):
+    """Stable input for one optional downstream A2A delivery attempt."""
+
+    delivery_id: NonEmptyStr
+    message_id: NonEmptyStr
+    correlation_id: NonEmptyStr
+    request_digest: NonEmptyStr
+    handoff: RemediationHandoffV1
 
 
 class ArtifactCollectionResult(StrictModel):

@@ -11,12 +11,14 @@ Cognito, API Gateway, database, or user-management layer.
 | `GET /api/health` | Check only the Lambda gateway |
 | `POST /api/probe` | Run one explicit OpenAI provider probe |
 | `POST /api/runs` | Start with `{"run_id":"<uuid>","input":<DiagnosisHandoffV1>}` |
-| `GET /api/runs/<uuid>` | Retrieve or resume the run using the same AgentCore session UUID |
-| `POST /api/runs/<uuid>/approval` | Submit an approval bound to the returned approval ID and scope digest |
+| `GET /api/runs/<task-uuid>?session_id=<session-uuid>` | Poll the A2A task with `GetTask` |
+| `POST /api/runs/<task-uuid>/approval` | Submit a digest-bound approval with the stored `session_id` |
 
-The `POST /api/runs` route is also the minimal Agent 2 integration point. A caller generates and retains a canonical
-UUID, submits its existing `DiagnosisHandoffV1` as `input`, and uses that UUID for retrieval. The gateway response keeps
-the existing `{"output":<RemediationRunView>}` shape.
+The `POST /api/runs` route is also the minimal Agent 2 integration point. A caller generates a canonical UUID for the
+AgentCore session/A2A context and submits its existing `DiagnosisHandoffV1` as a structured A2A data part. The response
+contains separate `session_id` and server-generated `task_id` values. The browser persists both, sends approvals with
+A2A `SendMessage`, and polls with `GetTask`. The gateway translates task states/artifacts back into the existing
+`{"output":<RemediationRunView>}` UI shape.
 
 ## Development and build
 
