@@ -165,6 +165,50 @@ async def test_probe_is_a_bounded_message_only_interaction() -> None:
     assert message["parts"][0]["data"]["status"] == "ok"
 
 
+async def test_hosted_probe_defaults_missing_agentcore_version_header_to_v1() -> None:
+    model = FakeStructuredModel({ModelOperation.AGENTCORE_SMOKE: [{"status": "ok"}]})
+    app = create_a2a_app(
+        model,
+        cast(RemediationService, _FakeService()),
+        probe_provider="bedrock",
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/",
+                headers={"X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": _SESSION_ID},
+                json=_send(
+                    {"schema_version": "1.0", "probe": "bedrock"},
+                    PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
+                ),
+            )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["message"]["parts"][0]["data"]["status"] == "ok"
+
+
+async def test_hosted_probe_does_not_override_explicit_legacy_version() -> None:
+    model = FakeStructuredModel({ModelOperation.AGENTCORE_SMOKE: [{"status": "ok"}]})
+    app = create_a2a_app(
+        model,
+        cast(RemediationService, _FakeService()),
+        probe_provider="bedrock",
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/",
+                headers={**_HEADERS, "A2A-Version": "0.3"},
+                json=_send(
+                    {"schema_version": "1.0", "probe": "bedrock"},
+                    PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
+                ),
+            )
+
+    assert response.status_code == 200
+    assert response.json()["error"]["code"] == -32009
+
+
 async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> None:
     service = _FakeService()
     app = create_a2a_app(

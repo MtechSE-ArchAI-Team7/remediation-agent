@@ -11,6 +11,7 @@ from a2a.server.context import ServerCallContext
 from a2a.server.routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskStore
 from a2a.types import a2a_pb2 as a2a_pb
+from a2a.utils.constants import PROTOCOL_VERSION_1_0, VERSION_HEADER
 from bedrock_agentcore.runtime import build_a2a_app
 from bedrock_agentcore.runtime.a2a import BedrockCallContextBuilder
 from starlette.applications import Starlette
@@ -118,7 +119,7 @@ def create_a2a_app(
         model=model,
         probe_provider=probe_provider,
     )
-    context_builder = BedrockCallContextBuilder()
+    context_builder = _AgentCoreV1CallContextBuilder()
     store = _DeferredTaskStore(task_store or InMemoryTaskStore())
     card = build_agent_card(runtime_url or "http://localhost:9000/")
     application = cast(
@@ -202,6 +203,24 @@ def _replace_compatibility_route(
         )[0]
         return
     raise RuntimeError("AgentCore A2A JSON-RPC route was not created")
+
+
+class _AgentCoreV1CallContextBuilder(BedrockCallContextBuilder):
+    """Supply the fixed A2A v1 contract omitted by AgentCore's invocation proxy."""
+
+    def build(self, request: Any) -> ServerCallContext:
+        """Default a hosted invocation to v1 without overriding a client version."""
+
+        context = cast(ServerCallContext, super().build(request))
+        headers = context.state.get("headers")
+        session_id = context.state.get("session_id")
+        if not isinstance(headers, dict) or not isinstance(session_id, str) or not session_id:
+            return context
+
+        version_header = VERSION_HEADER.casefold()
+        if not any(isinstance(name, str) and name.casefold() == version_header for name in headers):
+            headers[VERSION_HEADER] = PROTOCOL_VERSION_1_0
+        return context
 
 
 class _DeferredTaskStore(TaskStore):
