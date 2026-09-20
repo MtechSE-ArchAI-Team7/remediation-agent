@@ -460,6 +460,11 @@ runtime plus `iam:PassRole` only on the existing runtime execution role, conditi
 `iam:PassedToService=bedrock-agentcore.amazonaws.com`. Its OIDC trust must be restricted to this repository and
 `refs/heads/main`.
 
+The runtime execution role must also grant `s3:ListBucket` for the configured `AIOS_A2A_TASK_STORE_PREFIX` and
+`s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` only beneath that prefix. For the documented default, scope the
+bucket condition and object ARN to `a2a/tasks/*`; the existing `runs/*` artifact permissions do not cover A2A task
+projections.
+
 Create the initial AgentCore Runtime manually with A2A protocol, IAM/SigV4 inbound authentication, public networking,
 and an immutable image URI. The release workflow never creates IAM, Memory, storage, secrets, runtimes, or endpoints.
 Configure these non-secret environment variables during that initial provisioning:
