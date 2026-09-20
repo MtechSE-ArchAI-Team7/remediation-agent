@@ -1,0 +1,424 @@
+name: Deploy AgentCore Runtime
+
+on:
+  workflow_call:
+    inputs:
+      aws-region:
+        description: AWS region containing the existing AgentCore Runtime and ECR image.
+        required: true
+        type: string
+      agent-runtime-id:
+        description: Identifier of the existing AgentCore Runtime to update.
+        required: true
+        type: string
+      image-uri:
+        description: Tagged ECR image URI produced by the image workflow.
+        required: true
+        type: string
+      image-digest:
+        description: Immutable sha256 digest produced by the image workflow.
+        required: true
+        type: string
+      smoke-test-json:
+        description: Bounded JSON request sent through the DEFAULT endpoint after deployment. Empty disables the probe.
+        required: false
+        type: string
+        default: '{"action":"probe","input":{"probe":"openai"}}'
+      server-protocol:
+        description: AgentCore server protocol selected atomically with the image (HTTP or A2A).
+        required: false
+        type: string
+        default: HTTP
+      readiness-timeout-seconds:
+        description: Maximum time to wait for either a deployment or rollback runtime version.
+        required: false
+        type: number
+        default: 900
+    secrets:
+      AWS_ROLE_ARN:
+        description: Least-privilege GitHub OIDC role used to update and invoke the runtime.
+        required: true
+    outputs:
+      deployed-image-uri:
+        description: Immutable ECR digest URI selected for deployment.
+        value: ${{ jobs.deploy.outputs.deployed-image-uri }}
+      runtime-arn:
+        description: ARN of the updated AgentCore Runtime.
+        value: ${{ jobs.deploy.outputs.runtime-arn }}
+      runtime-version:
+        description: AgentCore Runtime version selected by this deployment.
+        value: ${{ jobs.deploy.outputs.runtime-version }}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: agentcore-${{ github.repository }}-${{ inputs.agent-runtime-id }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      deployed-image-uri: ${{ steps.release.outputs.target-image }}
+      runtime-arn: ${{ steps.release.outputs.runtime-arn }}
+      runtime-version: ${{ steps.release.outputs.runtime-version }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Validate release and inspect runtime
+        id: prepare
+        shell: bash
+        env:
+          AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
+          AWS_REGION: ${{ inputs.aws-region }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          IMAGE_URI: ${{ inputs.image-uri }}
+          READINESS_TIMEOUT_SECONDS: ${{ inputs.readiness-timeout-seconds }}
+          SERVER_PROTOCOL: ${{ inputs.server-protocol }}
+          SMOKE_TEST_JSON: ${{ inputs.smoke-test-json }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$AGENT_RUNTIME_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,99}-[a-zA-Z0-9]{10}$ ]]; then
+            echo "The AgentCore Runtime identifier is invalid." >&2
+            exit 1
+          fi
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "The image digest must be an immutable sha256 digest." >&2
+            exit 1
+          fi
+          if [[ ! "$READINESS_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] ||
+             (( READINESS_TIMEOUT_SECONDS < 60 || READINESS_TIMEOUT_SECONDS > 1800 )); then
+            echo "The readiness timeout must be between 60 and 1800 seconds." >&2
+            exit 1
+          fi
+          if (( ${#SMOKE_TEST_JSON} > 4096 )); then
+            echo "The smoke-test request exceeds 4096 characters." >&2
+            exit 1
+          fi
+          if [[ "$SERVER_PROTOCOL" != "HTTP" && "$SERVER_PROTOCOL" != "A2A" ]]; then
+            echo "The server protocol must be HTTP or A2A." >&2
+            exit 1
+          fi
+          if [[ -n "$SMOKE_TEST_JSON" ]] && ! jq -e 'type == "object"' <<<"$SMOKE_TEST_JSON" >/dev/null; then
+            echo "The smoke-test request must be a JSON object." >&2
+            exit 1
+          fi
+
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          expected_prefix="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com/"
+          if [[ "$IMAGE_URI" != "${expected_prefix}"*:* ]] || [[ "$IMAGE_URI" == *@* ]]; then
+            echo "The image URI must be a tagged ECR image in the deployment account and region." >&2
+            exit 1
+          fi
+          image_repository="${IMAGE_URI%:*}"
+          target_image="${image_repository}@${IMAGE_DIGEST}"
+
+          current_file="${RUNNER_TEMP}/agentcore-current.json"
+          aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id "$AGENT_RUNTIME_ID" \
+            --region "$AWS_REGION" \
+            --output json >"$current_file"
+
+          current_status="$(jq -r '.status // empty' "$current_file")"
+          if [[ "$current_status" != "READY" ]]; then
+            echo "The existing AgentCore Runtime is not READY." >&2
+            exit 1
+          fi
+
+          runtime_role_arn="$(jq -r '.roleArn // empty' "$current_file")"
+          runtime_arn="$(jq -r '.agentRuntimeArn // empty' "$current_file")"
+          runtime_version="$(jq -r '.agentRuntimeVersion // empty' "$current_file")"
+          current_image="$(jq -r '.agentRuntimeArtifact.containerConfiguration.containerUri // empty' "$current_file")"
+          current_protocol="$(jq -r '.protocolConfiguration.serverProtocol // "HTTP"' "$current_file")"
+          if [[ -z "$runtime_role_arn" || -z "$runtime_arn" || -z "$runtime_version" || -z "$current_image" ||
+                ( "$current_protocol" != "HTTP" && "$current_protocol" != "A2A" ) ]]; then
+            echo "The existing runtime is not a complete container-based AgentCore Runtime." >&2
+            exit 1
+          fi
+          if ! jq -e '
+            (.environmentVariables | type == "object") and
+            (.lifecycleConfiguration | type == "object") and
+            (.metadataConfiguration.requireMMDSV2 == true) and
+            (.networkConfiguration | type == "object")
+          ' "$current_file" >/dev/null; then
+            echo "The existing runtime is missing required preserved configuration." >&2
+            exit 1
+          fi
+
+          {
+            echo "AGENTCORE_CURRENT_CONFIGURATION_FILE=$current_file"
+            echo "AGENTCORE_EXECUTION_ROLE_ARN=$runtime_role_arn"
+            echo "AGENTCORE_RUNTIME_ARN=$runtime_arn"
+            echo "AGENTCORE_TARGET_IMAGE=$target_image"
+            echo "AGENTCORE_PREVIOUS_IMAGE=$current_image"
+            echo "AGENTCORE_PREVIOUS_VERSION=$runtime_version"
+            echo "AGENTCORE_PREVIOUS_PROTOCOL=$current_protocol"
+            echo "AGENTCORE_TARGET_PROTOCOL=$SERVER_PROTOCOL"
+            echo "AGENTCORE_READINESS_TIMEOUT_SECONDS=$READINESS_TIMEOUT_SECONDS"
+          } >>"$GITHUB_ENV"
+          {
+            echo "current-version=$runtime_version"
+            echo "runtime-arn=$runtime_arn"
+            echo "target-image=$target_image"
+          } >>"$GITHUB_OUTPUT"
+          if [[ "$current_image" == "$target_image" && "$current_protocol" == "$SERVER_PROTOCOL" ]]; then
+            echo "already-current=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "already-current=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Update AgentCore Runtime
+        id: update
+        if: ${{ steps.prepare.outputs.already-current != 'true' }}
+        shell: bash
+        env:
+          AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
+          AWS_REGION: ${{ inputs.aws-region }}
+        run: |
+          set -euo pipefail
+
+          request_file="${RUNNER_TEMP}/agentcore-update-request.json"
+          response_file="${RUNNER_TEMP}/agentcore-update-response.json"
+          client_token="deploy-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          jq -n \
+            --slurpfile current "$AGENTCORE_CURRENT_CONFIGURATION_FILE" \
+            --arg runtime_id "$AGENT_RUNTIME_ID" \
+            --arg image "$AGENTCORE_TARGET_IMAGE" \
+            --arg role "$AGENTCORE_EXECUTION_ROLE_ARN" \
+            --arg protocol "$AGENTCORE_TARGET_PROTOCOL" \
+            --arg token "$client_token" \
+            '($current[0] | {
+              environmentVariables,
+              lifecycleConfiguration,
+              metadataConfiguration,
+              networkConfiguration
+            }) + {
+              agentRuntimeId: $runtime_id,
+              agentRuntimeArtifact: {containerConfiguration: {containerUri: $image}},
+              protocolConfiguration: {serverProtocol: $protocol},
+              roleArn: $role,
+              clientToken: $token
+            }' >"$request_file"
+          aws bedrock-agentcore-control update-agent-runtime \
+            --cli-input-json "file://${request_file}" \
+            --region "$AWS_REGION" \
+            --output json >"$response_file"
+
+          runtime_version="$(jq -r '.agentRuntimeVersion // empty' "$response_file")"
+          runtime_arn="$(jq -r '.agentRuntimeArn // empty' "$response_file")"
+          if [[ -z "$runtime_version" || -z "$runtime_arn" ]]; then
+            echo "AgentCore did not return the new runtime identity." >&2
+            exit 1
+          fi
+          {
+            echo "runtime-version=$runtime_version"
+            echo "runtime-arn=$runtime_arn"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Select deployed release
+        id: release
+        shell: bash
+        env:
+          ALREADY_CURRENT: ${{ steps.prepare.outputs.already-current }}
+          CURRENT_RUNTIME_ARN: ${{ steps.prepare.outputs.runtime-arn }}
+          CURRENT_RUNTIME_VERSION: ${{ steps.prepare.outputs.current-version }}
+          NEW_RUNTIME_ARN: ${{ steps.update.outputs.runtime-arn }}
+          NEW_RUNTIME_VERSION: ${{ steps.update.outputs.runtime-version }}
+          TARGET_IMAGE: ${{ steps.prepare.outputs.target-image }}
+        run: |
+          set -euo pipefail
+          if [[ "$ALREADY_CURRENT" == "true" ]]; then
+            changed=false
+            runtime_arn="$CURRENT_RUNTIME_ARN"
+            runtime_version="$CURRENT_RUNTIME_VERSION"
+          else
+            changed=true
+            runtime_arn="$NEW_RUNTIME_ARN"
+            runtime_version="$NEW_RUNTIME_VERSION"
+          fi
+          if [[ -z "$runtime_arn" || -z "$runtime_version" ]]; then
+            echo "The selected AgentCore release is incomplete." >&2
+            exit 1
+          fi
+          {
+            echo "changed=$changed"
+            echo "runtime-arn=$runtime_arn"
+            echo "runtime-version=$runtime_version"
+            echo "target-image=$TARGET_IMAGE"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Wait for deployed runtime version
+        if: ${{ steps.release.outputs.changed == 'true' }}
+        shell: bash
+        env:
+          AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
+          AWS_REGION: ${{ inputs.aws-region }}
+          RUNTIME_VERSION: ${{ steps.release.outputs.runtime-version }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + AGENTCORE_READINESS_TIMEOUT_SECONDS))
+          while (( SECONDS < deadline )); do
+            status="$(aws bedrock-agentcore-control get-agent-runtime \
+              --agent-runtime-id "$AGENT_RUNTIME_ID" \
+              --agent-runtime-version "$RUNTIME_VERSION" \
+              --region "$AWS_REGION" \
+              --query status \
+              --output text)"
+            case "$status" in
+              READY)
+                exit 0
+                ;;
+              CREATE_FAILED|UPDATE_FAILED|DELETING)
+                echo "The new AgentCore Runtime version did not become ready." >&2
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "Timed out waiting for the new AgentCore Runtime version." >&2
+          exit 1
+
+      - name: Run bounded runtime probe
+        if: ${{ inputs.smoke-test-json != '' }}
+        shell: bash
+        env:
+          AWS_REGION: ${{ inputs.aws-region }}
+          RUNTIME_ARN: ${{ steps.release.outputs.runtime-arn }}
+          SMOKE_TEST_JSON: ${{ inputs.smoke-test-json }}
+          SERVER_PROTOCOL: ${{ inputs.server-protocol }}
+        run: |
+          set -euo pipefail
+          payload_file="${RUNNER_TEMP}/agentcore-smoke-request.json"
+          response_file="${RUNNER_TEMP}/agentcore-smoke-response.json"
+          log_file="${RUNNER_TEMP}/agentcore-smoke-cli.log"
+          printf '%s' "$SMOKE_TEST_JSON" >"$payload_file"
+
+          for attempt in 1 2 3; do
+            session_id="$(cat /proc/sys/kernel/random/uuid)"
+            if aws bedrock-agentcore invoke-agent-runtime \
+              --agent-runtime-arn "$RUNTIME_ARN" \
+              --qualifier DEFAULT \
+              --runtime-session-id "$session_id" \
+              --content-type application/json \
+              --accept application/json \
+              --payload "fileb://${payload_file}" \
+              --region "$AWS_REGION" \
+              "$response_file" >"$log_file" 2>&1; then
+              if [[ "$SERVER_PROTOCOL" == "A2A" ]] &&
+                 jq -e '
+                   .jsonrpc == "2.0" and
+                   (.result.message.parts | any(
+                     .mediaType == "application/vnd.aios.provider-probe-result.v1+json" and
+                     .data.schema_version == "1.0" and
+                     .data.status == "ok"
+                   ))
+                 ' "$response_file" >/dev/null 2>&1; then
+                exit 0
+              fi
+              if [[ "$SERVER_PROTOCOL" == "HTTP" ]] &&
+                 jq -e '.output.status == "ok"' "$response_file" >/dev/null 2>&1; then
+                exit 0
+              fi
+            fi
+            if (( attempt < 3 )); then
+              sleep 10
+            fi
+          done
+          echo "The bounded AgentCore Runtime probe failed after three attempts." >&2
+          exit 1
+
+      - name: Restore previous runtime image
+        id: rollback
+        if: ${{ failure() && steps.release.outputs.changed == 'true' }}
+        shell: bash
+        env:
+          AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
+          AWS_REGION: ${{ inputs.aws-region }}
+        run: |
+          set -euo pipefail
+
+          request_file="${RUNNER_TEMP}/agentcore-rollback-request.json"
+          response_file="${RUNNER_TEMP}/agentcore-rollback-response.json"
+          client_token="rollback-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          jq -n \
+            --slurpfile current "$AGENTCORE_CURRENT_CONFIGURATION_FILE" \
+            --arg runtime_id "$AGENT_RUNTIME_ID" \
+            --arg image "$AGENTCORE_PREVIOUS_IMAGE" \
+            --arg role "$AGENTCORE_EXECUTION_ROLE_ARN" \
+            --arg protocol "$AGENTCORE_PREVIOUS_PROTOCOL" \
+            --arg token "$client_token" \
+            '($current[0] | {
+              environmentVariables,
+              lifecycleConfiguration,
+              metadataConfiguration,
+              networkConfiguration
+            }) + {
+              agentRuntimeId: $runtime_id,
+              agentRuntimeArtifact: {containerConfiguration: {containerUri: $image}},
+              protocolConfiguration: {serverProtocol: $protocol},
+              roleArn: $role,
+              clientToken: $token
+            }' >"$request_file"
+          aws bedrock-agentcore-control update-agent-runtime \
+            --cli-input-json "file://${request_file}" \
+            --region "$AWS_REGION" \
+            --output json >"$response_file"
+          rollback_version="$(jq -r '.agentRuntimeVersion // empty' "$response_file")"
+          if [[ -z "$rollback_version" ]]; then
+            echo "AgentCore did not return a rollback runtime version." >&2
+            exit 1
+          fi
+
+          deadline=$((SECONDS + AGENTCORE_READINESS_TIMEOUT_SECONDS))
+          while (( SECONDS < deadline )); do
+            status="$(aws bedrock-agentcore-control get-agent-runtime \
+              --agent-runtime-id "$AGENT_RUNTIME_ID" \
+              --agent-runtime-version "$rollback_version" \
+              --region "$AWS_REGION" \
+              --query status \
+              --output text)"
+            case "$status" in
+              READY)
+                echo "runtime-version=$rollback_version" >>"$GITHUB_OUTPUT"
+                exit 0
+                ;;
+              CREATE_FAILED|UPDATE_FAILED|DELETING)
+                echo "The AgentCore rollback version did not become ready." >&2
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "Timed out waiting for the AgentCore rollback version." >&2
+          exit 1
+
+      - name: Summarize deployment
+        if: ${{ always() }}
+        shell: bash
+        env:
+          DEPLOYMENT_STATUS: ${{ job.status }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          ROLLBACK_OUTCOME: ${{ steps.rollback.outcome }}
+          ROLLBACK_VERSION: ${{ steps.rollback.outputs.runtime-version }}
+          RUNTIME_VERSION: ${{ steps.release.outputs.runtime-version }}
+        run: |
+          {
+            echo "## AgentCore deployment"
+            echo
+            echo "- Image digest: \`$IMAGE_DIGEST\`"
+            echo "- Runtime version: \`${RUNTIME_VERSION:-unavailable}\`"
+            echo "- Deployment status: \`$DEPLOYMENT_STATUS\`"
+            echo "- Rollback outcome: \`${ROLLBACK_OUTCOME:-not-run}\`"
+            if [[ -n "$ROLLBACK_VERSION" ]]; then
+              echo "- Rollback version: \`$ROLLBACK_VERSION\`"
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"

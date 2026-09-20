@@ -41,6 +41,10 @@ def _assert_sha_pinned(job: dict[str, object]) -> str:
     return uses.rsplit("@", maxsplit=1)[1]
 
 
+def _assert_local_agentcore_deploy(job: dict[str, object]) -> None:
+    assert job["uses"] == "./.github/workflows/deploy-agentcore-runtime.yaml"
+
+
 def _contains_key(value: object, key: str) -> bool:
     if isinstance(value, dict):
         return key in value or any(_contains_key(item, key) for item in value.values())
@@ -58,8 +62,9 @@ def test_main_release_runs_ci_then_image_then_agentcore_deploy() -> None:
     assert jobs["deploy"]["needs"] == "image"
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
 
-    refs = {_assert_sha_pinned(jobs[name]) for name in ("ci", "image", "deploy")}
+    refs = {_assert_sha_pinned(jobs[name]) for name in ("ci", "image")}
     assert len(refs) == 1
+    _assert_local_agentcore_deploy(jobs["deploy"])
 
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     deploy_secrets = cast(dict[str, object], jobs["deploy"]["secrets"])
@@ -96,9 +101,31 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     assert push == {"tags": ["v*"]}
     assert jobs["deploy"]["needs"] == "image"
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
-    refs = {_assert_sha_pinned(jobs[name]) for name in ("image", "deploy")}
-    assert len(refs) == 1
+    _assert_sha_pinned(jobs["image"])
+    _assert_local_agentcore_deploy(jobs["deploy"])
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     assert deploy_with["server-protocol"] == "A2A"
     assert json.loads(cast(str, deploy_with["smoke-test-json"]))["method"] == "SendMessage"
     assert not _contains_key(workflow, "environment")
+
+
+def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> None:
+    workflow = _load_workflow("deploy-agentcore-runtime.yaml")
+    deploy = _jobs(workflow)["deploy"]
+    workflow_call = cast(dict[str, object], _trigger(workflow)["workflow_call"])
+    inputs = cast(dict[str, object], workflow_call["inputs"])
+    script = "\n".join(
+        value for step in cast(list[dict[str, object]], deploy["steps"]) if isinstance((value := step.get("run")), str)
+    )
+
+    assert "server-protocol" in inputs
+    assert "AGENTCORE_CURRENT_CONFIGURATION_FILE" in script
+    assert ".metadataConfiguration.requireMMDSV2 == true" in script
+    for field in ("environmentVariables", "lifecycleConfiguration", "metadataConfiguration", "networkConfiguration"):
+        assert script.count(field) >= 3
+    assert '--slurpfile current "$AGENTCORE_CURRENT_CONFIGURATION_FILE"' in script
+    assert "update-agent-runtime" in script
+    assert "invoke-agent-runtime" in script
+    assert "AGENTCORE_PREVIOUS_PROTOCOL" in script
+    assert "create-agent-runtime" not in script
+    assert "delete-agent-runtime" not in script
