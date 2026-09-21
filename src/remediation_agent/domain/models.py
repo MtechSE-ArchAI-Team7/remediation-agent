@@ -20,6 +20,8 @@ from remediation_agent.domain.enums import (
     RemediationType,
     RepositoryProvider,
     RiskLevel,
+    ValidationBackend,
+    ValidationCleanupStatus,
     ValidationOutcome,
     WorkspaceStatus,
 )
@@ -85,6 +87,11 @@ class DiagnosisHandoffV1(StrictModel):
 
     schema_version: Literal["1.0"] = "1.0"
     case_id: IdentifierStr
+    jira_ticket_id: str = Field(
+        min_length=3,
+        max_length=64,
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$",
+    )
     issue_summary: str = Field(min_length=1, max_length=10_000)
     remediation_type: RemediationType
     diagnosis: Diagnosis
@@ -93,6 +100,11 @@ class DiagnosisHandoffV1(StrictModel):
     repository: RepositoryRef
     upstream_correlation_id: str | None = None
     upstream_audit_refs: list[str] = Field(default_factory=list)
+
+    @field_validator("jira_ticket_id", mode="before")
+    @classmethod
+    def normalize_jira_ticket_id(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def evidence_references_exist(self) -> DiagnosisHandoffV1:
@@ -263,6 +275,21 @@ class ValidationTaskResult(StrictModel):
     output_truncated: bool = False
 
 
+class ValidationExecutionRecord(StrictModel):
+    """Redacted proof of the deterministic boundary used for one validation task."""
+
+    attempt: int = Field(ge=1)
+    task_name: NonEmptyStr
+    backend: ValidationBackend
+    executor_id: NonEmptyStr
+    input_digest: NonEmptyStr
+    session_digest: str | None = None
+    enforced_controls: list[IdentifierStr] = Field(min_length=1, max_length=20)
+    cleanup_status: ValidationCleanupStatus
+    outcome: ValidationOutcome
+    duration_ms: int = Field(ge=0)
+
+
 class ValidationAttempt(StrictModel):
     attempt: int = Field(ge=1)
     patch_digest: NonEmptyStr
@@ -327,6 +354,7 @@ class ModelCallRecord(StrictModel):
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     refused: bool = False
+    reasoning_summary: str | None = Field(default=None, max_length=4_000)
 
 
 class ErrorRecord(StrictModel):
@@ -351,6 +379,41 @@ class AuditEvent(StrictModel):
     output_digest: NonEmptyStr
     previous_hash: NonEmptyStr
     event_hash: NonEmptyStr
+
+
+class ExplainabilityEvent(StrictModel):
+    """One redacted, presentation-safe decision or side-effect record."""
+
+    sequence: int = Field(ge=1)
+    timestamp: datetime
+    stage: IdentifierStr
+    actor_type: Literal["DETERMINISTIC", "MODEL_ASSISTED", "TOOL", "HUMAN"]
+    event_type: IdentifierStr
+    status: IdentifierStr
+    summary: str = Field(max_length=4_000)
+    policy_control_ids: list[IdentifierStr] = Field(default_factory=list, max_length=20)
+
+
+class ExplainabilityEvidenceRef(StrictModel):
+    """Repository evidence metadata that deliberately excludes file contents."""
+
+    kind: Literal["TREE", "FILE", "SEARCH"]
+    locator: str = Field(min_length=1, max_length=2_048)
+    digest: NonEmptyStr
+    truncated: bool = False
+
+
+class ExplainabilityTraceV1(StrictModel):
+    """Bounded trace for operator explanation without prompts or hidden reasoning."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: IdentifierStr
+    status: FinalStatus
+    events: list[ExplainabilityEvent] = Field(default_factory=list, max_length=200)
+    inspection_tool_calls: list[InspectionToolCallRecord] = Field(default_factory=list, max_length=100)
+    evidence: list[ExplainabilityEvidenceRef] = Field(default_factory=list, max_length=100)
+    model_calls: list[ModelCallRecord] = Field(default_factory=list, max_length=100)
+    validation_executions: list[ValidationExecutionRecord] = Field(default_factory=list, max_length=100)
 
 
 class RemediationHandoffV1(StrictModel):
@@ -404,3 +467,4 @@ class RemediationRunView(StrictModel):
     approval_request: ApprovalRequest | None = None
     result: RemediationHandoffV1 | None = None
     downstream_delivery: DownstreamDeliveryReceiptV1 | None = None
+    explainability: ExplainabilityTraceV1 | None = None

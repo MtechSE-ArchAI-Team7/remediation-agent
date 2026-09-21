@@ -1,14 +1,14 @@
 {
-  "policy_id": "aios-remediation-agentcore-demo-v1",
+  "policy_id": "aios-remediation-agentcore-ecommerce-demo-v1",
   "version": "1.0",
   "repositories": {
     "allowed_providers": ["GITHUB"],
     "allowed_url_patterns": [
-      "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git"
+      "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
     ]
   },
   "paths": {
-    "autonomous": ["src/**", "tests/**", "config/**", "*.py", "*.json", "*.toml", "*.yaml", "*.yml"],
+    "autonomous": ["server.js", "lib/**", "tests/**"],
     "approval_required": [
       ".github/workflows/**", "Dockerfile", "docker/**", "compose.yaml", "pyproject.toml", "uv.lock",
       "requirements*.txt", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
@@ -41,28 +41,30 @@
     "max_model_output_tokens": 4096,
     "max_active_runs": 2
   },
-  "default_validation_tasks": ["unit_tests"],
+  "default_validation_tasks": ["javascript_syntax", "average_regression"],
   "validation_tasks": {
-    "unit_tests": {
-      "argv": ["python", "-m", "pytest", "-q"],
+    "javascript_syntax": {
+      "argv": ["node", "--check", "server.js"],
       "cwd": ".",
       "environment": {},
-      "timeout_seconds": 120,
-      "output_limit_bytes": 1048576,
+      "timeout_seconds": 60,
+      "output_limit_bytes": 65536,
       "retryable": false
     },
-    "config_validation": {
-      "argv": ["python", "-m", "json.tool", "config/service.json"],
+    "average_regression": {
+      "argv": ["node", "--test", "tests/calculate-average.test.js"],
       "cwd": ".",
       "environment": {},
-      "timeout_seconds": 30,
-      "output_limit_bytes": 65536,
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
       "retryable": false
     }
   },
   "mandatory_tasks": [
-    {"path_patterns": ["src/**", "tests/**", "*.py"], "task_names": ["unit_tests"]},
-    {"path_patterns": ["config/**", "*.json"], "task_names": ["config_validation"]}
+    {
+      "path_patterns": ["server.js", "lib/**", "tests/**"],
+      "task_names": ["javascript_syntax", "average_regression"]
+    }
   ],
   "artifacts": {
     "retention_days": 7,

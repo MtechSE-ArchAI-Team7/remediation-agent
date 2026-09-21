@@ -23,6 +23,7 @@ START_REMEDIATION_EXAMPLES: Final[dict[str, dict[str, object]]] = {
         "value": {
             "schema_version": "1.0",
             "case_id": "CASE-2026-0042",
+            "jira_ticket_id": "TICKET-111",
             "issue_summary": "Malformed quantity input causes an unhandled application error.",
             "remediation_type": "CODE",
             "diagnosis": {

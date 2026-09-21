@@ -11,6 +11,7 @@ from remediation_agent.domain.models import (
     ApprovalRequest,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
+    ExplainabilityTraceV1,
     RemediationHandoffV1,
 )
 from remediation_agent.policy.models import PolicyConfig
@@ -24,6 +25,7 @@ def main() -> None:
         "approval-decision-v1.schema.json": ApprovalDecisionV1.model_json_schema(),
         "approval-request-v1.schema.json": ApprovalRequest.model_json_schema(),
         "delivery-receipt-v1.schema.json": DownstreamDeliveryReceiptV1.model_json_schema(),
+        "explainability-trace-v1.schema.json": ExplainabilityTraceV1.model_json_schema(),
         "provider-probe-request-v1.schema.json": ProviderProbeRequestV1.model_json_schema(),
         "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),

@@ -16,6 +16,7 @@ from remediation_agent.api.a2a_contracts import (
     APPROVAL_DECISION_MEDIA_TYPE,
     APPROVAL_REQUEST_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
+    EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
@@ -155,9 +156,10 @@ class RemediationA2AExecutor(AgentExecutor):
             if request is None:
                 await updater.failed(_status_message(updater, "MISSING_APPROVAL_REQUEST"))
                 return
-            message = updater.new_agent_message(
-                [_data_part(request.model_dump(mode="json"), APPROVAL_REQUEST_MEDIA_TYPE)]
-            )
+            parts = [_data_part(request.model_dump(mode="json"), APPROVAL_REQUEST_MEDIA_TYPE)]
+            if view.explainability is not None:
+                parts.append(_data_part(view.explainability.model_dump(mode="json"), EXPLAINABILITY_TRACE_MEDIA_TYPE))
+            message = updater.new_agent_message(parts)
             await updater.requires_input(message)
             return
 
@@ -166,6 +168,10 @@ class RemediationA2AExecutor(AgentExecutor):
             return
 
         artifact_parts = [_data_part(view.result.model_dump(mode="json"), REMEDIATION_HANDOFF_MEDIA_TYPE)]
+        if view.explainability is not None:
+            artifact_parts.append(
+                _data_part(view.explainability.model_dump(mode="json"), EXPLAINABILITY_TRACE_MEDIA_TYPE)
+            )
         if view.downstream_delivery is not None:
             from remediation_agent.api.a2a_contracts import DELIVERY_RECEIPT_MEDIA_TYPE
 

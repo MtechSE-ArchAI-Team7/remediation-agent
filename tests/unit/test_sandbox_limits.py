@@ -47,7 +47,7 @@ async def test_docker_task_argv_enforces_isolation_and_read_only_git(
         return 0, "ok", "", False
 
     monkeypatch.setattr(executor, "_run_capped", fake_run)
-    result = await executor.run_task(
+    execution = await executor.run_task(
         ValidationTaskRequest(
             workspace=WorkspaceRef(workspace_id="run", path=str(workspace_path), base_commit="a" * 40),
             task_name="unit_tests",
@@ -58,7 +58,8 @@ async def test_docker_task_argv_enforces_isolation_and_read_only_git(
             ),
         )
     )
-    assert result.exit_code == 0
+    assert execution.result.exit_code == 0
+    assert execution.execution.backend == "DOCKER"
     assert ["--network", "none"] == captured[captured.index("--network") : captured.index("--network") + 2]
     assert "--read-only" in captured
     assert ["--cap-drop", "ALL"] == captured[captured.index("--cap-drop") : captured.index("--cap-drop") + 2]

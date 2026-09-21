@@ -10,7 +10,12 @@ import httpx
 import pytest
 
 from remediation_agent.adapters.fakes import FakeStructuredModel
-from remediation_agent.api.agentcore import _validate_agentcore_provider, create_agentcore_app
+from remediation_agent.api.agentcore import (
+    _load_agentcore_openai_api_key,
+    _validate_agentcore_provider,
+    _validate_workspace_root,
+    create_agentcore_app,
+)
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import FinalStatus, ModelOperation
 from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
@@ -19,6 +24,7 @@ from tests.conftest import diagnosis_handoff
 
 _SESSION_ID = "2db1f13e-7351-4a1f-a4c6-630646366d52"
 _HEADERS = {"X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": _SESSION_ID}
+_GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
 
 
 class _FakeRemediationService:
@@ -65,6 +71,47 @@ def test_agentcore_openai_rejects_inline_api_key() -> None:
 
     with pytest.raises(ValueError, match="must be loaded from Secrets Manager"):
         _validate_agentcore_provider(settings)
+
+
+def test_agentcore_workspace_root_preflight_creates_and_cleans_probe(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "mnt" / "workspace" / "runs"
+
+    _validate_workspace_root(workspace_root)
+
+    assert workspace_root.is_dir()
+    assert list(workspace_root.iterdir()) == []
+
+
+def test_agentcore_workspace_root_preflight_has_stable_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace_root = tmp_path / "workspace"
+
+    def denied(*_: object, **__: object) -> str:
+        raise PermissionError("sensitive host path")
+
+    monkeypatch.setattr("remediation_agent.api.agentcore.tempfile.mkdtemp", denied)
+
+    with pytest.raises(RuntimeError, match="^WORKSPACE_ROOT_UNAVAILABLE$"):
+        _validate_workspace_root(workspace_root)
+
+
+async def test_agentcore_gateway_mode_never_loads_the_openai_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        policy_file=Path("config/policies/agentcore-demo.json"),
+        llm_provider="openai",
+        llm_model="kei-openai-target/gpt-5.6-terra",
+        aws_region="ap-southeast-1",
+        openai_auth_mode="aws_iam_gateway",
+        openai_gateway_arn=_GATEWAY_ARN,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    async def forbidden_load(*_: object, **__: object) -> None:
+        raise AssertionError("gateway mode must not read the OpenAI secret")
+
+    monkeypatch.setattr("remediation_agent.api.agentcore.SecretsManagerOpenAISecretProvider.load", forbidden_load)
+
+    _validate_agentcore_provider(settings)
+    assert await _load_agentcore_openai_api_key(settings, "ap-southeast-1") is None
 
 
 async def test_agentcore_invocation_returns_only_bounded_model_metadata() -> None:

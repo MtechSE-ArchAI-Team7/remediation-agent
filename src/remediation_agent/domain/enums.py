@@ -50,6 +50,19 @@ class ValidationOutcome(StrEnum):
     TIMED_OUT = "TIMED_OUT"
 
 
+class ValidationBackend(StrEnum):
+    DOCKER = "DOCKER"
+    AGENTCORE_CODE_INTERPRETER = "AGENTCORE_CODE_INTERPRETER"
+    FAKE = "FAKE"
+
+
+class ValidationCleanupStatus(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNKNOWN = "UNKNOWN"
+
+
 class FinalStatus(StrEnum):
     PENDING = "PENDING"
     AWAITING_APPROVAL = "AWAITING_APPROVAL"

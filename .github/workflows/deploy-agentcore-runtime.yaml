@@ -11,6 +11,10 @@ on:
         description: Identifier of the existing AgentCore Runtime to update.
         required: true
         type: string
+      github-repository:
+        description: Exact owner/repository slug authorized for GitHub inspection and draft pull requests.
+        required: true
+        type: string
       image-uri:
         description: Tagged ECR image URI produced by the image workflow.
         required: true
@@ -79,6 +83,7 @@ jobs:
         env:
           AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
           AWS_REGION: ${{ inputs.aws-region }}
+          GITHUB_REPOSITORY: ${{ inputs.github-repository }}
           IMAGE_DIGEST: ${{ inputs.image-digest }}
           IMAGE_URI: ${{ inputs.image-uri }}
           READINESS_TIMEOUT_SECONDS: ${{ inputs.readiness-timeout-seconds }}
@@ -89,6 +94,11 @@ jobs:
 
           if [[ ! "$AGENT_RUNTIME_ID" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,99}-[a-zA-Z0-9]{10}$ ]]; then
             echo "The AgentCore Runtime identifier is invalid." >&2
+            exit 1
+          fi
+          if [[ ! "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+             (( ${#GITHUB_REPOSITORY} > 200 )); then
+            echo "The GitHub repository must use a bounded owner/repository slug." >&2
             exit 1
           fi
           if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -110,6 +120,11 @@ jobs:
           fi
           if [[ -n "$SMOKE_TEST_JSON" ]] && ! jq -e 'type == "object"' <<<"$SMOKE_TEST_JSON" >/dev/null; then
             echo "The smoke-test request must be a JSON object." >&2
+            exit 1
+          fi
+          if ! aws bedrock-agentcore-control update-agent-runtime --generate-cli-skeleton input |
+             jq -e 'has("filesystemConfigurations")' >/dev/null; then
+            echo "The AWS CLI is too old to preserve AgentCore filesystem configurations." >&2
             exit 1
           fi
 
@@ -139,6 +154,7 @@ jobs:
           runtime_version="$(jq -r '.agentRuntimeVersion // empty' "$current_file")"
           current_image="$(jq -r '.agentRuntimeArtifact.containerConfiguration.containerUri // empty' "$current_file")"
           current_protocol="$(jq -r '.protocolConfiguration.serverProtocol // "HTTP"' "$current_file")"
+          current_repository="$(jq -r '.environmentVariables.AIOS_GITHUB_REPOSITORY // empty' "$current_file")"
           if [[ -z "$runtime_role_arn" || -z "$runtime_arn" || -z "$runtime_version" || -z "$current_image" ||
                 ( "$current_protocol" != "HTTP" && "$current_protocol" != "A2A" ) ]]; then
             echo "The existing runtime is not a complete container-based AgentCore Runtime." >&2
@@ -148,17 +164,25 @@ jobs:
             (.environmentVariables | type == "object") and
             (.lifecycleConfiguration | type == "object") and
             (.metadataConfiguration.requireMMDSV2 == true) and
-            (.networkConfiguration | type == "object")
+            (.networkConfiguration | type == "object") and
+            (
+              .filesystemConfigurations == null or
+              .filesystemConfigurations == [{"sessionStorage":{"mountPath":"/mnt/workspace"}}]
+            )
           ' "$current_file" >/dev/null; then
             echo "The existing runtime is missing required preserved configuration." >&2
             exit 1
           fi
+          filesystem_ready="$(jq -r '
+            .filesystemConfigurations == [{"sessionStorage":{"mountPath":"/mnt/workspace"}}]
+          ' "$current_file")"
 
           {
             echo "AGENTCORE_CURRENT_CONFIGURATION_FILE=$current_file"
             echo "AGENTCORE_EXECUTION_ROLE_ARN=$runtime_role_arn"
             echo "AGENTCORE_RUNTIME_ARN=$runtime_arn"
             echo "AGENTCORE_TARGET_IMAGE=$target_image"
+            echo "AGENTCORE_TARGET_GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
             echo "AGENTCORE_PREVIOUS_IMAGE=$current_image"
             echo "AGENTCORE_PREVIOUS_VERSION=$runtime_version"
             echo "AGENTCORE_PREVIOUS_PROTOCOL=$current_protocol"
@@ -170,7 +194,8 @@ jobs:
             echo "runtime-arn=$runtime_arn"
             echo "target-image=$target_image"
           } >>"$GITHUB_OUTPUT"
-          if [[ "$current_image" == "$target_image" && "$current_protocol" == "$SERVER_PROTOCOL" ]]; then
+          if [[ "$current_image" == "$target_image" && "$current_protocol" == "$SERVER_PROTOCOL" &&
+                "$current_repository" == "$GITHUB_REPOSITORY" && "$filesystem_ready" == "true" ]]; then
             echo "already-current=true" >>"$GITHUB_OUTPUT"
           else
             echo "already-current=false" >>"$GITHUB_OUTPUT"
@@ -183,6 +208,7 @@ jobs:
         env:
           AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
           AWS_REGION: ${{ inputs.aws-region }}
+          GITHUB_REPOSITORY: ${{ inputs.github-repository }}
         run: |
           set -euo pipefail
 
@@ -195,15 +221,17 @@ jobs:
             --arg image "$AGENTCORE_TARGET_IMAGE" \
             --arg role "$AGENTCORE_EXECUTION_ROLE_ARN" \
             --arg protocol "$AGENTCORE_TARGET_PROTOCOL" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --arg token "$client_token" \
             '($current[0] | {
-              environmentVariables,
+              environmentVariables: (.environmentVariables + {AIOS_GITHUB_REPOSITORY: $repository}),
               lifecycleConfiguration,
               metadataConfiguration,
               networkConfiguration
             }) + {
               agentRuntimeId: $runtime_id,
               agentRuntimeArtifact: {containerConfiguration: {containerUri: $image}},
+              filesystemConfigurations: [{sessionStorage: {mountPath: "/mnt/workspace"}}],
               protocolConfiguration: {serverProtocol: $protocol},
               roleArn: $role,
               clientToken: $token
@@ -364,6 +392,7 @@ jobs:
             }) + {
               agentRuntimeId: $runtime_id,
               agentRuntimeArtifact: {containerConfiguration: {containerUri: $image}},
+              filesystemConfigurations: [{sessionStorage: {mountPath: "/mnt/workspace"}}],
               protocolConfiguration: {serverProtocol: $protocol},
               roleArn: $role,
               clientToken: $token

@@ -18,7 +18,7 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
         patch_for(new="value = safe_int_v2(raw)"),
         patch_for(new="value = safe_int_v3(raw)"),
     ]
-    service, _, _, sandbox, pr, _, _ = build_test_service(
+    service, model, _, sandbox, pr, _, _ = build_test_service(
         scripted_responses(patch=initial, revisions=revisions),
         task_outcomes={"unit_tests": [ValidationOutcome.FAILED] * 3},
     )
@@ -30,6 +30,14 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
     assert len(sandbox.applied_patches) == 3
     assert sandbox.restores == 2
     assert pr.requests == []
+    revision_requests = [request for request in model.requests if request.operation.value == "REVISION"]
+    assert len(revision_requests) == 2
+    assert "complete replacement patch" in revision_requests[0].system_instruction
+    assert revision_requests[0].payload["previous_patch"] == {
+        "unified_diff": initial,
+        "rationale": "Bounded fix.",
+        "proposed_validation_tasks": [],
+    }
 
 
 async def test_plan_approval_interrupt_can_resume_same_run() -> None:

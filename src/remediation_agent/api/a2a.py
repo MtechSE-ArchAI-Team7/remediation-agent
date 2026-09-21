@@ -22,6 +22,7 @@ from remediation_agent.api.a2a_contracts import (
     APPROVAL_REQUEST_MEDIA_TYPE,
     DELIVERY_RECEIPT_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
+    EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
@@ -72,6 +73,7 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
         default_output_modes=[
             APPROVAL_REQUEST_MEDIA_TYPE,
             REMEDIATION_HANDOFF_MEDIA_TYPE,
+            EXPLAINABILITY_TRACE_MEDIA_TYPE,
             DELIVERY_RECEIPT_MEDIA_TYPE,
         ],
         skills=[
@@ -87,6 +89,7 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
                 output_modes=[
                     APPROVAL_REQUEST_MEDIA_TYPE,
                     REMEDIATION_HANDOFF_MEDIA_TYPE,
+                    EXPLAINABILITY_TRACE_MEDIA_TYPE,
                     DELIVERY_RECEIPT_MEDIA_TYPE,
                 ],
                 security_requirements=security,

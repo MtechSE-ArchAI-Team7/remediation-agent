@@ -24,6 +24,7 @@ from remediation_agent.domain.models import (
     RemediationHandoffV1,
     RemediationRunView,
 )
+from remediation_agent.explainability import build_explainability_trace
 from remediation_agent.ports.models import AuditWriteRequest, HandoffDeliveryRequest
 from remediation_agent.ports.protocols import AuditSink, HandoffDeliveryPort, WorkspaceRecoveryPort
 from remediation_agent.workflow.state import RemediationState
@@ -217,8 +218,8 @@ class RemediationService:
             raise RunNotFoundError(f"remediation run not found: {run_id}")
         return snapshot
 
-    @staticmethod
     def _view(
+        self,
         state: RemediationState,
         run_id: str,
         *,
@@ -236,6 +237,13 @@ class RemediationService:
             approval_request=approval_request,
             result=result,
             downstream_delivery=state.get("downstream_delivery"),
+            explainability=build_explainability_trace(
+                state,
+                run_id=run_id,
+                status=status,
+                approval_request=approval_request,
+                redactor=self._redactor,
+            ),
         )
 
     async def _view_with_delivery(

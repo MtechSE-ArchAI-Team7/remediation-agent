@@ -16,7 +16,6 @@ from remediation_agent.domain.models import (
     DownstreamDeliveryReceiptV1,
     ModelCallRecord,
     RepositoryRef,
-    ValidationTaskResult,
     WorkspaceRef,
 )
 from remediation_agent.ports.models import (
@@ -39,6 +38,8 @@ from remediation_agent.ports.models import (
     PushRequest,
     PushResult,
     ReadFileRequest,
+    SandboxExecutionProfile,
+    SandboxTaskExecution,
     SearchRequest,
     SearchResult,
     TModel,
@@ -89,11 +90,13 @@ class InspectionToolProvider(Protocol):
 
 
 class SandboxExecutor(Protocol):
+    def execution_profile(self) -> SandboxExecutionProfile: ...
+
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult: ...
 
     async def restore_base(self, workspace: WorkspaceRef) -> None: ...
 
-    async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult: ...
+    async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution: ...
 
     async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest: ...
 

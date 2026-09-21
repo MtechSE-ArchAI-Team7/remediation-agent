@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from remediation_agent.domain.enums import OperationalToolExecutionMode
@@ -26,14 +27,16 @@ def render_tool_catalog_markdown() -> str:
         "",
         "```mermaid",
         "flowchart LR",
-        '    Model["Configured model"] -->|exact allowlist| Inspect["3 read-only MCP tools"]',
-        '    Model --> Finish["finish_inspection control"]',
-        '    Workflow["Deterministic LangGraph workflow"] --> Host["13 typed operational tools"]',
-        '    Inspect --> GitHub["GitHub hosted MCP server"]',
-        '    GitHub --> Repository["Authorized GitHub repository"]',
-        "    Host --> Workspace",
-        '    Host -->|double gated| Remote["Optional branch and draft PR"]',
-        '    Host --> Evidence["Redacted local evidence"]',
+        '    Model["Configured model"] -->|exact allowlist| ModelTools["3 read-only MCP tools<br/>+ finish control"]',
+        '    ModelTools --> Policy["Host policy boundary<br/>repository + commit + paths + limits"]',
+        '    Policy --> GitHub["GitHub hosted MCP<br/>read-only inspection"]',
+        '    Workflow["One LangGraph workflow"] --> Policy',
+        '    Policy --> HostTools["13 deterministic workflow tools"]',
+        '    HostTools --> Workspace["Disposable workspace"]',
+        '    HostTools --> Sandbox["Docker / AgentCore Code Interpreter"]',
+        '    HostTools --> Evidence["Redacted audit + artifacts"]',
+        '    HostTools -->|application gate + policy gate| Remote["Optional branch + draft PR"]',
+        '    Remote -. never .-> Merge["Merge or deploy"]',
         "```",
         "",
         "Repository content cannot expand the allowlist, choose commands, call mutation tools, or grant remote-write "
@@ -80,14 +83,32 @@ def render_tool_catalog_markdown() -> str:
     return "\n".join(lines)
 
 
+def render_tool_catalog_json() -> str:
+    """Render the same typed catalogue for the presentation UI."""
+
+    model_count, workflow_count = operational_tool_counts()
+    payload = {
+        "catalog_version": "1.1",
+        "total_tools": len(OPERATIONAL_TOOL_CATALOG),
+        "model_callable_tools": model_count,
+        "workflow_only_tools": workflow_count,
+        "tools": [item.model_dump(mode="json") for item in OPERATIONAL_TOOL_CATALOG],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
 def _escape(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ")
 
 
 def main() -> None:
-    output = Path(__file__).parents[1] / "docs" / "TOOL_CATALOG.md"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_tool_catalog_markdown(), encoding="utf-8")
+    root = Path(__file__).parents[1]
+    markdown_output = root / "docs" / "TOOL_CATALOG.md"
+    json_output = root / "demo-ui" / "src" / "generated" / "tool-catalog.json"
+    markdown_output.parent.mkdir(parents=True, exist_ok=True)
+    json_output.parent.mkdir(parents=True, exist_ok=True)
+    markdown_output.write_text(render_tool_catalog_markdown(), encoding="utf-8")
+    json_output.write_text(render_tool_catalog_json(), encoding="utf-8")
 
 
 if __name__ == "__main__":

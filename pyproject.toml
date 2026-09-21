@@ -59,8 +59,9 @@ markers = [
   "live_model: calls a configured external LLM provider and is excluded by default",
   "mcp: exercises the hosted GitHub MCP transport and inspection tool boundary",
   "live_mcp: calls GitHub's hosted MCP endpoint and is excluded by default",
+  "live_code_interpreter: calls AgentCore Code Interpreter and is excluded by default",
 ]
-addopts = "-m 'not integration and not live_model and not live_mcp'"
+addopts = "-m 'not integration and not live_model and not live_mcp and not live_code_interpreter'"
 asyncio_mode = "auto"
 
 [tool.ruff]

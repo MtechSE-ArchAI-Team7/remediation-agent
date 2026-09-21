@@ -1,22 +1,17 @@
 {
-  "policy_id": "aios-remediation-demo-v1",
+  "policy_id": "aios-remediation-ecommerce-demo-v1",
   "version": "1.0",
   "repositories": {
     "allowed_providers": ["GITHUB"],
     "allowed_url_patterns": [
-      "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git"
+      "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
     ]
   },
   "paths": {
     "autonomous": [
-      "src/**",
-      "tests/**",
-      "config/**",
-      "*.py",
-      "*.json",
-      "*.toml",
-      "*.yaml",
-      "*.yml"
+      "server.js",
+      "lib/**",
+      "tests/**"
     ],
     "approval_required": [
       ".github/workflows/**",
@@ -84,65 +79,29 @@
     "max_model_output_tokens": 8192,
     "max_active_runs": 4
   },
-  "default_validation_tasks": ["unit_tests"],
+  "default_validation_tasks": ["javascript_syntax", "average_regression"],
   "validation_tasks": {
-    "unit_tests": {
-      "argv": ["python", "-m", "pytest", "-q"],
-      "cwd": ".",
-      "environment": {},
-      "timeout_seconds": 300,
-      "output_limit_bytes": 1048576,
-      "retryable": false
-    },
-    "integration_tests": {
-      "argv": ["python", "-m", "pytest", "-m", "integration", "-q"],
-      "cwd": ".",
-      "environment": {},
-      "timeout_seconds": 300,
-      "output_limit_bytes": 1048576,
-      "retryable": false
-    },
-    "lint": {
-      "argv": ["python", "-m", "ruff", "check", "."],
-      "cwd": ".",
-      "environment": {},
-      "timeout_seconds": 120,
-      "output_limit_bytes": 262144,
-      "retryable": false
-    },
-    "type_check": {
-      "argv": ["python", "-m", "mypy"],
-      "cwd": ".",
-      "environment": {},
-      "timeout_seconds": 180,
-      "output_limit_bytes": 262144,
-      "retryable": false
-    },
-    "security_scan": {
-      "argv": ["python", "-m", "bandit", "-q", "-r", "src"],
-      "cwd": ".",
-      "environment": {},
-      "timeout_seconds": 180,
-      "output_limit_bytes": 262144,
-      "retryable": false
-    },
-    "config_validation": {
-      "argv": ["python", "-m", "json.tool", "config/service.json"],
+    "javascript_syntax": {
+      "argv": ["node", "--check", "server.js"],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 60,
       "output_limit_bytes": 65536,
       "retryable": false
+    },
+    "average_regression": {
+      "argv": ["node", "--test", "tests/calculate-average.test.js"],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false
     }
   },
   "mandatory_tasks": [
     {
-      "path_patterns": ["src/**", "tests/**", "*.py"],
-      "task_names": ["unit_tests"]
-    },
-    {
-      "path_patterns": ["config/**", "*.json", "*.yaml", "*.yml", "*.toml"],
-      "task_names": ["config_validation"]
+      "path_patterns": ["server.js", "lib/**", "tests/**"],
+      "task_names": ["javascript_syntax", "average_regression"]
     }
   ],
   "artifacts": {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -9,6 +10,7 @@ import httpx
 from remediation_agent.api.app import create_app
 from remediation_agent.domain.enums import ApprovalStatus, FinalStatus, PolicyDecision, RiskLevel
 from remediation_agent.domain.models import ApprovalDecisionV1
+from scripts.export_tool_catalog import render_tool_catalog_json
 from tests.conftest import build_test_service, diagnosis_handoff, scripted_responses
 
 
@@ -53,6 +55,7 @@ async def test_tool_catalog_is_read_only_and_reports_stable_counts() -> None:
 
     assert response.status_code == 200
     body = response.json()
+    assert body == json.loads(render_tool_catalog_json())
     assert body["catalog_version"] == "1.1"
     assert body["total_tools"] == 17
     assert body["model_callable_tools"] == 4

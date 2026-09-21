@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "case_id": "CASE-ECOM-AVG-001",
+  "jira_ticket_id": "TICKET-111",
+  "issue_summary": "The deployed average endpoint accepts a zero divisor and serializes the non-finite result as null.",
+  "remediation_type": "CODE",
+  "diagnosis": {
+    "summary": "The calculate-average route divides by count without validating that it is finite and non-zero, so a zero divisor returns HTTP 200 with a null JSON value instead of a typed client error.",
+    "confidence": 0.99,
+    "evidence_ids": ["ecom-average-http-001"],
+    "contradictions": [],
+    "unresolved_questions": []
+  },
+  "supporting_evidence": [
+    {
+      "evidence_id": "ecom-average-http-001",
+      "source_type": "http_probe",
+      "source_locator": "http://aios-ecommerce.ap-southeast-1.elasticbeanstalk.com/calculate-average/10/0",
+      "observed_at": "2026-09-20T18:13:06Z",
+      "digest": "sha256:2988cf394c831d2debb2e670ff57de8173cd58dd6efe793ccef48e72423c2380",
+      "excerpt": "GET /calculate-average/10/0 returned HTTP 200 with {\"average\":null}; division by zero is not rejected."
+    }
+  ],
+  "acceptance_criteria": [
+    "A zero divisor returns HTTP 400 with a typed JSON error instead of HTTP 200 with a null average.",
+    "Finite non-zero inputs preserve correct numeric division, including 10 divided by 2 returning 5.",
+    "Average calculation is extracted to dependency-free logic in lib/calculate-average.js.",
+    "tests/calculate-average.test.js uses the built-in node:test runner to cover zero and non-zero divisors.",
+    "No dependency manifest, lock file, deployment workflow, or production environment is changed."
+  ],
+  "repository": {
+    "provider": "GITHUB",
+    "url": "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git",
+    "base_branch": "main",
+    "commit_sha": "ae4d89601a5b858994ec88695d8c624ebc510750"
+  },
+  "upstream_correlation_id": "demo-ecommerce-average-001",
+  "upstream_audit_refs": ["audit://demo/CASE-ECOM-AVG-001"]
+}

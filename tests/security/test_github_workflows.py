@@ -69,6 +69,7 @@ def test_main_release_runs_ci_then_image_then_agentcore_deploy() -> None:
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     deploy_secrets = cast(dict[str, object], jobs["deploy"]["secrets"])
     assert deploy_with["agent-runtime-id"] == "${{ vars.AGENTCORE_RUNTIME_ID }}"
+    assert deploy_with["github-repository"] == "MtechSE-ArchAI-Team7/buggy-ecommerce-demo"
     assert deploy_with["image-uri"] == "${{ needs.image.outputs.image-uri }}"
     assert deploy_with["image-digest"] == "${{ needs.image.outputs.image-digest }}"
     assert deploy_with["server-protocol"] == "A2A"
@@ -105,6 +106,7 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     _assert_local_agentcore_deploy(jobs["deploy"])
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     assert deploy_with["server-protocol"] == "A2A"
+    assert deploy_with["github-repository"] == "MtechSE-ArchAI-Team7/buggy-ecommerce-demo"
     assert json.loads(cast(str, deploy_with["smoke-test-json"]))["method"] == "SendMessage"
     assert not _contains_key(workflow, "environment")
 
@@ -119,6 +121,7 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     )
 
     assert "server-protocol" in inputs
+    assert cast(dict[str, object], inputs["github-repository"])["required"] is True
     assert "AGENTCORE_CURRENT_CONFIGURATION_FILE" in script
     assert ".metadataConfiguration.requireMMDSV2 == true" in script
     for field in ("environmentVariables", "lifecycleConfiguration", "metadataConfiguration", "networkConfiguration"):
@@ -127,5 +130,9 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert "update-agent-runtime" in script
     assert "invoke-agent-runtime" in script
     assert "AGENTCORE_PREVIOUS_PROTOCOL" in script
+    assert "AIOS_GITHUB_REPOSITORY: $repository" in script
+    assert 'current_repository="$(jq -r' in script
+    assert '"$current_repository" == "$GITHUB_REPOSITORY"' in script
+    assert script.count("--arg repository") == 1
     assert "create-agent-runtime" not in script
     assert "delete-agent-runtime" not in script

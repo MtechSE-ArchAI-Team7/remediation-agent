@@ -92,6 +92,7 @@ paths:
                 value:
                   schema_version: '1.0'
                   case_id: CASE-2026-0042
+                  jira_ticket_id: TICKET-111
                   issue_summary: Malformed quantity input causes an unhandled application error.
                   remediation_type: CODE
                   diagnosis:
@@ -573,6 +574,12 @@ components:
           maxLength: 200
           minLength: 1
           title: Case Id
+        jira_ticket_id:
+          type: string
+          maxLength: 64
+          minLength: 3
+          pattern: ^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$
+          title: Jira Ticket Id
         issue_summary:
           type: string
           maxLength: 10000
@@ -613,6 +620,7 @@ components:
       type: object
       required:
       - case_id
+      - jira_ticket_id
       - issue_summary
       - remediation_type
       - diagnosis
@@ -813,6 +821,144 @@ components:
       - observed_at
       - digest
       title: EvidenceRecord
+    ExplainabilityEvent:
+      properties:
+        sequence:
+          type: integer
+          minimum: 1.0
+          title: Sequence
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        stage:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Stage
+        actor_type:
+          type: string
+          enum:
+          - DETERMINISTIC
+          - MODEL_ASSISTED
+          - TOOL
+          - HUMAN
+          title: Actor Type
+        event_type:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Event Type
+        status:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Status
+        summary:
+          type: string
+          maxLength: 4000
+          title: Summary
+        policy_control_ids:
+          items:
+            type: string
+            maxLength: 200
+            minLength: 1
+          type: array
+          maxItems: 20
+          title: Policy Control Ids
+      additionalProperties: false
+      type: object
+      required:
+      - sequence
+      - timestamp
+      - stage
+      - actor_type
+      - event_type
+      - status
+      - summary
+      title: ExplainabilityEvent
+      description: One redacted, presentation-safe decision or side-effect record.
+    ExplainabilityEvidenceRef:
+      properties:
+        kind:
+          type: string
+          enum:
+          - TREE
+          - FILE
+          - SEARCH
+          title: Kind
+        locator:
+          type: string
+          maxLength: 2048
+          minLength: 1
+          title: Locator
+        digest:
+          type: string
+          minLength: 1
+          title: Digest
+        truncated:
+          type: boolean
+          title: Truncated
+          default: false
+      additionalProperties: false
+      type: object
+      required:
+      - kind
+      - locator
+      - digest
+      title: ExplainabilityEvidenceRef
+      description: Repository evidence metadata that deliberately excludes file contents.
+    ExplainabilityTraceV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        run_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Run Id
+        status:
+          $ref: '#/components/schemas/FinalStatus'
+        events:
+          items:
+            $ref: '#/components/schemas/ExplainabilityEvent'
+          type: array
+          maxItems: 200
+          title: Events
+        inspection_tool_calls:
+          items:
+            $ref: '#/components/schemas/InspectionToolCallRecord'
+          type: array
+          maxItems: 100
+          title: Inspection Tool Calls
+        evidence:
+          items:
+            $ref: '#/components/schemas/ExplainabilityEvidenceRef'
+          type: array
+          maxItems: 100
+          title: Evidence
+        model_calls:
+          items:
+            $ref: '#/components/schemas/ModelCallRecord'
+          type: array
+          maxItems: 100
+          title: Model Calls
+        validation_executions:
+          items:
+            $ref: '#/components/schemas/ValidationExecutionRecord'
+          type: array
+          maxItems: 100
+          title: Validation Executions
+      additionalProperties: false
+      type: object
+      required:
+      - run_id
+      - status
+      title: ExplainabilityTraceV1
+      description: Bounded trace for operator explanation without prompts or hidden reasoning.
     FinalStatus:
       type: string
       enum:
@@ -849,6 +995,108 @@ components:
       type: object
       title: HealthResponse
       description: Process-liveness response.
+    InspectionToolCallRecord:
+      properties:
+        call_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Call Id
+        tool_name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Tool Name
+        arguments:
+          additionalProperties: true
+          type: object
+          maxProperties: 4
+          title: Arguments
+        status:
+          $ref: '#/components/schemas/InspectionToolStatus'
+        result_digest:
+          type: string
+          minLength: 1
+          title: Result Digest
+      additionalProperties: false
+      type: object
+      required:
+      - call_id
+      - tool_name
+      - arguments
+      - status
+      - result_digest
+      title: InspectionToolCallRecord
+    InspectionToolStatus:
+      type: string
+      enum:
+      - SUCCEEDED
+      - DENIED
+      - ERROR
+      title: InspectionToolStatus
+    ModelCallRecord:
+      properties:
+        operation:
+          type: string
+          minLength: 1
+          title: Operation
+        provider:
+          type: string
+          minLength: 1
+          title: Provider
+        model:
+          type: string
+          minLength: 1
+          title: Model
+        prompt_version:
+          type: string
+          minLength: 1
+          title: Prompt Version
+        duration_ms:
+          type: integer
+          minimum: 0.0
+          title: Duration Ms
+        input_digest:
+          type: string
+          minLength: 1
+          title: Input Digest
+        output_digest:
+          type: string
+          minLength: 1
+          title: Output Digest
+        input_tokens:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Input Tokens
+        output_tokens:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Output Tokens
+        refused:
+          type: boolean
+          title: Refused
+          default: false
+        reasoning_summary:
+          anyOf:
+          - type: string
+            maxLength: 4000
+          - type: 'null'
+          title: Reasoning Summary
+      additionalProperties: false
+      type: object
+      required:
+      - operation
+      - provider
+      - model
+      - prompt_version
+      - duration_ms
+      - input_digest
+      - output_digest
+      title: ModelCallRecord
     OperationalToolAvailability:
       type: string
       enum:
@@ -1080,6 +1328,10 @@ components:
           anyOf:
           - $ref: '#/components/schemas/DownstreamDeliveryReceiptV1'
           - type: 'null'
+        explainability:
+          anyOf:
+          - $ref: '#/components/schemas/ExplainabilityTraceV1'
+          - type: 'null'
       additionalProperties: false
       type: object
       required:
@@ -1241,6 +1493,21 @@ components:
       - results
       - outcome
       title: ValidationAttempt
+    ValidationBackend:
+      type: string
+      enum:
+      - DOCKER
+      - AGENTCORE_CODE_INTERPRETER
+      - FAKE
+      title: ValidationBackend
+    ValidationCleanupStatus:
+      type: string
+      enum:
+      - SUCCEEDED
+      - FAILED
+      - NOT_APPLICABLE
+      - UNKNOWN
+      title: ValidationCleanupStatus
     ValidationError:
       properties:
         loc:
@@ -1267,6 +1534,62 @@ components:
       - msg
       - type
       title: ValidationError
+    ValidationExecutionRecord:
+      properties:
+        attempt:
+          type: integer
+          minimum: 1.0
+          title: Attempt
+        task_name:
+          type: string
+          minLength: 1
+          title: Task Name
+        backend:
+          $ref: '#/components/schemas/ValidationBackend'
+        executor_id:
+          type: string
+          minLength: 1
+          title: Executor Id
+        input_digest:
+          type: string
+          minLength: 1
+          title: Input Digest
+        session_digest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Digest
+        enforced_controls:
+          items:
+            type: string
+            maxLength: 200
+            minLength: 1
+          type: array
+          maxItems: 20
+          minItems: 1
+          title: Enforced Controls
+        cleanup_status:
+          $ref: '#/components/schemas/ValidationCleanupStatus'
+        outcome:
+          $ref: '#/components/schemas/ValidationOutcome'
+        duration_ms:
+          type: integer
+          minimum: 0.0
+          title: Duration Ms
+      additionalProperties: false
+      type: object
+      required:
+      - attempt
+      - task_name
+      - backend
+      - executor_id
+      - input_digest
+      - enforced_controls
+      - cleanup_status
+      - outcome
+      - duration_ms
+      title: ValidationExecutionRecord
+      description: Redacted proof of the deterministic boundary used for one validation task.
     ValidationOutcome:
       type: string
       enum:

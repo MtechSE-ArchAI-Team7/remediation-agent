@@ -1,0 +1,302 @@
+{
+  "catalog_version": "1.1",
+  "model_callable_tools": 4,
+  "tools": [
+    {
+      "arguments": [
+        "owner",
+        "repo",
+        "tree_sha",
+        "recursive",
+        "path_filter"
+      ],
+      "availability": "POLICY_GATED",
+      "boundary": "GitHubRemoteMcpInspectionTools",
+      "category": "INSPECTION",
+      "controls": [
+        "Exact GitHub repository and commit binding",
+        "Forbidden-path filtering and entry limits",
+        "One model tool call per inspection round"
+      ],
+      "description": "Get a bounded repository tree from GitHub at the assigned immutable commit.",
+      "effect": "READ_ONLY",
+      "execution_mode": "MODEL_MCP",
+      "operation": "get_repository_tree",
+      "tool_id": "mcp.get_repository_tree"
+    },
+    {
+      "arguments": [
+        "owner",
+        "repo",
+        "path",
+        "ref",
+        "sha",
+        "fields"
+      ],
+      "availability": "POLICY_GATED",
+      "boundary": "GitHubRemoteMcpInspectionTools",
+      "category": "INSPECTION",
+      "controls": [
+        "Secret, binary, forbidden-file, symlink, and mutable-ref denial",
+        "Per-file and aggregate context limits",
+        "Redacted typed results"
+      ],
+      "description": "Get bounded file or directory contents from GitHub at the assigned immutable commit.",
+      "effect": "READ_ONLY",
+      "execution_mode": "MODEL_MCP",
+      "operation": "get_file_contents",
+      "tool_id": "mcp.get_file_contents"
+    },
+    {
+      "arguments": [
+        "query",
+        "sort",
+        "order",
+        "fields",
+        "page",
+        "perPage"
+      ],
+      "availability": "POLICY_GATED",
+      "boundary": "GitHubRemoteMcpInspectionTools",
+      "category": "INSPECTION",
+      "controls": [
+        "Exact repository qualifier and cross-repository denial",
+        "Result, pagination, timeout, and context limits",
+        "Follow-up commit-pinned evidence required"
+      ],
+      "description": "Find candidate paths with GitHub code search; results are not commit-pinned evidence.",
+      "effect": "READ_ONLY",
+      "execution_mode": "MODEL_MCP",
+      "operation": "search_code",
+      "tool_id": "mcp.search_code"
+    },
+    {
+      "arguments": [
+        "rationale"
+      ],
+      "availability": "ALWAYS_BOUNDED",
+      "boundary": "LangChain control tool",
+      "category": "INSPECTION",
+      "controls": [
+        "No repository or mutation authority",
+        "Requires at least one successful commit-pinned MCP call",
+        "Bounded rationale schema"
+      ],
+      "description": "Signal that the adaptive inspection loop has gathered sufficient evidence.",
+      "effect": "CONTROL_ONLY",
+      "execution_mode": "MODEL_CONTROL",
+      "operation": "finish_inspection",
+      "tool_id": "inspection.finish_inspection"
+    },
+    {
+      "arguments": [],
+      "availability": "POLICY_GATED",
+      "boundary": "RepositoryWorkspacePort",
+      "category": "REPOSITORY",
+      "controls": [
+        "Repository allowlist and immutable-base verification",
+        "Workflow-generated workspace identity",
+        "Never model-callable"
+      ],
+      "description": "Create a disposable repository workspace at the immutable requested base commit.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "create_workspace",
+      "tool_id": "repository.create_workspace"
+    },
+    {
+      "arguments": [],
+      "availability": "POLICY_GATED",
+      "boundary": "RepositoryWorkspacePort",
+      "category": "REPOSITORY",
+      "controls": [
+        "Fixed Git argument arrays without a shell",
+        "Pre-apply and post-validation integrity checks",
+        "Never model-callable"
+      ],
+      "description": "Retrieve and hash the current bounded workspace diff.",
+      "effect": "READ_ONLY",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "current_diff",
+      "tool_id": "repository.current_diff"
+    },
+    {
+      "arguments": [],
+      "availability": "CONFIG_AND_POLICY_GATED",
+      "boundary": "RepositoryWorkspacePort",
+      "category": "REPOSITORY",
+      "controls": [
+        "Validated branch naming",
+        "Enabled only for configured GitHub writes",
+        "Never model-callable"
+      ],
+      "description": "Create the workflow-generated remediation branch after validation succeeds.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "create_branch",
+      "tool_id": "repository.create_branch"
+    },
+    {
+      "arguments": [],
+      "availability": "CONFIG_AND_POLICY_GATED",
+      "boundary": "RepositoryWorkspacePort",
+      "category": "REPOSITORY",
+      "controls": [
+        "Validated diff and configured Git identity",
+        "Enabled only for configured GitHub writes",
+        "Never model-callable"
+      ],
+      "description": "Commit the validated workspace diff with workflow-generated metadata.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "commit",
+      "tool_id": "repository.commit"
+    },
+    {
+      "arguments": [],
+      "availability": "CONFIG_AND_POLICY_GATED",
+      "boundary": "RepositoryWorkspacePort",
+      "category": "REPOSITORY",
+      "controls": [
+        "Application and operator-policy write gates",
+        "Exact-host credential handling and idempotent branch scope",
+        "Never model-callable and never merges"
+      ],
+      "description": "Push only the workflow-generated remediation branch to the configured repository.",
+      "effect": "OPTIONAL_REMOTE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "push",
+      "tool_id": "repository.push"
+    },
+    {
+      "arguments": [],
+      "availability": "POLICY_GATED",
+      "boundary": "SandboxExecutor",
+      "category": "SANDBOX",
+      "controls": [
+        "Parsed path, diff, file-count, and forbidden-change checks",
+        "Exact approved patch or diff scope",
+        "Never model-callable"
+      ],
+      "description": "Apply a preflighted unified patch inside the disposable workspace.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "apply_patch",
+      "tool_id": "sandbox.apply_patch"
+    },
+    {
+      "arguments": [],
+      "availability": "ALWAYS_BOUNDED",
+      "boundary": "SandboxExecutor",
+      "category": "SANDBOX",
+      "controls": [
+        "Runs only inside the assigned workspace",
+        "Clean-base proof before a revised full patch",
+        "Never model-callable"
+      ],
+      "description": "Restore the disposable workspace to its immutable base before revision.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "restore_base",
+      "tool_id": "sandbox.restore_base"
+    },
+    {
+      "arguments": [],
+      "availability": "POLICY_GATED",
+      "boundary": "SandboxExecutor",
+      "category": "SANDBOX",
+      "controls": [
+        "Trusted argv arrays without a shell",
+        "Non-root, no network, resource, timeout, and output limits",
+        "Post-validation diff integrity check"
+      ],
+      "description": "Run one operator-defined validation task in the restricted Docker sandbox.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "run_task",
+      "tool_id": "sandbox.run_task"
+    },
+    {
+      "arguments": [],
+      "availability": "ALWAYS_BOUNDED",
+      "boundary": "SandboxExecutor",
+      "category": "SANDBOX",
+      "controls": [
+        "Exact workspace identity and root containment",
+        "Cleanup attempted for every workspace-owning terminal path",
+        "Cleanup failure is surfaced in state and evidence"
+      ],
+      "description": "Destroy the assigned disposable workspace during mandatory cleanup.",
+      "effect": "DISPOSABLE_WORKSPACE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "destroy",
+      "tool_id": "sandbox.destroy"
+    },
+    {
+      "arguments": [],
+      "availability": "POLICY_GATED",
+      "boundary": "PullRequestProvider",
+      "category": "PULL_REQUEST",
+      "controls": [
+        "Runs only after deterministic validation passes",
+        "Workflow-generated title, body, branch, and idempotency key",
+        "Creates no remote state"
+      ],
+      "description": "Prepare a deterministic draft pull-request payload and metadata.",
+      "effect": "CONTROL_ONLY",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "prepare",
+      "tool_id": "pull_request.prepare"
+    },
+    {
+      "arguments": [],
+      "availability": "CONFIG_AND_POLICY_GATED",
+      "boundary": "PullRequestProvider",
+      "category": "PULL_REQUEST",
+      "controls": [
+        "Application and operator-policy write gates",
+        "Exact repository matching and idempotency key",
+        "Draft only; merge is unavailable"
+      ],
+      "description": "Create an optional draft pull request for the validated pushed branch.",
+      "effect": "OPTIONAL_REMOTE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "create_draft",
+      "tool_id": "pull_request.create_draft"
+    },
+    {
+      "arguments": [],
+      "availability": "ALWAYS_BOUNDED",
+      "boundary": "AuditSink",
+      "category": "EVIDENCE",
+      "controls": [
+        "Secret and path redaction",
+        "Stable digests, UTC timestamps, and hash chaining",
+        "Local artifact root containment"
+      ],
+      "description": "Write the redacted hash-chained JSONL audit trail for the run.",
+      "effect": "LOCAL_EVIDENCE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "write",
+      "tool_id": "audit.write"
+    },
+    {
+      "arguments": [],
+      "availability": "ALWAYS_BOUNDED",
+      "boundary": "ArtifactStore",
+      "category": "EVIDENCE",
+      "controls": [
+        "Workflow-generated file names and contents",
+        "Redaction and local artifact root containment",
+        "Failure recorded in the final handoff"
+      ],
+      "description": "Write the bounded remediation evidence and handoff artifact bundle.",
+      "effect": "LOCAL_EVIDENCE_WRITE",
+      "execution_mode": "DETERMINISTIC_WORKFLOW",
+      "operation": "write_bundle",
+      "tool_id": "artifact.write_bundle"
+    }
+  ],
+  "total_tools": 17,
+  "workflow_only_tools": 13
+}

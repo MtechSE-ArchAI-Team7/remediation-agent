@@ -8,14 +8,16 @@ The Resolution/Remediation Agent implements **17 operational tools**: **4 model-
 
 ```mermaid
 flowchart LR
-    Model["Configured model"] -->|exact allowlist| Inspect["3 read-only MCP tools"]
-    Model --> Finish["finish_inspection control"]
-    Workflow["Deterministic LangGraph workflow"] --> Host["13 typed operational tools"]
-    Inspect --> GitHub["GitHub hosted MCP server"]
-    GitHub --> Repository["Authorized GitHub repository"]
-    Host --> Workspace
-    Host -->|double gated| Remote["Optional branch and draft PR"]
-    Host --> Evidence["Redacted local evidence"]
+    Model["Configured model"] -->|exact allowlist| ModelTools["3 read-only MCP tools<br/>+ finish control"]
+    ModelTools --> Policy["Host policy boundary<br/>repository + commit + paths + limits"]
+    Policy --> GitHub["GitHub hosted MCP<br/>read-only inspection"]
+    Workflow["One LangGraph workflow"] --> Policy
+    Policy --> HostTools["13 deterministic workflow tools"]
+    HostTools --> Workspace["Disposable workspace"]
+    HostTools --> Sandbox["Docker / AgentCore Code Interpreter"]
+    HostTools --> Evidence["Redacted audit + artifacts"]
+    HostTools -->|application gate + policy gate| Remote["Optional branch + draft PR"]
+    Remote -. never .-> Merge["Merge or deploy"]
 ```
 
 Repository content cannot expand the allowlist, choose commands, call mutation tools, or grant remote-write authority. The workflow resolves policy-controlled arguments and invokes workflow-only tools deterministically.

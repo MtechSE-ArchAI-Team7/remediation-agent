@@ -7,7 +7,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel, Field
 
-from remediation_agent.domain.enums import ModelOperation
+from remediation_agent.domain.enums import ModelOperation, ValidationBackend
 from remediation_agent.domain.models import (
     ArtifactManifest,
     CleanupResult,
@@ -18,6 +18,8 @@ from remediation_agent.domain.models import (
     RemediationHandoffV1,
     RepositoryRef,
     StrictModel,
+    ValidationExecutionRecord,
+    ValidationTaskResult,
     WorkspaceRef,
 )
 from remediation_agent.policy.models import ValidationTaskConfig
@@ -123,6 +125,18 @@ class ValidationTaskRequest(StrictModel):
     workspace: WorkspaceRef
     task_name: NonEmptyStr
     task: ValidationTaskConfig
+    attempt: int = Field(default=1, ge=1)
+
+
+class SandboxExecutionProfile(StrictModel):
+    backend: ValidationBackend
+    executor_id: NonEmptyStr
+    enforced_controls: list[NonEmptyStr] = Field(min_length=1, max_length=20)
+
+
+class SandboxTaskExecution(StrictModel):
+    result: ValidationTaskResult
+    execution: ValidationExecutionRecord
 
 
 class ModelRequest(StrictModel):

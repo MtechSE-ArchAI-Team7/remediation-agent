@@ -17,6 +17,7 @@ from remediation_agent.api.a2a_contracts import (
     APPROVAL_DECISION_MEDIA_TYPE,
     APPROVAL_REQUEST_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
+    EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
@@ -27,6 +28,7 @@ from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
     DiagnosisHandoffV1,
+    ExplainabilityTraceV1,
     RemediationHandoffV1,
     RemediationRunView,
 )
@@ -52,6 +54,7 @@ class _FakeService:
             run_id=run_id,
             status=FinalStatus.AWAITING_APPROVAL,
             approval_request=_approval_request(),
+            explainability=_trace(run_id, FinalStatus.AWAITING_APPROVAL),
         )
 
     async def approve(self, run_id: str, decision: ApprovalDecisionV1) -> RemediationRunView:
@@ -60,6 +63,7 @@ class _FakeService:
             run_id=run_id,
             status=FinalStatus.DRAFT_PR_PREPARED,
             result=_result(run_id),
+            explainability=_trace(run_id, FinalStatus.DRAFT_PR_PREPARED),
         )
 
     async def get(self, run_id: str) -> RemediationRunView:
@@ -96,6 +100,10 @@ def _result(run_id: str) -> RemediationHandoffV1:
         final_status=FinalStatus.DRAFT_PR_PREPARED,
         repository=source.repository,
     )
+
+
+def _trace(run_id: str, status: FinalStatus) -> ExplainabilityTraceV1:
+    return ExplainabilityTraceV1(run_id=run_id, status=status)
 
 
 def _send(data: dict[str, object], media_type: str, *, task_id: str | None = None) -> dict[str, object]:
@@ -229,6 +237,7 @@ async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> No
             assert task_id != _SESSION_ID
             assert started_task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
             assert started_task["status"]["message"]["parts"][0]["mediaType"] == APPROVAL_REQUEST_MEDIA_TYPE
+            assert started_task["status"]["message"]["parts"][1]["mediaType"] == EXPLAINABILITY_TRACE_MEDIA_TYPE
 
             approved = await client.post(
                 "/",
@@ -246,6 +255,7 @@ async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> No
     assert service.approvals == [(task_id, _decision())]
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
     assert completed["artifacts"][0]["parts"][0]["mediaType"] == REMEDIATION_HANDOFF_MEDIA_TYPE
+    assert completed["artifacts"][0]["parts"][1]["mediaType"] == EXPLAINABILITY_TRACE_MEDIA_TYPE
     assert fetched.json()["result"]["id"] == task_id
 
 

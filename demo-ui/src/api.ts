@@ -15,7 +15,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
   });
-  const body = (await response.json()) as Record<string, unknown>;
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    throw new GatewayError("INVALID_GATEWAY_RESPONSE", response.ok ? 502 : response.status);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new GatewayError("INVALID_GATEWAY_RESPONSE", response.ok ? 502 : response.status);
+  }
+  const body = parsed as Record<string, unknown>;
   if (!response.ok) {
     const code = body.error ?? body.detail ?? `HTTP_${response.status}`;
     throw new GatewayError(String(code), response.status);

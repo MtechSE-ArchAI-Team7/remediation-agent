@@ -106,7 +106,9 @@ def test_start_translates_to_agentcore_and_preserves_response(handler: _HandlerM
     )
 
     assert response["statusCode"] == 200
-    assert _body(response)["output"]["run_id"] == _RUN_ID
+    output = _body(response)["output"]
+    assert output["run_id"] == _RUN_ID
+    assert output["failure_code"] is None
     call = fake.calls[0]
     assert call["runtimeSessionId"] == _RUN_ID
     assert call["qualifier"] == "DEFAULT"
@@ -131,6 +133,82 @@ def test_get_uses_separate_task_and_session_ids(handler: _HandlerModule) -> None
     assert json.loads(fake.calls[0]["payload"])["method"] == "GetTask"
     assert json.loads(fake.calls[0]["payload"])["params"] == {"id": _RUN_ID}
     assert fake.calls[0]["runtimeSessionId"] == _RUN_ID
+
+
+def test_checkpoint_explainability_part_is_normalized(handler: _HandlerModule) -> None:
+    envelope = _task_response(state="TASK_STATE_INPUT_REQUIRED", direct=True)
+    task = envelope["result"]
+    assert isinstance(task, dict)
+    task["status"] = {
+        "state": "TASK_STATE_INPUT_REQUIRED",
+        "message": {
+            "parts": [
+                {
+                    "mediaType": "application/vnd.aios.approval-request.v1+json",
+                    "data": {"approval_id": "approval-1"},
+                },
+                {
+                    "mediaType": "application/vnd.aios.explainability-trace.v1+json",
+                    "data": {"schema_version": "1.0", "run_id": _RUN_ID, "events": []},
+                },
+            ]
+        },
+    }
+    handler._agentcore_client = _FakeAgentCore(_upstream(envelope))
+
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    assert _body(response)["output"]["explainability"]["schema_version"] == "1.0"
+
+
+def test_rejected_task_failure_code_is_normalized(handler: _HandlerModule) -> None:
+    envelope = _task_response(state="TASK_STATE_REJECTED", direct=True)
+    task = envelope["result"]
+    assert isinstance(task, dict)
+    task["status"] = {
+        "state": "TASK_STATE_REJECTED",
+        "message": {"parts": [{"mediaType": "text/plain", "text": "INVALID_DATA_PART"}]},
+    }
+    handler._agentcore_client = _FakeAgentCore(_upstream(envelope))
+
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
+
+    output = _body(response)["output"]
+    assert output["status"] == "INVALID_REQUEST"
+    assert output["failure_code"] == "INVALID_DATA_PART"
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"mediaType": "text/plain", "text": "not bounded"},
+        {"mediaType": "text/plain", "text": "A" * 129},
+        {"mediaType": "application/json", "text": "INVALID_DATA_PART"},
+        {"mediaType": "text/plain", "data": {"code": "INVALID_DATA_PART"}},
+    ],
+)
+def test_malformed_failure_code_is_not_exposed(handler: _HandlerModule, part: dict[str, object]) -> None:
+    envelope = _task_response(state="TASK_STATE_FAILED", direct=True)
+    task = envelope["result"]
+    assert isinstance(task, dict)
+    task["status"] = {"state": "TASK_STATE_FAILED", "message": {"parts": [part]}}
+    handler._agentcore_client = _FakeAgentCore(_upstream(envelope))
+
+    response = handler.lambda_handler(
+        _event("GET", f"/api/runs/{_RUN_ID}", query={"session_id": _RUN_ID}),
+        None,
+    )
+
+    output = _body(response)["output"]
+    assert output["status"] == "INTERNAL_ERROR"
+    assert output["failure_code"] is None
 
 
 def test_approval_adds_schema_and_server_timestamp(handler: _HandlerModule) -> None:

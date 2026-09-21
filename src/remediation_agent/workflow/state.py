@@ -26,6 +26,7 @@ from remediation_agent.domain.models import (
     RiskAssessment,
     RollbackInstructions,
     ValidationAttempt,
+    ValidationExecutionRecord,
     ValidationTaskResult,
     WorkspaceRef,
 )
@@ -60,6 +61,7 @@ class RemediationState(TypedDict, total=False):
 
     selected_validation_tasks: list[str]
     current_validation_results: list[ValidationTaskResult]
+    validation_execution_records: list[ValidationExecutionRecord]
     validation_attempts: list[ValidationAttempt]
     validation_outcome: ValidationOutcome
     attempt_counter: int

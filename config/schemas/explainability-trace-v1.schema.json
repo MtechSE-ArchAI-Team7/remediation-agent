@@ -1,0 +1,445 @@
+{
+  "$defs": {
+    "ExplainabilityEvent": {
+      "additionalProperties": false,
+      "description": "One redacted, presentation-safe decision or side-effect record.",
+      "properties": {
+        "actor_type": {
+          "enum": [
+            "DETERMINISTIC",
+            "MODEL_ASSISTED",
+            "TOOL",
+            "HUMAN"
+          ],
+          "title": "Actor Type",
+          "type": "string"
+        },
+        "event_type": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Event Type",
+          "type": "string"
+        },
+        "policy_control_ids": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Policy Control Ids",
+          "type": "array"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "stage": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Stage",
+          "type": "string"
+        },
+        "status": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 4000,
+          "title": "Summary",
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp",
+        "stage",
+        "actor_type",
+        "event_type",
+        "status",
+        "summary"
+      ],
+      "title": "ExplainabilityEvent",
+      "type": "object"
+    },
+    "ExplainabilityEvidenceRef": {
+      "additionalProperties": false,
+      "description": "Repository evidence metadata that deliberately excludes file contents.",
+      "properties": {
+        "digest": {
+          "minLength": 1,
+          "title": "Digest",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "TREE",
+            "FILE",
+            "SEARCH"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Locator",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "locator",
+        "digest"
+      ],
+      "title": "ExplainabilityEvidenceRef",
+      "type": "object"
+    },
+    "FinalStatus": {
+      "enum": [
+        "PENDING",
+        "AWAITING_APPROVAL",
+        "INVALID_REQUEST",
+        "UNSUPPORTED_REMEDIATION_TYPE",
+        "NOT_IMPLEMENTED",
+        "HUMAN_ACTION_REQUIRED",
+        "UNSAFE_REMEDIATION",
+        "VALIDATION_FAILED",
+        "DRAFT_PR_PREPARED",
+        "DRAFT_PR_CREATED",
+        "INTERNAL_ERROR",
+        "CLEANUP_FAILED"
+      ],
+      "title": "FinalStatus",
+      "type": "string"
+    },
+    "InspectionToolCallRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "maxProperties": 4,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "call_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Call Id",
+          "type": "string"
+        },
+        "result_digest": {
+          "minLength": 1,
+          "title": "Result Digest",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/InspectionToolStatus"
+        },
+        "tool_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "call_id",
+        "tool_name",
+        "arguments",
+        "status",
+        "result_digest"
+      ],
+      "title": "InspectionToolCallRecord",
+      "type": "object"
+    },
+    "InspectionToolStatus": {
+      "enum": [
+        "SUCCEEDED",
+        "DENIED",
+        "ERROR"
+      ],
+      "title": "InspectionToolStatus",
+      "type": "string"
+    },
+    "ModelCallRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "input_digest": {
+          "minLength": 1,
+          "title": "Input Digest",
+          "type": "string"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "operation": {
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "output_digest": {
+          "minLength": 1,
+          "title": "Output Digest",
+          "type": "string"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "prompt_version": {
+          "minLength": 1,
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "reasoning_summary": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reasoning Summary"
+        },
+        "refused": {
+          "default": false,
+          "title": "Refused",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation",
+        "provider",
+        "model",
+        "prompt_version",
+        "duration_ms",
+        "input_digest",
+        "output_digest"
+      ],
+      "title": "ModelCallRecord",
+      "type": "object"
+    },
+    "ValidationBackend": {
+      "enum": [
+        "DOCKER",
+        "AGENTCORE_CODE_INTERPRETER",
+        "FAKE"
+      ],
+      "title": "ValidationBackend",
+      "type": "string"
+    },
+    "ValidationCleanupStatus": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "NOT_APPLICABLE",
+        "UNKNOWN"
+      ],
+      "title": "ValidationCleanupStatus",
+      "type": "string"
+    },
+    "ValidationExecutionRecord": {
+      "additionalProperties": false,
+      "description": "Redacted proof of the deterministic boundary used for one validation task.",
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "backend": {
+          "$ref": "#/$defs/ValidationBackend"
+        },
+        "cleanup_status": {
+          "$ref": "#/$defs/ValidationCleanupStatus"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "enforced_controls": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Enforced Controls",
+          "type": "array"
+        },
+        "executor_id": {
+          "minLength": 1,
+          "title": "Executor Id",
+          "type": "string"
+        },
+        "input_digest": {
+          "minLength": 1,
+          "title": "Input Digest",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ValidationOutcome"
+        },
+        "session_digest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Digest"
+        },
+        "task_name": {
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempt",
+        "task_name",
+        "backend",
+        "executor_id",
+        "input_digest",
+        "enforced_controls",
+        "cleanup_status",
+        "outcome",
+        "duration_ms"
+      ],
+      "title": "ValidationExecutionRecord",
+      "type": "object"
+    },
+    "ValidationOutcome": {
+      "enum": [
+        "NOT_RUN",
+        "PASSED",
+        "FAILED",
+        "ERROR",
+        "TIMED_OUT"
+      ],
+      "title": "ValidationOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Bounded trace for operator explanation without prompts or hidden reasoning.",
+  "properties": {
+    "events": {
+      "items": {
+        "$ref": "#/$defs/ExplainabilityEvent"
+      },
+      "maxItems": 200,
+      "title": "Events",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/ExplainabilityEvidenceRef"
+      },
+      "maxItems": 100,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "inspection_tool_calls": {
+      "items": {
+        "$ref": "#/$defs/InspectionToolCallRecord"
+      },
+      "maxItems": 100,
+      "title": "Inspection Tool Calls",
+      "type": "array"
+    },
+    "model_calls": {
+      "items": {
+        "$ref": "#/$defs/ModelCallRecord"
+      },
+      "maxItems": 100,
+      "title": "Model Calls",
+      "type": "array"
+    },
+    "run_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/FinalStatus"
+    },
+    "validation_executions": {
+      "items": {
+        "$ref": "#/$defs/ValidationExecutionRecord"
+      },
+      "maxItems": 100,
+      "title": "Validation Executions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "status"
+  ],
+  "title": "ExplainabilityTraceV1",
+  "type": "object"
+}

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Request, status
-from pydantic import Field
+from pydantic import Field, SecretStr
 
 from remediation_agent.adapters.a2a_delivery import AgentCoreA2ADelivery
 from remediation_agent.adapters.agentcore import (
@@ -133,6 +135,7 @@ def create_agentcore_app(
 
         settings = Settings()  # type: ignore[call-arg]
         _validate_agentcore_provider(settings)
+        _validate_workspace_root(settings.workspace_root)
         region_name = cast(str, settings.aws_region)
         memory_id, secret_arn, artifact_bucket = settings.require_agentcore_configuration()
         policy_config = load_policy(settings.policy_file)
@@ -142,66 +145,61 @@ def create_agentcore_app(
             region_name=region_name,
         ).load()
         github_token = runtime_secret.github_token.get_secret_value()
-        openai_api_key = None
-        if settings.llm_provider == "openai":
-            if settings.openai_secret_arn is None:
-                raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
-            openai_secret = await SecretsManagerOpenAISecretProvider(
-                settings.openai_secret_arn,
-                region_name=region_name,
-            ).load()
-            openai_api_key = openai_secret.OPENAI_APIKEY
+        openai_api_key = await _load_agentcore_openai_api_key(settings, region_name)
         structured_model = build_structured_model(
             settings,
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
             openai_api_key=openai_api_key,
         )
-        credential_provider = GitHubAskpassCredentialProvider(github_token)
-        repository = LocalGitRepository(
-            settings.workspace_root,
-            author_name=settings.git_author_name,
-            author_email=settings.git_author_email,
-            credential_provider=credential_provider,
-        )
-        nodes = WorkflowNodes(
-            policy=policy,
-            model=structured_model,
-            repository=repository,
-            inspection_tools=GitHubRemoteMcpInspectionTools(github_token, policy),
-            sandbox=AgentCoreCodeInterpreterSandbox(
+        try:
+            credential_provider = GitHubAskpassCredentialProvider(github_token)
+            repository = LocalGitRepository(
                 settings.workspace_root,
+                author_name=settings.git_author_name,
+                author_email=settings.git_author_email,
+                credential_provider=credential_provider,
+            )
+            nodes = WorkflowNodes(
+                policy=policy,
+                model=structured_model,
+                repository=repository,
+                inspection_tools=GitHubRemoteMcpInspectionTools(github_token, policy),
+                sandbox=AgentCoreCodeInterpreterSandbox(
+                    settings.workspace_root,
+                    region_name=region_name,
+                    code_interpreter_identifier=settings.code_interpreter_identifier,
+                    validation_bundle=settings.code_interpreter_bundle,
+                ),
+                pr_provider=DraftPullRequestProvider(
+                    token=github_token,
+                    writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
+                ),
+                artifact_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
+                audit_sink=S3AuditSink(artifact_bucket, region_name=region_name),
+                prompt_version=settings.prompt_version,
+                github_writes_enabled=settings.github_writes_enabled,
+                github_repository=settings.github_repository,
+            )
+            checkpointer = agentcore_memory_checkpointer(
+                memory_id,
+                runtime_secret.checkpoint_encryption_key.get_secret_value(),
                 region_name=region_name,
-                code_interpreter_identifier=settings.code_interpreter_identifier,
-                validation_bundle=settings.code_interpreter_bundle,
-            ),
-            pr_provider=DraftPullRequestProvider(
-                token=github_token,
-                writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
-            ),
-            artifact_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
-            audit_sink=S3AuditSink(artifact_bucket, region_name=region_name),
-            prompt_version=settings.prompt_version,
-            github_writes_enabled=settings.github_writes_enabled,
-            github_repository=settings.github_repository,
-        )
-        checkpointer = agentcore_memory_checkpointer(
-            memory_id,
-            runtime_secret.checkpoint_encryption_key.get_secret_value(),
-            region_name=region_name,
-        )
-        application.state.structured_model = structured_model
-        application.state.probe_provider = settings.llm_provider
-        application.state.remediation_service = RemediationService(
-            build_graph(nodes, checkpointer),
-            max_active_runs=policy_config.limits.max_active_runs,
-            actor_id=_ACTOR_ID,
-            invocation_timeout_seconds=settings.invocation_timeout_seconds,
-            workspace_recovery=AgentCoreWorkspaceRecovery(repository),
-            handoff_delivery=_handoff_delivery(settings),
-            delivery_audit_sink=nodes.audit_sink,
-        )
-        yield
+            )
+            application.state.structured_model = structured_model
+            application.state.probe_provider = settings.llm_provider
+            application.state.remediation_service = RemediationService(
+                build_graph(nodes, checkpointer),
+                max_active_runs=policy_config.limits.max_active_runs,
+                actor_id=_ACTOR_ID,
+                invocation_timeout_seconds=settings.invocation_timeout_seconds,
+                workspace_recovery=AgentCoreWorkspaceRecovery(repository),
+                handoff_delivery=_handoff_delivery(settings),
+                delivery_audit_sink=nodes.audit_sink,
+            )
+            yield
+        finally:
+            await structured_model.aclose()
 
     application = FastAPI(
         title="AIOS Resolution/Remediation Agent on AgentCore",
@@ -324,10 +322,42 @@ def _validate_session_id(value: str) -> str:
 def _validate_agentcore_provider(settings: Settings) -> None:
     if settings.llm_provider not in {"bedrock", "openai"} or settings.aws_region is None:
         raise ValueError("AgentCore deployment requires the Bedrock or OpenAI provider and AWS Region")
-    if settings.llm_provider == "openai" and settings.openai_api_key is not None:
-        raise ValueError("AgentCore OpenAI credentials must be loaded from Secrets Manager")
-    if settings.llm_provider == "openai" and settings.openai_secret_arn is None:
+    if settings.llm_provider == "openai" and settings.openai_auth_mode == "api_key":
+        if settings.openai_api_key is not None:
+            raise ValueError("AgentCore OpenAI credentials must be loaded from Secrets Manager")
+        if settings.openai_secret_arn is None:
+            raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
+
+
+def _validate_workspace_root(workspace_root: Path) -> None:
+    """Fail startup before model work when managed session storage is unavailable."""
+
+    probe: Path | None = None
+    try:
+        workspace_root.mkdir(parents=True, exist_ok=True)
+        probe = Path(tempfile.mkdtemp(prefix=".aios-write-probe-", dir=workspace_root))
+        probe.rmdir()
+    except OSError as exc:
+        if probe is not None and probe.is_dir():
+            try:
+                probe.rmdir()
+            except OSError:
+                pass
+        raise RuntimeError("WORKSPACE_ROOT_UNAVAILABLE") from exc
+
+
+async def _load_agentcore_openai_api_key(settings: Settings, region_name: str) -> SecretStr | None:
+    """Load the direct-mode key only; gateway mode relies solely on the AWS credential chain."""
+
+    if settings.llm_provider != "openai" or settings.openai_auth_mode != "api_key":
+        return None
+    if settings.openai_secret_arn is None:
         raise ValueError("AIOS_OPENAI_SECRET_ARN is required for AgentCore OpenAI")
+    openai_secret = await SecretsManagerOpenAISecretProvider(
+        settings.openai_secret_arn,
+        region_name=region_name,
+    ).load()
+    return openai_secret.OPENAI_APIKEY
 
 
 def _handoff_delivery(settings: Settings) -> AgentCoreA2ADelivery | None:

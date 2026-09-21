@@ -20,11 +20,13 @@ from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
 _SITE_ROOT = Path(__file__).with_name("site")
 _RUN_PATH = re.compile(r"^/api/runs/([^/]+)$")
 _APPROVAL_PATH = re.compile(r"^/api/runs/([^/]+)/approval$")
+_FAILURE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _MAX_AGENTCORE_RESPONSE_BYTES = 6_000_000
 _DIAGNOSIS_MEDIA_TYPE = "application/vnd.aios.diagnosis-handoff.v1+json"
 _APPROVAL_MEDIA_TYPE = "application/vnd.aios.approval-decision.v1+json"
 _APPROVAL_REQUEST_MEDIA_TYPE = "application/vnd.aios.approval-request.v1+json"
 _HANDOFF_MEDIA_TYPE = "application/vnd.aios.remediation-handoff.v1+json"
+_EXPLAINABILITY_MEDIA_TYPE = "application/vnd.aios.explainability-trace.v1+json"
 _DELIVERY_MEDIA_TYPE = "application/vnd.aios.delivery-receipt.v1+json"
 _PROBE_REQUEST_MEDIA_TYPE = "application/vnd.aios.provider-probe-request.v1+json"
 _PROBE_RESULT_MEDIA_TYPE = "application/vnd.aios.provider-probe-result.v1+json"
@@ -255,8 +257,14 @@ def _normalize_run(envelope: dict[str, Any], session_id: str) -> dict[str, Any] 
     status_record = task.get("status")
     state = status_record.get("state") if isinstance(status_record, dict) else None
     approval = None
+    explainability = None
+    failure_code = None
     if isinstance(status_record, dict) and isinstance(status_record.get("message"), dict):
-        approval = _data_part(status_record["message"].get("parts"), _APPROVAL_REQUEST_MEDIA_TYPE)
+        status_parts = status_record["message"].get("parts")
+        approval = _data_part(status_parts, _APPROVAL_REQUEST_MEDIA_TYPE)
+        explainability = _data_part(status_parts, _EXPLAINABILITY_MEDIA_TYPE)
+        if state in {"TASK_STATE_REJECTED", "TASK_STATE_FAILED"}:
+            failure_code = _failure_code(status_parts)
     result = None
     delivery = None
     artifacts = task.get("artifacts", [])
@@ -266,6 +274,7 @@ def _normalize_run(envelope: dict[str, Any], session_id: str) -> dict[str, Any] 
                 continue
             result = result or _data_part(artifact.get("parts"), _HANDOFF_MEDIA_TYPE)
             delivery = delivery or _data_part(artifact.get("parts"), _DELIVERY_MEDIA_TYPE)
+            explainability = explainability or _data_part(artifact.get("parts"), _EXPLAINABILITY_MEDIA_TYPE)
     if isinstance(result, dict) and isinstance(result.get("final_status"), str):
         status = result["final_status"]
     else:
@@ -283,9 +292,11 @@ def _normalize_run(envelope: dict[str, Any], session_id: str) -> dict[str, Any] 
         "task_id": task_id,
         "session_id": session_id,
         "status": status,
+        "failure_code": failure_code,
         "approval_request": approval,
         "result": result,
         "downstream_delivery": delivery,
+        "explainability": explainability,
     }
 
 
@@ -295,6 +306,18 @@ def _data_part(parts: object, media_type: str) -> dict[str, Any] | None:
     for part in parts:
         if isinstance(part, dict) and part.get("mediaType") == media_type and isinstance(part.get("data"), dict):
             return part["data"]
+    return None
+
+
+def _failure_code(parts: object) -> str | None:
+    if not isinstance(parts, list):
+        return None
+    for part in parts:
+        if not isinstance(part, dict) or part.get("mediaType") != "text/plain":
+            continue
+        value = part.get("text")
+        if isinstance(value, str) and _FAILURE_CODE.fullmatch(value):
+            return value
     return None
 
 

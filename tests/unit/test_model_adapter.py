@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool
@@ -20,6 +21,7 @@ from remediation_agent.ports.models import ModelRequest
 from remediation_agent.tools import finish_inspection
 
 _OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
+_GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
 
 
 class _Runnable:
@@ -78,9 +80,52 @@ async def test_schema_failure_receives_one_bounded_retry() -> None:
     assert generation.record.input_digest.startswith("sha256:")
 
 
+async def test_provider_reasoning_summary_is_redacted_and_recorded() -> None:
+    response = AIMessage(
+        content=[
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Inspect the bounded target; token=do-not-persist"}],
+            },
+            {"type": "text", "text": "done"},
+        ]
+    )
+    model = ProviderStructuredModel(
+        _ChatModel(
+            [
+                {
+                    "parsed": InspectionPlan(
+                        paths_to_read=["src/app.py"],
+                        search_queries=[],
+                        rationale="Evidence is sufficient.",
+                    ),
+                    "raw": response,
+                    "parsing_error": None,
+                }
+            ]
+        ),
+        provider="openai",
+        model="gpt-5.6-terra",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PLANNING,
+            prompt_version="test-v1",
+            system_instruction="Return a plan.",
+            payload={},
+        ),
+        InspectionPlan,
+    )
+
+    assert generation.record.reasoning_summary == "Inspect the bounded target; [REDACTED]"
+
+
 async def test_malformed_unified_diff_receives_one_bounded_format_retry() -> None:
-    malformed = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1,2 +1,2 @@\n-old\n+new\n"
-    valid = "--- a/src/orders.py\n+++ b/src/orders.py\n@@ -1 +1 @@\n-old\n+new\n"
+    malformed = "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\nold\n+new\n"
+    valid = "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\n-old\n+new\n"
     chat_model = _ChatModel(
         [
             {"unified_diff": malformed, "rationale": "First attempt."},
@@ -114,8 +159,180 @@ async def test_malformed_unified_diff_receives_one_bounded_format_retry() -> Non
     assert isinstance(retry_messages, list)
     assert len(first_messages) == 2
     assert len(retry_messages) == 3
-    assert "recount every old and new hunk line exactly" in retry_messages[-1][1]
+    assert "Trusted patch-format retry 1" in retry_messages[-1][1]
+    assert "HUNK_LINE_MISSING_PREFIX" in retry_messages[-1][1]
+    assert "recount every source and target line exactly" in retry_messages[-1][1]
     assert malformed not in str(retry_messages)
+
+
+async def test_each_malformed_patch_retry_receives_distinct_bounded_feedback() -> None:
+    malformed = "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\nold\n+new\n"
+    valid = "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\n-old\n+new\n"
+    chat_model = _ChatModel(
+        [
+            {"unified_diff": malformed, "rationale": "First attempt."},
+            {"unified_diff": malformed, "rationale": "Second attempt."},
+            {"unified_diff": valid, "rationale": "Minimal complete patch."},
+        ]
+    )
+    model = ProviderStructuredModel(
+        chat_model,
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=2,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.REVISION,
+            prompt_version="test-v2",
+            system_instruction="Return a complete replacement patch.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == valid
+    assert len(chat_model.inputs) == 3
+    second_messages = chat_model.inputs[1]
+    third_messages = chat_model.inputs[2]
+    assert isinstance(second_messages, list)
+    assert isinstance(third_messages, list)
+    assert "Trusted patch-format retry 1" in second_messages[-1][1]
+    assert "Trusted patch-format retry 2" in third_messages[-1][1]
+    assert malformed not in str(second_messages)
+    assert malformed not in str(third_messages)
+
+
+async def test_patch_transport_normalization_accepts_outer_fence_and_crlf() -> None:
+    fenced = "\r\n```diff\r\n--- a/server.js\r\n+++ b/server.js\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n```\r\n\r\n"
+    model = ProviderStructuredModel(
+        _ChatModel([{"unified_diff": fenced, "rationale": "Bounded fix."}]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PATCH,
+            prompt_version="test-v2",
+            system_instruction="Return an exact unified diff.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\n-old\n+new\n"
+
+
+async def test_patch_transport_normalization_recounts_hunk_metadata() -> None:
+    fenced_malformed = "```patch\n--- a/server.js\n+++ b/server.js\n@@ -1,2 +1,2 @@\n-old\n+new\n```\n"
+    model = ProviderStructuredModel(
+        _ChatModel([{"unified_diff": fenced_malformed, "rationale": "Still malformed."}]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PATCH,
+            prompt_version="test-v2",
+            system_instruction="Return an exact unified diff.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\n-old\n+new\n"
+
+
+async def test_patch_transport_normalization_does_not_repair_invalid_body_lines() -> None:
+    malformed = "--- a/server.js\n+++ b/server.js\n@@ -1 +1 @@\nold\n+new\n"
+    model = ProviderStructuredModel(
+        _ChatModel([{"unified_diff": malformed, "rationale": "Malformed body."}]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    with pytest.raises(RuntimeError, match="HUNK_LINE_MISSING_PREFIX"):
+        await model.generate(
+            ModelRequest(
+                operation=ModelOperation.PATCH,
+                prompt_version="test-v2",
+                system_instruction="Return an exact unified diff.",
+                payload={},
+            ),
+            PatchCandidate,
+        )
+
+
+async def test_patch_transport_normalization_adds_missing_new_file_metadata() -> None:
+    incomplete_git_patch = (
+        "diff --git a/lib/calculate-average.js b/lib/calculate-average.js\n"
+        "--- /dev/null\n"
+        "+++ b/lib/calculate-average.js\n"
+        "@@ -0,0 +1 @@\n"
+        "+module.exports = {};\n"
+    )
+    model = ProviderStructuredModel(
+        _ChatModel([{"unified_diff": incomplete_git_patch, "rationale": "Add helper."}]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PATCH,
+            prompt_version="test-v2",
+            system_instruction="Return an exact unified diff.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == incomplete_git_patch.replace(
+        "--- /dev/null\n", "new file mode 100644\n--- /dev/null\n"
+    )
+
+
+async def test_patch_transport_normalization_preserves_existing_file_metadata() -> None:
+    complete_git_patch = (
+        "diff --git a/lib/calculate-average.js b/lib/calculate-average.js\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/lib/calculate-average.js\n"
+        "@@ -0,0 +1 @@\n"
+        "+module.exports = {};\n"
+    )
+    model = ProviderStructuredModel(
+        _ChatModel([{"unified_diff": complete_git_patch, "rationale": "Existing metadata."}]),
+        provider="fake-chat",
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PATCH,
+            prompt_version="test-v2",
+            system_instruction="Return an exact unified diff.",
+            payload={},
+        ),
+        PatchCandidate,
+    )
+
+    assert generation.value.unified_diff == complete_git_patch
+    assert generation.value.unified_diff.count("new file mode ") == 1
 
 
 async def test_tool_turn_binds_tools_and_normalizes_call_metadata() -> None:
@@ -329,6 +546,101 @@ def test_gpt_5_6_terra_uses_private_responses_configuration(
     assert captured["max_completion_tokens"] == 4096
     assert captured["use_responses_api"] is True
     assert captured["store"] is False
-    assert captured["reasoning_effort"] == "medium"
+    assert captured["reasoning"] == {"effort": "medium", "summary": "auto"}
+    assert captured["output_version"] == "responses/v1"
     assert "temperature" not in captured
     assert captured["api_key"] == SecretStr("sk-hosted-secret")
+
+
+async def test_qualified_gpt_5_6_gateway_model_retains_responses_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import langchain_openai
+
+    captured: dict[str, object] = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
+            _ = schema, include_raw
+            return _Runnable(deque())
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeOpenAI)
+    settings = Settings(
+        policy_file=Path("config/policies/reference.json"),
+        llm_provider="openai",
+        llm_model="kei-openai-target/gpt-5.6-terra",
+        aws_region="ap-southeast-1",
+        openai_auth_mode="aws_iam_gateway",
+        openai_gateway_arn=_GATEWAY_ARN,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    adapter = build_structured_model(settings, max_output_tokens=4096, max_format_retries=2)
+    sync_client = captured["http_client"]
+    async_client = captured["http_async_client"]
+    assert isinstance(sync_client, httpx.Client)
+    assert isinstance(async_client, httpx.AsyncClient)
+    try:
+        assert adapter.provider == "openai"
+        assert captured["model"] == "kei-openai-target/gpt-5.6-terra"
+        assert captured["max_completion_tokens"] == 4096
+        assert captured["use_responses_api"] is True
+        assert captured["store"] is False
+        assert captured["reasoning"] == {"effort": "medium", "summary": "auto"}
+        assert captured["output_version"] == "responses/v1"
+        assert "temperature" not in captured
+        assert captured["base_url"] == (
+            "https://llm-gateway-with-inbound-auth-u8utldecju.gateway.bedrock-agentcore."
+            "ap-southeast-1.amazonaws.com/inference/v1"
+        )
+        assert sync_client.follow_redirects is False
+        assert async_client.follow_redirects is False
+    finally:
+        await adapter.aclose()
+
+    assert sync_client.is_closed
+    assert async_client.is_closed
+
+
+async def test_application_startup_failure_closes_owned_gateway_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    app_module = importlib.import_module("remediation_agent.api.app")
+    sync_client = httpx.Client()
+    async_client = httpx.AsyncClient()
+    adapter = ProviderStructuredModel(
+        _ChatModel([]),
+        provider="openai",
+        model="kei-openai-target/gpt-5.6-terra",
+        timeout_seconds=1,
+        retries=0,
+        http_client=sync_client,
+        http_async_client=async_client,
+    )
+    settings = Settings.model_validate(
+        {
+            "policy_file": Path("config/policies/reference.json"),
+            "llm_provider": "openai",
+            "llm_model": "gpt-5.6-terra",
+            "OPENAI_API_KEY": "sk-test",
+            "postgres_dsn": "postgresql://test.invalid/db",
+            "checkpoint_encryption_key": "a" * 32,
+            "github_token": None,
+            "github_writes_enabled": False,
+        }
+    )
+    monkeypatch.setattr(app_module, "Settings", lambda: settings)
+    monkeypatch.setattr(app_module, "build_structured_model", lambda *_args, **_kwargs: adapter)
+    application = app_module.create_app()
+
+    with pytest.raises(ValueError, match="hosted GitHub MCP inspection"):
+        async with application.router.lifespan_context(application):
+            pass
+
+    assert sync_client.is_closed
+    assert async_client.is_closed

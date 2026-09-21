@@ -37,6 +37,7 @@ jobs:
     with:
       aws-region: ap-southeast-1
       agent-runtime-id: ${{ vars.AGENTCORE_RUNTIME_ID }}
+      github-repository: MtechSE-ArchAI-Team7/buggy-ecommerce-demo
       image-uri: ${{ needs.image.outputs.image-uri }}
       image-digest: ${{ needs.image.outputs.image-digest }}
       server-protocol: A2A

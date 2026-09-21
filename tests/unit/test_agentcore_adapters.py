@@ -173,7 +173,7 @@ async def test_code_interpreter_runs_fixed_python_runner_and_always_stops(tmp_pa
         retryable=False,
     )
 
-    result = await sandbox.run_task(
+    execution = await sandbox.run_task(
         ValidationTaskRequest(
             workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
             task_name="unit_tests",
@@ -181,8 +181,12 @@ async def test_code_interpreter_runs_fixed_python_runner_and_always_stops(tmp_pa
         )
     )
 
-    assert result.outcome is ValidationOutcome.PASSED
-    assert result.stdout == "one passed\n"
+    assert execution.result.outcome is ValidationOutcome.PASSED
+    assert execution.result.stdout == "one passed\n"
+    assert execution.execution.backend == "AGENTCORE_CODE_INTERPRETER"
+    assert execution.execution.cleanup_status == "SUCCEEDED"
+    assert execution.execution.session_digest is not None
+    assert "ci-session" not in execution.execution.model_dump_json()
     assert [item["name"] for item in fake.invocations] == ["writeFiles", "executeCode"]
     upload_arguments = cast(dict[str, object], fake.invocations[0]["arguments"])
     upload_content = cast(list[dict[str, object]], upload_arguments["content"])
@@ -225,17 +229,98 @@ async def test_code_interpreter_redacts_unexpected_cloud_failure_and_stops(tmp_p
         retryable=False,
     )
 
-    with pytest.raises(SandboxError, match="UnexpectedCloudFailure") as failure:
-        await sandbox.run_task(
-            ValidationTaskRequest(
-                workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
-                task_name="unit_tests",
-                task=task,
-            )
+    execution = await sandbox.run_task(
+        ValidationTaskRequest(
+            workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
+            task_name="unit_tests",
+            task=task,
         )
+    )
 
-    assert "do-not-expose" not in str(failure.value)
+    assert execution.result.outcome is ValidationOutcome.ERROR
+    assert execution.execution.cleanup_status == "SUCCEEDED"
+    assert "UnexpectedCloudFailure" in execution.result.stderr
+    assert "do-not-expose" not in execution.model_dump_json()
     assert fake.stopped == ["ci-session"]
+
+
+async def test_code_interpreter_records_startup_failure_without_a_session_digest(tmp_path: Path) -> None:
+    class StartupFailingCodeInterpreter(_FakeCodeInterpreter):
+        def start_code_interpreter_session(self, **kwargs: object) -> Mapping[str, object]:
+            raise RuntimeError("credential=do-not-expose")
+
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "run-1"
+    workspace.mkdir(parents=True)
+    (workspace / "server.js").write_text("const value = 1;\n", encoding="utf-8")
+    bundle = tmp_path / "vendor.tar.gz"
+    with tarfile.open(bundle, "w:gz"):
+        pass
+    sandbox = AgentCoreCodeInterpreterSandbox(
+        workspace_root,
+        region_name="ap-southeast-1",
+        validation_bundle=bundle,
+        client=StartupFailingCodeInterpreter(),
+    )
+
+    execution = await sandbox.run_task(
+        ValidationTaskRequest(
+            workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
+            task_name="javascript_syntax",
+            task=ValidationTaskConfig(
+                argv=["node", "--check", "server.js"],
+                cwd=".",
+                environment={},
+                timeout_seconds=30,
+                output_limit_bytes=4096,
+                retryable=False,
+            ),
+        )
+    )
+
+    assert execution.result.outcome is ValidationOutcome.ERROR
+    assert execution.execution.cleanup_status == "NOT_APPLICABLE"
+    assert execution.execution.session_digest is None
+    assert "do-not-expose" not in execution.model_dump_json()
+
+
+async def test_code_interpreter_records_cleanup_failure_without_exposing_session(tmp_path: Path) -> None:
+    class CleanupFailingCodeInterpreter(_FakeCodeInterpreter):
+        def stop_code_interpreter_session(self, **kwargs: object) -> Mapping[str, object]:
+            raise RuntimeError("raw-session-ci-session")
+
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "run-1"
+    workspace.mkdir(parents=True)
+    (workspace / "server.js").write_text("const value = 1;\n", encoding="utf-8")
+    bundle = tmp_path / "vendor.tar.gz"
+    with tarfile.open(bundle, "w:gz"):
+        pass
+    sandbox = AgentCoreCodeInterpreterSandbox(
+        workspace_root,
+        region_name="ap-southeast-1",
+        validation_bundle=bundle,
+        client=CleanupFailingCodeInterpreter(),
+    )
+
+    execution = await sandbox.run_task(
+        ValidationTaskRequest(
+            workspace=WorkspaceRef(workspace_id="run-1", path=str(workspace), base_commit="a" * 40),
+            task_name="javascript_syntax",
+            task=ValidationTaskConfig(
+                argv=["node", "--check", "server.js"],
+                cwd=".",
+                environment={},
+                timeout_seconds=30,
+                output_limit_bytes=4096,
+                retryable=False,
+            ),
+        )
+    )
+
+    assert execution.result.outcome is ValidationOutcome.ERROR
+    assert execution.execution.cleanup_status == "FAILED"
+    assert "ci-session" not in execution.execution.model_dump_json()
 
 
 async def test_code_interpreter_rejects_workspace_symlinks_before_cloud_call(tmp_path: Path) -> None:

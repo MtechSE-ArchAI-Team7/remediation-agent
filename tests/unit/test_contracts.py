@@ -15,6 +15,7 @@ from remediation_agent.domain.models import (
     ApprovalRequest,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
+    ExplainabilityTraceV1,
     RemediationHandoffV1,
 )
 from remediation_agent.policy.loader import PolicyLoadError, load_policy
@@ -22,6 +23,7 @@ from remediation_agent.policy.models import PolicyConfig
 from tests.conftest import diagnosis_handoff
 
 _OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
+_GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
 
 
 def test_diagnosis_handoff_is_strict_and_versioned() -> None:
@@ -29,6 +31,40 @@ def test_diagnosis_handoff_is_strict_and_versioned() -> None:
     payload["unexpected"] = True
     with pytest.raises(ValidationError, match="unexpected"):
         DiagnosisHandoffV1.model_validate(payload)
+
+
+def test_diagnosis_handoff_requires_and_normalizes_jira_ticket_id() -> None:
+    payload = diagnosis_handoff().model_dump(mode="json")
+    payload["jira_ticket_id"] = "ticket-111"
+    assert DiagnosisHandoffV1.model_validate(payload).jira_ticket_id == "TICKET-111"
+
+    del payload["jira_ticket_id"]
+    with pytest.raises(ValidationError, match="jira_ticket_id"):
+        DiagnosisHandoffV1.model_validate(payload)
+
+
+@pytest.mark.parametrize("jira_ticket_id", ["TICKET", "-111", "TICKET-0", "TICKET-01", "TICKET 111"])
+def test_diagnosis_handoff_rejects_invalid_jira_ticket_id(jira_ticket_id: str) -> None:
+    payload = diagnosis_handoff().model_dump(mode="json")
+    payload["jira_ticket_id"] = jira_ticket_id
+    with pytest.raises(ValidationError, match="jira_ticket_id"):
+        DiagnosisHandoffV1.model_validate(payload)
+
+
+def test_ecommerce_demo_handoff_is_pinned_to_the_deployed_commit() -> None:
+    path = Path(__file__).parents[2] / "demo-ui" / "src" / "scenarios" / "division-by-zero.json"
+
+    handoff = DiagnosisHandoffV1.model_validate_json(path.read_text(encoding="utf-8"))
+
+    assert handoff.case_id == "CASE-ECOM-AVG-001"
+    assert handoff.jira_ticket_id == "TICKET-111"
+    assert handoff.repository.url == "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
+    assert handoff.repository.base_branch == "main"
+    assert handoff.repository.commit_sha == "ae4d89601a5b858994ec88695d8c624ebc510750"
+    assert handoff.supporting_evidence[0].source_locator == (
+        "http://aios-ecommerce.ap-southeast-1.elasticbeanstalk.com/calculate-average/10/0"
+    )
+    assert "tests/calculate-average.test.js" in handoff.acceptance_criteria[3]
 
 
 def test_diagnosis_rejects_unknown_evidence_reference() -> None:
@@ -52,6 +88,7 @@ def test_committed_json_schemas_match_models() -> None:
         "approval-decision-v1.schema.json": ApprovalDecisionV1.model_json_schema(),
         "approval-request-v1.schema.json": ApprovalRequest.model_json_schema(),
         "delivery-receipt-v1.schema.json": DownstreamDeliveryReceiptV1.model_json_schema(),
+        "explainability-trace-v1.schema.json": ExplainabilityTraceV1.model_json_schema(),
         "provider-probe-request-v1.schema.json": ProviderProbeRequestV1.model_json_schema(),
         "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),
@@ -118,6 +155,58 @@ def test_openai_settings_reject_missing_local_key_and_hosted_secret(tmp_path: Pa
             llm_model="gpt-5.6-terra",
             _env_file=None,
         )  # type: ignore[call-arg]
+
+
+def test_openai_gateway_settings_derive_the_only_permitted_base_url(tmp_path: Path) -> None:
+    settings = Settings(
+        policy_file=tmp_path / "policy.json",
+        llm_provider="openai",
+        llm_model="kei-openai-target/gpt-5.6-terra",
+        aws_region="ap-southeast-1",
+        openai_auth_mode="aws_iam_gateway",
+        openai_gateway_arn=_GATEWAY_ARN,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    assert settings.openai_gateway_base_url() == (
+        "https://llm-gateway-with-inbound-auth-u8utldecju.gateway.bedrock-agentcore."
+        "ap-southeast-1.amazonaws.com/inference/v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"openai_gateway_arn": None}, "AIOS_OPENAI_GATEWAY_ARN is required"),
+        ({"OPENAI_API_KEY": "sk-conflict"}, "API keys.*forbidden"),
+        ({"openai_secret_arn": _OPENAI_CREDENTIAL_REFERENCE}, "API keys.*forbidden"),
+        ({"openai_base_url": "https://example.test/v1"}, "AIOS_OPENAI_BASE_URL is forbidden"),
+        ({"openai_gateway_arn": "not-an-arn"}, "valid AWS AgentCore gateway ARN"),
+        (
+            {
+                "openai_gateway_arn": (
+                    "arn:aws:bedrock-agentcore:us-east-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
+                )
+            },
+            "Region must match",
+        ),
+    ],
+)
+def test_openai_gateway_settings_fail_closed(tmp_path: Path, overrides: dict[str, object], message: str) -> None:
+    values: dict[str, object] = {
+        "policy_file": tmp_path / "policy.json",
+        "llm_provider": "openai",
+        "llm_model": "kei-openai-target/gpt-5.6-terra",
+        "aws_region": "ap-southeast-1",
+        "openai_auth_mode": "aws_iam_gateway",
+        "openai_gateway_arn": _GATEWAY_ARN,
+        "OPENAI_API_KEY": None,
+        "openai_secret_arn": None,
+        "openai_base_url": None,
+    }
+    values.update(overrides)
+    with pytest.raises(ValidationError, match=message):
+        Settings.model_validate(values)
 
 
 @pytest.mark.parametrize("missing", ["github_token", "github_repository"])

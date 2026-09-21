@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { decideRun, GatewayError, getRun, probeModel, startRun } from "./api";
-import stockBoundary from "./scenarios/stock-boundary.json";
-import type { ApprovalStatus, RemediationRunView } from "./types";
+import toolCatalog from "./generated/tool-catalog.json";
+import divisionByZero from "./scenarios/division-by-zero.json";
+import type { ApprovalStatus, ExplainabilityTrace, RemediationRunView } from "./types";
 
-const RUN_STORAGE_KEY = "aios-remediation-demo-run-id";
+const RUN_STORAGE_KEY = "aios-remediation-ecommerce-run-id";
 const SUCCESS_STATUSES = new Set(["DRAFT_PR_CREATED", "DRAFT_PR_PREPARED"]);
 
 const WORKFLOW_STEPS = [
@@ -12,6 +13,25 @@ const WORKFLOW_STEPS = [
   ["Policy", "Risk and approval evaluated"],
   ["Validate", "Patch tested in isolation"],
   ["Draft PR", "Change prepared for review"],
+] as const;
+
+const WORKFLOW_TRACE_STAGES = [
+  ["intake", "scope"],
+  ["workspace", "inspection"],
+  ["planning", "risk", "approval", "policy"],
+  ["patch", "validation"],
+  ["rollback", "draft_pr", "cleanup", "finalize"],
+] as const;
+
+const EXPLAINABILITY_STAGES = [
+  { id: "intake", label: "Intake", stages: ["intake", "scope"] },
+  { id: "inspection", label: "Inspect", stages: ["workspace", "inspection"] },
+  { id: "planning", label: "Plan", stages: ["planning", "risk"] },
+  { id: "approval", label: "Approve", stages: ["approval"] },
+  { id: "patch", label: "Patch", stages: ["patch", "policy"] },
+  { id: "validation", label: "Validate", stages: ["validation"] },
+  { id: "evidence", label: "Evidence", stages: ["rollback"] },
+  { id: "delivery", label: "Draft PR", stages: ["draft_pr", "cleanup", "finalize"] },
 ] as const;
 
 function errorMessage(error: unknown): string {
@@ -43,6 +63,7 @@ function statusTone(value: string): string {
 
 function workflowState(index: number, run: RemediationRunView | null, busy: boolean, successful: boolean): string {
   if (successful) return "complete";
+  if (run?.explainability) return explanationStageState(run.explainability, WORKFLOW_TRACE_STAGES[index]);
   if (run?.status === "AWAITING_APPROVAL") {
     if (index < 2) return "complete";
     return index === 2 ? "active" : "pending";
@@ -55,8 +76,271 @@ function workflowState(index: number, run: RemediationRunView | null, busy: bool
   return index === 0 ? "active" : "pending";
 }
 
+function explanationStageState(
+  trace: ExplainabilityTrace,
+  stages: readonly string[],
+): "complete" | "waiting" | "failed" | "pending" {
+  const events = trace.events.filter((event) => stages.some((stage) => stage === event.stage));
+  if (events.some((event) => statusTone(event.status) === "error")) return "failed";
+  if (events.some((event) => event.event_type === "APPROVAL_REQUESTED" && event.status === "PENDING")) {
+    return "waiting";
+  }
+  return events.length > 0 ? "complete" : "pending";
+}
+
+function formatArguments(argumentsValue: Record<string, unknown>): string {
+  const entries = Object.entries(argumentsValue);
+  if (entries.length === 0) return "No exposed arguments";
+  return entries.map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" · ");
+}
+
+function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
+  const modelTools = toolCatalog.tools.filter((tool) => tool.execution_mode !== "DETERMINISTIC_WORKFLOW");
+  const workflowTools = toolCatalog.tools.filter((tool) => tool.execution_mode === "DETERMINISTIC_WORKFLOW");
+  const calledTools = new Set(trace?.inspection_tool_calls.map((call) => call.tool_name) ?? []);
+  const triggeredControls = new Set(trace?.events.flatMap((event) => event.policy_control_ids) ?? []);
+  const validationBackends = new Set((trace?.validation_executions ?? []).map((item) => item.backend));
+  const configuredModel = trace?.model_calls[0];
+  const groupedWorkflowTools = workflowTools.reduce<Record<string, typeof workflowTools>>((groups, tool) => {
+    groups[tool.category] = [...(groups[tool.category] ?? []), tool];
+    return groups;
+  }, {});
+
+  return (
+    <section className="content-card boundary-card" id="tool-boundary">
+      <header className="card-header">
+        <div>
+          <span className="section-kicker">Generated capability catalogue</span>
+          <h2>Tool and policy boundary</h2>
+          <p>The model receives four bounded controls. All mutation and validation remain deterministic workflow actions.</p>
+        </div>
+        <span className="identifier-badge">CATALOG V{toolCatalog.catalog_version}</span>
+      </header>
+      <div className="boundary-summary" aria-label="Tool catalogue summary">
+        <span><strong>{toolCatalog.model_callable_tools}</strong> model-callable</span>
+        <span><strong>{toolCatalog.workflow_only_tools}</strong> workflow-only</span>
+        <span><strong>{toolCatalog.total_tools}</strong> total operations</span>
+      </div>
+      <ol className="boundary-lanes" aria-label="Tool authority lanes">
+        <li className="boundary-lane">
+          <div className="lane-heading"><span>1</span><div><strong>Configured model</strong><small>Proposes and selects; cannot grant authority</small></div></div>
+          <div className="lane-content">
+            <span className="boundary-node neutral">
+              {configuredModel ? `${configuredModel.provider} / ${configuredModel.model}` : "Configured at runtime"}
+              <small>Structured output and bounded tool calling</small>
+            </span>
+          </div>
+        </li>
+        <li className="boundary-lane">
+          <div className="lane-heading"><span>2</span><div><strong>Model-callable allowlist</strong><small>Read-only inspection and one local finish control</small></div></div>
+          <div className="lane-content tool-node-list">
+            {modelTools.map((tool) => (
+              <span className={`boundary-node ${calledTools.has(tool.operation) ? "executed" : `effect-${tool.effect.toLowerCase().replaceAll("_", "-")}`}`} key={tool.tool_id}>
+                <code>{tool.operation}</code><small>{calledTools.has(tool.operation) ? "Executed" : tool.effect.replaceAll("_", " ")}</small>
+              </span>
+            ))}
+          </div>
+        </li>
+        <li className="boundary-lane policy-lane">
+          <div className="lane-heading"><span>3</span><div><strong>Host policy and approval boundary</strong><small>Repository, commit, path, limits, task names, and write gates</small></div></div>
+          <div className="lane-content">
+            <span className="boundary-node policy">Operator policy is authoritative</span>
+            {[...triggeredControls].map((control) => <code className="triggered-control" key={control}>{control}</code>)}
+          </div>
+        </li>
+        <li className="boundary-lane">
+          <div className="lane-heading"><span>4</span><div><strong>Deterministic workflow operations</strong><small>Never bound to the model</small></div></div>
+          <div className="lane-content workflow-groups">
+            {Object.entries(groupedWorkflowTools).map(([category, tools]) => (
+              <div className="workflow-tool-group" key={category}>
+                <strong>{displayStatus(category)}</strong>
+                <div>{tools?.map((tool) => (
+                  <span className={`effect-chip effect-${tool.effect.toLowerCase().replaceAll("_", "-")}`} key={tool.tool_id}>
+                    <code>{tool.operation}</code><small>{displayStatus(tool.effect)}</small>
+                  </span>
+                ))}</div>
+              </div>
+            ))}
+            <div className="remote-write-boundary">
+              <strong>Optional remote write</strong>
+              <span>Application gate + operator-policy gate · draft only · never merge or deploy</span>
+            </div>
+            {validationBackends.size > 0 && (
+              <div className="active-backends"><strong>Observed validation backend</strong>{[...validationBackends].map((backend) => <code key={backend}>{displayStatus(backend)}</code>)}</div>
+            )}
+          </div>
+        </li>
+      </ol>
+    </section>
+  );
+}
+
+function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
+  const [selectedStage, setSelectedStage] = useState("inspection");
+  const stageDefinition = EXPLAINABILITY_STAGES.find((item) => item.id === selectedStage) ?? EXPLAINABILITY_STAGES[0];
+  const selectedEvents = trace.events.filter((event) =>
+    stageDefinition.stages.some((stage) => stage === event.stage),
+  );
+  const totalInputTokens = trace.model_calls.reduce((total, item) => total + (item.input_tokens ?? 0), 0);
+  const totalOutputTokens = trace.model_calls.reduce((total, item) => total + (item.output_tokens ?? 0), 0);
+  const totalLatency = trace.model_calls.reduce((total, item) => total + item.duration_ms, 0);
+  const validationExecutions = trace.validation_executions ?? [];
+
+  return (
+    <section className="content-card explainability-card" id="explainability">
+      <header className="card-header">
+        <div>
+          <span className="section-kicker">Auditable decision trace</span>
+          <h2>Agent explainability</h2>
+          <p>Shows bounded summaries and recorded actions—not private reasoning tokens or raw prompts.</p>
+        </div>
+        <span className="identifier-badge">TRACE V{trace.schema_version}</span>
+      </header>
+
+      <div className="explainability-metrics" aria-label="Trace summary">
+        <div><span>Model calls</span><strong>{trace.model_calls.length}</strong></div>
+        <div><span>Tool calls</span><strong>{trace.inspection_tool_calls.length}</strong></div>
+        <div><span>Evidence items</span><strong>{trace.evidence.length}</strong></div>
+        <div><span>Model latency</span><strong>{totalLatency.toLocaleString()} ms</strong></div>
+        <div><span>Tokens</span><strong>{totalInputTokens.toLocaleString()} in · {totalOutputTokens.toLocaleString()} out</strong></div>
+      </div>
+
+      <div className="explainability-body">
+        <h3>Workflow decision flow</h3>
+        <div className="flow-legend" aria-label="Decision actor legend">
+          <span><i className="actor deterministic" />Deterministic</span>
+          <span><i className="actor model" />Model-assisted</span>
+          <span><i className="actor tool" />Tool</span>
+          <span><i className="actor human" />Human</span>
+        </div>
+        <ol className="decision-flow" aria-label="Remediation workflow stages">
+          {EXPLAINABILITY_STAGES.map((item, index) => {
+            const state = explanationStageState(trace, item.stages);
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className={`${state} ${selectedStage === item.id ? "selected" : ""}`}
+                  aria-pressed={selectedStage === item.id}
+                  onClick={() => setSelectedStage(item.id)}
+                >
+                  <span>{state === "complete" ? "✓" : index + 1}</span>
+                  <strong>{item.label}</strong>
+                  <small>{state}</small>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="decision-detail" aria-live="polite">
+          <div className="decision-detail-heading">
+            <div><span className="section-kicker">Selected stage</span><h3>{stageDefinition.label}</h3></div>
+            <span className="count-badge">{selectedEvents.length}</span>
+          </div>
+          {selectedEvents.length === 0 ? (
+            <p className="empty-state">This stage has not executed yet.</p>
+          ) : (
+            <ol className="decision-events">
+              {selectedEvents.map((event) => (
+                <li key={`${event.sequence}-${event.event_type}`}>
+                  <i className={`actor ${event.actor_type.toLowerCase().replace("_assisted", "")}`} />
+                  <div>
+                    <div className="event-heading">
+                      <strong>{displayStatus(event.event_type)}</strong>
+                      <span className={`status-badge ${statusTone(event.status)}`}>{displayStatus(event.status)}</span>
+                    </div>
+                    <p>{event.summary}</p>
+                    {event.policy_control_ids.length > 0 && (
+                      <div className="control-list" aria-label="Triggered policy controls">
+                        {event.policy_control_ids.map((control) => <code key={control}>{control}</code>)}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        <div className="explainability-grid">
+          <article className="trace-panel">
+            <header><div><h3>Inspection tool-call flow</h3><p>Model choice followed by policy-bounded MCP execution.</p></div><span className="count-badge">{trace.inspection_tool_calls.length}</span></header>
+            {trace.inspection_tool_calls.length === 0 ? <p className="empty-state">No inspection calls recorded yet.</p> : (
+              <ol className="tool-flow">
+                {trace.inspection_tool_calls.map((call, index) => (
+                  <li key={call.call_id}>
+                    <span className="tool-sequence">{index + 1}</span>
+                    <div>
+                      <div className="event-heading"><code>{call.tool_name}</code><span className={`status-badge ${statusTone(call.status)}`}>{call.status}</span></div>
+                      <p>{formatArguments(call.arguments)}</p>
+                      <small>Result {shortDigest(call.result_digest)}</small>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </article>
+
+          <article className="trace-panel">
+            <header><div><h3>Model decision summaries</h3><p>Provider summaries are optional and redacted.</p></div><span className="count-badge">{trace.model_calls.length}</span></header>
+            {trace.model_calls.length === 0 ? <p className="empty-state">No model calls recorded yet.</p> : (
+              <div className="model-call-list">
+                {trace.model_calls.map((call, index) => (
+                  <details key={`${call.operation}-${index}`} open={Boolean(call.reasoning_summary) && index === 0}>
+                    <summary><strong>{displayStatus(call.operation)}</strong><span>{call.duration_ms.toLocaleString()} ms · {call.output_tokens ?? "—"} output tokens</span></summary>
+                    <div>
+                      <span className="reasoning-label">Provider reasoning summary</span>
+                      <p>{call.reasoning_summary ?? "The provider did not return a reasoning summary for this call."}</p>
+                      <small>{call.provider} · {call.model} · prompt {call.prompt_version}</small>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </article>
+        </div>
+
+        <article className="trace-panel validation-boundary-panel">
+          <header><div><h3>Validation execution boundary</h3><p>Typed proof from the sandbox adapter, without raw session identifiers.</p></div><span className="count-badge">{validationExecutions.length}</span></header>
+          {validationExecutions.length === 0 ? <p className="empty-state">No typed validation-execution evidence is available for this run.</p> : (
+            <div className="validation-execution-list">
+              {validationExecutions.map((execution) => (
+                <section key={`${execution.attempt}-${execution.task_name}`}>
+                  <div className="event-heading"><code>{execution.task_name}</code><span className={`status-badge ${statusTone(execution.outcome)}`}>{execution.outcome}</span></div>
+                  <dl className="property-table compact">
+                    <div><dt>Backend</dt><dd>{displayStatus(execution.backend)}</dd></div>
+                    <div><dt>Executor</dt><dd><code>{execution.executor_id}</code></dd></div>
+                    <div><dt>Cleanup</dt><dd><span className={`status-badge ${statusTone(execution.cleanup_status)}`}>{execution.cleanup_status}</span></dd></div>
+                    <div><dt>Input digest</dt><dd><code>{shortDigest(execution.input_digest)}</code></dd></div>
+                    <div><dt>Session digest</dt><dd><code>{execution.session_digest ? shortDigest(execution.session_digest) : "Not applicable"}</code></dd></div>
+                  </dl>
+                  <div className="control-list" aria-label={`Controls for ${execution.task_name}`}>
+                    {execution.enforced_controls.map((control) => <code key={control}>{displayStatus(control)}</code>)}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </article>
+
+        {trace.evidence.length > 0 && (
+          <div className="trace-evidence">
+            <h3>Inspection evidence</h3>
+            <div className="evidence-chip-list">
+              {trace.evidence.map((item) => (
+                <span key={`${item.kind}-${item.digest}`}><strong>{item.kind}</strong><code>{item.locator}</code><small>{shortDigest(item.digest)}</small></span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
-  const [handoffText, setHandoffText] = useState(JSON.stringify(stockBoundary, null, 2));
+  const [handoffText, setHandoffText] = useState(JSON.stringify(divisionByZero, null, 2));
   const [runId, setRunId] = useState(() => localStorage.getItem(RUN_STORAGE_KEY) ?? "");
   const [run, setRun] = useState<RemediationRunView | null>(null);
   const [busy, setBusy] = useState<"run" | "probe" | null>(null);
@@ -153,6 +437,7 @@ export default function App() {
   const result = run?.result;
   const successful = run ? SUCCESS_STATUSES.has(run.status) : false;
   const runStatus = run?.status ?? (busy === "run" ? "PENDING" : "READY");
+  const requestFailure = error || (run?.failure_code ? run.failure_code.replaceAll("_", " ").toLowerCase() : "");
   const approvalReasons = run?.approval_request
     ? run.approval_request.reasons.filter((reason) => reason.trim() !== run.approval_request?.summary.trim())
     : [];
@@ -182,7 +467,9 @@ export default function App() {
             <a href="#overview" className="active">Overview</a>
             <a href="#handoff">Handoff</a>
             <a href="#workflow">Workflow</a>
+            <a href="#tool-boundary">Tool boundary</a>
             {run?.approval_request && <a href="#approval">Approval</a>}
+            {run?.explainability && <a href="#explainability">Explainability</a>}
             {result && <a href="#results">Results</a>}
             <a href="#connectivity">Connectivity</a>
           </nav>
@@ -209,13 +496,13 @@ export default function App() {
             <div><span>Region</span><strong>ap-southeast-1</strong></div>
             <div><span>Runtime</span><strong>AgentCore</strong></div>
             <div><span>Model provider</span><strong>OpenAI</strong></div>
-            <div><span>Model</span><strong>gpt-5.6-terra</strong></div>
+            <div><span>Model</span><strong>kei-openai-target/gpt-5.6-terra</strong></div>
           </section>
 
-          {error && (
+          {requestFailure && (
             <div className="alert error" role="alert">
               <span className="alert-icon">!</span>
-              <div><strong>Request failed</strong><p>{error}</p></div>
+              <div><strong>Request failed</strong><p>{requestFailure}</p></div>
             </div>
           )}
 
@@ -223,22 +510,31 @@ export default function App() {
             <section className="content-card" id="handoff">
               <header className="card-header">
                 <div><h2>Create remediation run</h2><p>Submit a typed diagnosis against an immutable repository commit.</p></div>
-                <span className="identifier-badge">CASE-DEMO-02</span>
+                <span className="identifier-badge">CASE-ECOM-AVG-001</span>
               </header>
 
               <div className="card-body">
                 <h3>Diagnosis handoff</h3>
                 <dl className="property-table">
-                  <div><dt>Scenario</dt><dd>Stock boundary off by one</dd></div>
-                  <div><dt>Repository</dt><dd><code>MtechSE-ArchAI-Team7/aios-remediation-demo</code></dd></div>
-                  <div><dt>Base branch</dt><dd><code>scenario/02-stock-boundary</code></dd></div>
-                  <div><dt>Target</dt><dd><code>src/orders.py</code></dd></div>
+                  <div><dt>Scenario</dt><dd>Division-by-zero average calculation</dd></div>
+                  <div><dt>Jira ticket</dt><dd><code>{divisionByZero.jira_ticket_id}</code></dd></div>
+                  <div><dt>Repository</dt><dd><code>MtechSE-ArchAI-Team7/buggy-ecommerce-demo</code></dd></div>
+                  <div><dt>Base branch</dt><dd><code>main</code></dd></div>
+                  <div><dt>Target</dt><dd><code>server.js</code></dd></div>
+                  <div>
+                    <dt>Deployed service</dt>
+                    <dd>
+                      <a href="http://aios-ecommerce.ap-southeast-1.elasticbeanstalk.com/" target="_blank" rel="noreferrer">
+                        aios-ecommerce.ap-southeast-1.elasticbeanstalk.com ↗
+                      </a>
+                    </dd>
+                  </div>
                   <div><dt>Run ID</dt><dd><code>{runId || "Generated when the run is created"}</code></dd></div>
                 </dl>
 
                 <div className="info-panel">
                   <strong>Diagnosis</strong>
-                  <p>The stock predicate excludes an order equal to the available inventory boundary.</p>
+                  <p>The average endpoint divides by zero and returns HTTP 200 with a null result instead of a typed client error.</p>
                 </div>
 
                 <details className="advanced-input">
@@ -290,6 +586,8 @@ export default function App() {
             </section>
           </div>
 
+          <ToolBoundaryPanel trace={run?.explainability ?? null} />
+
           {run?.approval_request && (
             <section className="content-card approval-card" id="approval">
               <header className="card-header warning-header">
@@ -317,6 +615,8 @@ export default function App() {
               </div>
             </section>
           )}
+
+          {run?.explainability && <ExplainabilityPanel trace={run.explainability} />}
 
           {result && (
             <section id="results" className="results-section">

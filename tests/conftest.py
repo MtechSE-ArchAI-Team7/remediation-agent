@@ -51,6 +51,7 @@ def diagnosis_handoff(
 ) -> DiagnosisHandoffV1:
     return DiagnosisHandoffV1(
         case_id="CASE-123",
+        jira_ticket_id="Ticket-111",
         issue_summary="Application rejects malformed user input.",
         remediation_type=remediation_type,
         diagnosis=Diagnosis(

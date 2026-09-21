@@ -192,6 +192,13 @@
       "title": "Issue Summary",
       "type": "string"
     },
+    "jira_ticket_id": {
+      "maxLength": 64,
+      "minLength": 3,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$",
+      "title": "Jira Ticket Id",
+      "type": "string"
+    },
     "remediation_type": {
       "$ref": "#/$defs/RemediationType"
     },
@@ -235,6 +242,7 @@
   },
   "required": [
     "case_id",
+    "jira_ticket_id",
     "issue_summary",
     "remediation_type",
     "diagnosis",

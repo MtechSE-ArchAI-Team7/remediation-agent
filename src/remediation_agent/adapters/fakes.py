@@ -16,7 +16,14 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel
 
 from remediation_agent.adapters.evidence import SecretRedactor
-from remediation_agent.domain.enums import InspectionToolStatus, ModelOperation, PolicyDecision, ValidationOutcome
+from remediation_agent.domain.enums import (
+    InspectionToolStatus,
+    ModelOperation,
+    PolicyDecision,
+    ValidationBackend,
+    ValidationCleanupStatus,
+    ValidationOutcome,
+)
 from remediation_agent.domain.models import (
     ArtifactManifest,
     CleanupResult,
@@ -29,6 +36,7 @@ from remediation_agent.domain.models import (
     ModelCallRecord,
     RepositoryRef,
     SearchCodeArgs,
+    ValidationExecutionRecord,
     ValidationTaskResult,
     WorkspaceRef,
 )
@@ -52,6 +60,8 @@ from remediation_agent.ports.models import (
     PushRequest,
     PushResult,
     ReadFileRequest,
+    SandboxExecutionProfile,
+    SandboxTaskExecution,
     SearchHit,
     SearchRequest,
     SearchResult,
@@ -488,6 +498,13 @@ class FakeSandboxExecutor:
         self.repository = repository
         self.tampered_diff = tampered_diff
 
+    def execution_profile(self) -> SandboxExecutionProfile:
+        return SandboxExecutionProfile(
+            backend=ValidationBackend.FAKE,
+            executor_id="fake-sandbox",
+            enforced_controls=["OPERATOR_DEFINED_TASK", "DETERMINISTIC_TEST_DOUBLE"],
+        )
+
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult:
         self.applied_patches.append(request.unified_diff)
         if self.repository:
@@ -500,19 +517,34 @@ class FakeSandboxExecutor:
         if self.repository:
             self.repository.current_diff_value = ""
 
-    async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult:
+    async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
         self.tasks_run.append(request.task_name)
         if self.repository and self.tampered_diff:
             self.repository.current_diff_value = self.tampered_diff
         queue = self._outcomes.get(request.task_name)
         outcome = queue.popleft() if queue else ValidationOutcome.PASSED
         exit_code = 0 if outcome is ValidationOutcome.PASSED else 1
-        return ValidationTaskResult(
+        result = ValidationTaskResult(
             task_name=request.task_name,
             outcome=outcome,
             exit_code=exit_code,
             duration_ms=1,
             stdout=f"fake {request.task_name}: {outcome}",
+        )
+        profile = self.execution_profile()
+        return SandboxTaskExecution(
+            result=result,
+            execution=ValidationExecutionRecord(
+                attempt=request.attempt,
+                task_name=request.task_name,
+                backend=profile.backend,
+                executor_id=profile.executor_id,
+                input_digest=_digest(request.model_dump_json()),
+                enforced_controls=profile.enforced_controls,
+                cleanup_status=ValidationCleanupStatus.NOT_APPLICABLE,
+                outcome=result.outcome,
+                duration_ms=result.duration_ms,
+            ),
         )
 
     async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest:

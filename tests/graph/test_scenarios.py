@@ -27,11 +27,30 @@ async def test_scenario_a_code_defect_prepares_evidence_backed_draft_pr() -> Non
     assert result.result.validation_attempts[0].outcome is ValidationOutcome.PASSED
     assert result.result.rollback_instructions is not None
     assert result.result.draft_pr is not None
+    assert result.result.draft_pr.payload.title == "[TICKET-111] Handle invalid integer conversion."
     assert "Human review" in result.result.draft_pr.payload.body
     assert sandbox.applied_patches and sandbox.destroyed
     assert sandbox.tasks_run == ["unit_tests", "lint", "type_check"]
     assert pr.requests and artifacts.requests and audit.requests
     assert [request.operation for request in model.requests][-1].value == "PATCH"
+
+
+async def test_draft_pr_title_is_bounded_without_changing_case_based_branch_or_commit() -> None:
+    summary = "S" * 300
+    service, _, repository, _, pr, _, _ = build_test_service(
+        scripted_responses(plan_summary=summary),
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/example-service",
+    )
+    result = await service.start(diagnosis_handoff())
+
+    assert result.result is not None
+    assert result.result.draft_pr is not None
+    assert result.result.draft_pr.payload.title.startswith("[TICKET-111] ")
+    assert len(result.result.draft_pr.payload.title) == 240
+    assert "case-123" in result.result.draft_pr.payload.head_branch
+    assert repository.commits == ["fix: remediate CASE-123"]
+    assert pr.requests[0].payload == result.result.draft_pr.payload
 
 
 async def test_upstream_secret_like_text_is_redacted_before_checkpoint_and_model_use() -> None:

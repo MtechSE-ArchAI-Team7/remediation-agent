@@ -27,6 +27,7 @@ from remediation_agent.domain.enums import (
     RemediationType,
     RepositoryProvider,
     RiskLevel,
+    ValidationCleanupStatus,
     ValidationOutcome,
     WorkspaceStatus,
 )
@@ -50,8 +51,10 @@ from remediation_agent.domain.models import (
     RiskAssessment,
     RollbackInstructions,
     ValidationAttempt,
+    ValidationExecutionRecord,
     ValidationTaskResult,
 )
+from remediation_agent.explainability import build_explainability_trace
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.ports.models import (
     ArtifactWriteRequest,
@@ -77,6 +80,7 @@ from remediation_agent.prompts import (
     INSPECTION_SYSTEM_PROMPT,
     PATCH_SYSTEM_PROMPT,
     PLANNING_SYSTEM_PROMPT,
+    REVISION_SYSTEM_PROMPT,
     RISK_SYSTEM_PROMPT,
 )
 from remediation_agent.tools import FINISH_INSPECTION_TOOL_NAME, finish_inspection
@@ -153,6 +157,7 @@ class WorkflowNodes:
             "approval_history": [],
             "inspection_artifacts": [],
             "inspection_tool_calls": [],
+            "validation_execution_records": [],
             "validation_attempts": [],
             "model_calls": [],
             "errors": [],
@@ -522,12 +527,15 @@ class WorkflowNodes:
         if state["final_status"] is not FinalStatus.PENDING:
             return {}
         operation = ModelOperation.PATCH if state.get("attempt_counter", 0) == 0 else ModelOperation.REVISION
+        previous_patch = state.get("patch_candidate") if operation is ModelOperation.REVISION else None
         try:
             generated = await self.model.generate(
                 ModelRequest(
                     operation=operation,
                     prompt_version=self.prompt_version,
-                    system_instruction=PATCH_SYSTEM_PROMPT,
+                    system_instruction=(
+                        REVISION_SYSTEM_PROMPT if operation is ModelOperation.REVISION else PATCH_SYSTEM_PROMPT
+                    ),
                     payload={
                         "handoff": state["handoff"].model_dump(mode="json"),
                         "plan": state["remediation_plan"].model_dump(mode="json"),
@@ -537,6 +545,7 @@ class WorkflowNodes:
                         "previous_attempts": [
                             item.model_dump(mode="json") for item in state.get("validation_attempts", [])
                         ],
+                        "previous_patch": previous_patch.model_dump(mode="json") if previous_patch else None,
                         "revision_context": state.get("revision_context", ""),
                     },
                 ),
@@ -662,12 +671,22 @@ class WorkflowNodes:
 
     async def run_validation(self, state: RemediationState) -> dict[str, object]:
         results: list[ValidationTaskResult] = []
+        execution_records = list(state.get("validation_execution_records", []))
+        task_events = list(state.get("audit_events", []))
+        attempt_number = state.get("attempt_counter", 0) + 1
         for name in state["selected_validation_tasks"]:
             task = self.policy.validation_task(name)
             try:
-                result = await self.sandbox.run_task(
-                    ValidationTaskRequest(workspace=state["workspace"], task_name=name, task=task)
+                task_execution = await self.sandbox.run_task(
+                    ValidationTaskRequest(
+                        workspace=state["workspace"],
+                        task_name=name,
+                        task=task,
+                        attempt=attempt_number,
+                    )
                 )
+                result = task_execution.result
+                execution_records.append(task_execution.execution)
             except (OSError, RuntimeError, ValueError) as exc:
                 result = ValidationTaskResult(
                     task_name=name,
@@ -675,7 +694,39 @@ class WorkflowNodes:
                     duration_ms=0,
                     stderr=str(exc),
                 )
+                profile = self.sandbox.execution_profile()
+                execution_records.append(
+                    ValidationExecutionRecord(
+                        attempt=attempt_number,
+                        task_name=name,
+                        backend=profile.backend,
+                        executor_id=profile.executor_id,
+                        input_digest=self.policy.digest_text(
+                            ValidationTaskRequest(
+                                workspace=state["workspace"],
+                                task_name=name,
+                                task=task,
+                                attempt=attempt_number,
+                            ).model_dump_json()
+                        ),
+                        enforced_controls=profile.enforced_controls,
+                        cleanup_status=ValidationCleanupStatus.UNKNOWN,
+                        outcome=ValidationOutcome.ERROR,
+                        duration_ms=0,
+                    )
+                )
             results.append(result)
+            record = execution_records[-1]
+            task_events = self._event_from(
+                state,
+                task_events,
+                "VALIDATION_TASK_EXECUTED",
+                record.outcome,
+                (
+                    f"task={record.task_name}; backend={record.backend}; executor={record.executor_id}; "
+                    f"cleanup={record.cleanup_status}; input={record.input_digest}"
+                ),
+            )
         try:
             post_validation_diff = await self.repository.current_diff(state["workspace"])
             if post_validation_diff.digest != state["validation_baseline_digest"]:
@@ -710,7 +761,6 @@ class WorkflowNodes:
             if results and all(item.outcome is ValidationOutcome.PASSED for item in results)
             else ValidationOutcome.FAILED
         )
-        attempt_number = state.get("attempt_counter", 0) + 1
         attempt = ValidationAttempt(
             attempt=attempt_number,
             patch_digest=state["diff_digest"],
@@ -720,10 +770,12 @@ class WorkflowNodes:
         return {
             "attempt_counter": attempt_number,
             "current_validation_results": results,
+            "validation_execution_records": execution_records,
             "validation_attempts": [*state.get("validation_attempts", []), attempt],
             "validation_outcome": outcome,
-            "audit_events": self._event(
+            "audit_events": self._event_from(
                 state,
+                task_events,
                 "VALIDATION_COMPLETED",
                 outcome,
                 f"Validation attempt {attempt_number} completed with {outcome}.",
@@ -816,7 +868,7 @@ class WorkflowNodes:
         handoff = state["handoff"]
         branch = _branch_name(handoff.case_id, state["run_id"])
         payload = DraftPrPayload(
-            title=f"[AIOS {handoff.case_id}] {state['remediation_plan'].summary}"[:240],
+            title=f"[{handoff.jira_ticket_id}] {state['remediation_plan'].summary}"[:240],
             body=self._pr_body(state),
             head_branch=branch,
             base_branch=handoff.repository.base_branch,
@@ -1134,6 +1186,17 @@ class WorkflowNodes:
         )
         return [*existing, event]
 
+    def _event_from(
+        self,
+        state: RemediationState,
+        existing: list[AuditEvent],
+        event_type: str,
+        result_code: object,
+        detail: str,
+    ) -> list[AuditEvent]:
+        event_state = cast(RemediationState, {**state, "audit_events": existing})
+        return self._event(event_state, event_type, result_code, detail)
+
     def _artifact_files(
         self,
         state: RemediationState,
@@ -1148,11 +1211,23 @@ class WorkflowNodes:
                 indent=2,
                 default=str,
             ),
+            "validation-execution.json": json.dumps(
+                [item.model_dump(mode="json") for item in state.get("validation_execution_records", [])],
+                indent=2,
+                default=str,
+            ),
             "model-calls.json": json.dumps(
                 [item.model_dump(mode="json") for item in state.get("model_calls", [])],
                 indent=2,
                 default=str,
             ),
+            "explainability.json": build_explainability_trace(
+                state,
+                run_id=state["run_id"],
+                status=state["final_status"],
+                approval_request=None,
+                redactor=self.audit.redactor,
+            ).model_dump_json(indent=2),
         }
         if state.get("current_diff"):
             files["patch.diff"] = state["current_diff"]

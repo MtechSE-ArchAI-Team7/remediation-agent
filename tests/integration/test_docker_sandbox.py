@@ -102,13 +102,17 @@ def docker_harness(docker_executable: str) -> Iterator[_DockerHarness]:
 class _ContainerReadableRepository(LocalGitRepository):
     """Make only test-owned workspaces accessible to the sandbox container UID."""
 
-    def __init__(self, workspace_root: Path, harness: _DockerHarness) -> None:
+    def __init__(self, workspace_root: Path, harness: _DockerHarness, *, fixture_uri: str | None = None) -> None:
         super().__init__(workspace_root)
         self.harness = harness
+        self.fixture_uri = fixture_uri
         self.last_workspace: WorkspaceRef | None = None
 
     async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef:
-        workspace = await super().create_workspace(ref)
+        clone_ref = ref
+        if self.fixture_uri is not None:
+            clone_ref = ref.model_copy(update={"provider": RepositoryProvider.LOCAL, "url": self.fixture_uri})
+        workspace = await super().create_workspace(clone_ref)
         _grant_container_access(Path(workspace.path))
         self.harness.track(workspace.workspace_id)
         self.last_workspace = workspace
@@ -184,6 +188,97 @@ def _task(argv: list[str], *, timeout: int = 10, output_limit: int = 65_536) -> 
     )
 
 
+async def test_node_validation_fails_when_required_regression_is_missing(
+    tmp_path: Path,
+    docker_harness: _DockerHarness,
+) -> None:
+    executor, workspace = _workspace(tmp_path, docker_harness, "node-missing-regression")
+    root = Path(workspace.path)
+    (root / "server.js").write_text("const value = 10 / 0;\n", encoding="utf-8")
+    _grant_container_access(root)
+
+    try:
+        syntax = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="javascript_syntax",
+                    task=_task(["node", "--check", "server.js"]),
+                )
+            )
+        ).result
+        regression = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="average_regression",
+                    task=_task(["node", "--test", "tests/calculate-average.test.js"]),
+                )
+            )
+        ).result
+        assert syntax.outcome is ValidationOutcome.PASSED
+        assert regression.outcome is ValidationOutcome.FAILED
+        assert regression.exit_code != 0
+    finally:
+        cleanup = await executor.destroy(workspace)
+        assert cleanup.succeeded
+
+
+async def test_node_validation_passes_dependency_free_average_regression(
+    tmp_path: Path,
+    docker_harness: _DockerHarness,
+) -> None:
+    executor, workspace = _workspace(tmp_path, docker_harness, "node-average-regression")
+    root = Path(workspace.path)
+    (root / "lib").mkdir()
+    (root / "tests").mkdir()
+    (root / "server.js").write_text(
+        "const { calculateAverage } = require('./lib/calculate-average');\n"
+        "const value = calculateAverage(10, 2);\n"
+        "if (value !== 5) throw new Error('invalid average');\n",
+        encoding="utf-8",
+    )
+    (root / "lib" / "calculate-average.js").write_text(
+        "function calculateAverage(total, count) {\n"
+        "  if (!Number.isFinite(total) || !Number.isFinite(count) || count === 0) {\n"
+        "    throw new RangeError('count must be a finite non-zero number');\n"
+        "  }\n"
+        "  return total / count;\n"
+        "}\n"
+        "module.exports = { calculateAverage };\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "calculate-average.test.js").write_text(
+        "const test = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "const { calculateAverage } = require('../lib/calculate-average');\n"
+        "test('divides finite inputs', () => assert.equal(calculateAverage(10, 2), 5));\n"
+        "test('rejects zero', () => assert.throws(() => calculateAverage(10, 0), RangeError));\n",
+        encoding="utf-8",
+    )
+    _grant_container_access(root)
+
+    try:
+        for task_name, argv in (
+            ("javascript_syntax", ["node", "--check", "server.js"]),
+            ("average_regression", ["node", "--test", "tests/calculate-average.test.js"]),
+        ):
+            result = (
+                await executor.run_task(
+                    ValidationTaskRequest(
+                        workspace=workspace,
+                        task_name=task_name,
+                        task=_task(argv),
+                    )
+                )
+            ).result
+            assert result.outcome is ValidationOutcome.PASSED
+            assert result.exit_code == 0
+    finally:
+        cleanup = await executor.destroy(workspace)
+        assert cleanup.succeeded
+
+
 async def test_full_workflow_restores_base_and_passes_revised_patch(
     tmp_path: Path,
     docker_harness: _DockerHarness,
@@ -191,7 +286,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
     source, commit = _fixture_repository(tmp_path)
     workspace_root = tmp_path / "workspaces"
     artifact_root = tmp_path / "artifacts"
-    repository = _ContainerReadableRepository(workspace_root, docker_harness)
+    repository = _ContainerReadableRepository(workspace_root, docker_harness, fixture_uri=source.as_uri())
     sandbox = DockerSandboxExecutor(workspace_root, _SANDBOX_IMAGE)
     policy = PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "reference.json"))
     failing_patch = (
@@ -231,8 +326,8 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
     handoff = diagnosis_handoff().model_copy(
         update={
             "repository": RepositoryRef(
-                provider=RepositoryProvider.LOCAL,
-                url=source.as_uri(),
+                provider=RepositoryProvider.GITHUB,
+                url="https://github.com/MtechSE-ArchAI-Team7/integration-fixture.git",
                 base_branch="main",
                 commit_sha=commit,
             )
@@ -258,6 +353,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
     assert artifact_names == {
         "audit.jsonl",
         "draft-pr.json",
+        "explainability.json",
         "model-calls.json",
         "patch.diff",
         "result.json",
@@ -310,13 +406,15 @@ async def test_real_container_enforces_non_root_network_and_git_isolation(
         ]
     )
     try:
-        result = await executor.run_task(
-            ValidationTaskRequest(
-                workspace=workspace,
-                task_name="isolation_probe",
-                task=_task(["python", "-c", probe]),
+        result = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="isolation_probe",
+                    task=_task(["python", "-c", probe]),
+                )
             )
-        )
+        ).result
         assert result.outcome is ValidationOutcome.PASSED
         assert result.exit_code == 0
     finally:
@@ -331,27 +429,31 @@ async def test_real_container_maps_failure_and_caps_combined_output(
 ) -> None:
     executor, workspace = _workspace(tmp_path, docker_harness, "failure-output")
     try:
-        failed = await executor.run_task(
-            ValidationTaskRequest(
-                workspace=workspace,
-                task_name="known_failure",
-                task=_task(["python", "-c", "raise SystemExit(7)"]),
+        failed = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="known_failure",
+                    task=_task(["python", "-c", "raise SystemExit(7)"]),
+                )
             )
-        )
-        capped = await executor.run_task(
-            ValidationTaskRequest(
-                workspace=workspace,
-                task_name="bounded_output",
-                task=_task(
-                    [
-                        "python",
-                        "-c",
-                        "import sys; print('x' * 4096); print('y' * 4096, file=sys.stderr)",
-                    ],
-                    output_limit=1_024,
-                ),
+        ).result
+        capped = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="bounded_output",
+                    task=_task(
+                        [
+                            "python",
+                            "-c",
+                            "import sys; print('x' * 4096); print('y' * 4096, file=sys.stderr)",
+                        ],
+                        output_limit=1_024,
+                    ),
+                )
             )
-        )
+        ).result
         assert failed.outcome is ValidationOutcome.FAILED
         assert failed.exit_code == 7
         assert capped.outcome is ValidationOutcome.PASSED
@@ -369,13 +471,15 @@ async def test_real_container_timeout_forces_removal(
 ) -> None:
     executor, workspace = _workspace(tmp_path, docker_harness, "timeout")
     try:
-        result = await executor.run_task(
-            ValidationTaskRequest(
-                workspace=workspace,
-                task_name="bounded_timeout",
-                task=_task(["python", "-c", "import time; time.sleep(30)"], timeout=1),
+        result = (
+            await executor.run_task(
+                ValidationTaskRequest(
+                    workspace=workspace,
+                    task_name="bounded_timeout",
+                    task=_task(["python", "-c", "import time; time.sleep(30)"], timeout=1),
+                )
             )
-        )
+        ).result
         assert result.outcome is ValidationOutcome.TIMED_OUT
         assert result.exit_code is None
         assert docker_harness.container_ids(workspace.workspace_id) == []

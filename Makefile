@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-mcp test-mcp-live test-integration test-sandbox-integration security schemas openapi tool-catalog build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted assessment-report build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build demo-ui-deploy db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -21,6 +21,9 @@ typecheck:
 test:
 	uv run pytest --cov=src
 
+test-model-live:
+	AIOS_RUN_AGENTCORE_GATEWAY_LIVE=1 uv run pytest -m live_model tests/integration/test_agentcore_gateway_live.py
+
 test-mcp:
 	uv run pytest tests/mcp tests/graph/test_mcp_inspection.py tests/unit/test_model_adapter.py
 
@@ -32,6 +35,9 @@ test-integration:
 
 test-sandbox-integration: sandbox-build
 	uv run pytest -m integration tests/integration/test_docker_sandbox.py
+
+test-code-interpreter-live:
+	AIOS_RUN_CODE_INTERPRETER_LIVE=1 uv run pytest -m live_code_interpreter tests/integration/test_agentcore_code_interpreter_live.py
 
 security:
 	uv run bandit -q -r src
@@ -45,6 +51,15 @@ openapi:
 
 tool-catalog:
 	uv run python scripts/export_tool_catalog.py
+
+evaluate:
+	uv run python scripts/run_evaluation.py deterministic
+
+evaluate-hosted:
+	uv run python scripts/run_evaluation.py hosted
+
+assessment-report:
+	uv run python scripts/run_evaluation.py report
 
 build:
 	uv build --no-build-isolation
@@ -63,6 +78,9 @@ demo-ui-test:
 
 demo-ui-build:
 	cd demo-ui && npm ci && npm run build
+
+demo-ui-deploy: demo-ui-test demo-ui-build
+	bash scripts/deploy_demo_ui.sh
 
 db-up:
 	docker compose up -d postgres

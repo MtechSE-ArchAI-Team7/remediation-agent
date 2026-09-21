@@ -18,6 +18,7 @@ The machine-readable JSON Schemas are authoritative:
 - `config/schemas/approval-request-v1.schema.json` — digest-bound approval interrupt emitted by Agent 3.
 - `config/schemas/remediation-handoff-v1.schema.json` — Agent 3 → Agent 4.
 - `config/schemas/delivery-receipt-v1.schema.json` — supplementary direct-delivery evidence.
+- `config/schemas/explainability-trace-v1.schema.json` — supplementary bounded decision and tool-call trace.
 - `config/schemas/provider-probe-request-v1.schema.json` and `config/schemas/provider-probe-result-v1.schema.json` — bounded A2A readiness probe.
 
 The source models are `DiagnosisHandoffV1` and `RemediationHandoffV1` in
@@ -55,12 +56,18 @@ The canonical hosted interface is A2A Protocol 1.0. Send the same object as the 
 `application/vnd.aios.approval-decision.v1+json`. The A2A task UUID is the Agent 3 `run_id` and is separate from the
 AgentCore runtime session/A2A context ID.
 
+Agent 3 may add `application/vnd.aios.explainability-trace.v1+json` beside the approval request or terminal remediation
+artifact. Consumers may ignore this supplementary part. It contains redacted decisions, tool-call metadata, evidence
+references, model metrics, and optional provider reasoning summaries; it never contains raw prompts, repository file
+contents, patches, or hidden reasoning tokens.
+
 ### Top-level fields
 
 | Field | Required | Contract |
 |---|---:|---|
 | `schema_version` | No | Defaults to `1.0`; if supplied, it must be `1.0`. |
 | `case_id` | Yes | Stable case identifier, 1–200 characters. |
+| `jira_ticket_id` | Yes | Jira issue key such as `TICKET-111`; mixed case is accepted and normalized to uppercase. |
 | `issue_summary` | Yes | Concise incident/problem summary, 1–10,000 characters. |
 | `remediation_type` | Yes | One value from the remediation-type enum below. |
 | `diagnosis` | Yes | Structured diagnosis, confidence, evidence links, and uncertainties. |
@@ -129,6 +136,7 @@ policy. Agent 2 must not assume that its proposed paths or repository location g
 {
   "schema_version": "1.0",
   "case_id": "CASE-2026-0042",
+  "jira_ticket_id": "TICKET-111",
   "issue_summary": "Malformed quantity input causes an unhandled application error.",
   "remediation_type": "CODE",
   "diagnosis": {
@@ -315,7 +323,7 @@ of production deployment. Agent 3 does not deploy, merge, or execute a productio
   },
   "draft_pr": {
     "payload": {
-      "title": "[CASE-2026-0042] Handle malformed quantity input",
+      "title": "[TICKET-111] Handle malformed quantity input",
       "body": "Draft remediation with diagnosis, validation evidence, residual risk, and rollback guidance.",
       "head_branch": "remediation/CASE-2026-0042",
       "base_branch": "main",
@@ -383,7 +391,7 @@ manufacture approvals or reuse approval decisions across scope digests.
 ## Error and compatibility rules
 
 - Contract validation errors fail closed; do not retry the same invalid payload unchanged.
-- Transport retries must preserve the same `case_id` and use orchestration idempotency/correlation controls.
+- Transport retries must preserve the same `case_id` and `jira_ticket_id` and use orchestration idempotency/correlation controls.
 - A missing optional field means “not available/not produced,” not success.
 - Consumers must tolerate empty arrays where the workflow stopped before that stage.
 - Do not parse routing decisions from `risk_summary`, error messages, PR body text, or logs.

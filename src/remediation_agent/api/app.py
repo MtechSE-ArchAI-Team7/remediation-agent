@@ -60,43 +60,46 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
         )
-        github_token = settings.require_github_token()
-        credential_provider = GitHubAskpassCredentialProvider(github_token)
-        repository = LocalGitRepository(
-            settings.workspace_root,
-            author_name=settings.git_author_name,
-            author_email=settings.git_author_email,
-            credential_provider=credential_provider,
-        )
-        inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
-        sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
-        pr_provider = DraftPullRequestProvider(
-            token=github_token,
-            writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
-        )
-        artifact_store = LocalArtifactStore(settings.artifact_root)
-        audit_sink = JsonlAuditSink(settings.artifact_root)
-        async with postgres_checkpointer(dsn, encryption_key) as checkpointer:
-            nodes = WorkflowNodes(
-                policy=policy,
-                model=model,
-                repository=repository,
-                inspection_tools=inspection_tools,
-                sandbox=sandbox,
-                pr_provider=pr_provider,
-                artifact_store=artifact_store,
-                audit_sink=audit_sink,
-                prompt_version=settings.prompt_version,
-                github_writes_enabled=settings.github_writes_enabled,
-                github_repository=settings.github_repository,
+        try:
+            github_token = settings.require_github_token()
+            credential_provider = GitHubAskpassCredentialProvider(github_token)
+            repository = LocalGitRepository(
+                settings.workspace_root,
+                author_name=settings.git_author_name,
+                author_email=settings.git_author_email,
+                credential_provider=credential_provider,
             )
-            application.state.remediation_service = RemediationService(
-                build_graph(nodes, checkpointer),
-                max_active_runs=policy_config.limits.max_active_runs,
-                handoff_delivery=_handoff_delivery(settings),
-                delivery_audit_sink=audit_sink,
+            inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
+            sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
+            pr_provider = DraftPullRequestProvider(
+                token=github_token,
+                writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
             )
-            yield
+            artifact_store = LocalArtifactStore(settings.artifact_root)
+            audit_sink = JsonlAuditSink(settings.artifact_root)
+            async with postgres_checkpointer(dsn, encryption_key) as checkpointer:
+                nodes = WorkflowNodes(
+                    policy=policy,
+                    model=model,
+                    repository=repository,
+                    inspection_tools=inspection_tools,
+                    sandbox=sandbox,
+                    pr_provider=pr_provider,
+                    artifact_store=artifact_store,
+                    audit_sink=audit_sink,
+                    prompt_version=settings.prompt_version,
+                    github_writes_enabled=settings.github_writes_enabled,
+                    github_repository=settings.github_repository,
+                )
+                application.state.remediation_service = RemediationService(
+                    build_graph(nodes, checkpointer),
+                    max_active_runs=policy_config.limits.max_active_runs,
+                    handoff_delivery=_handoff_delivery(settings),
+                    delivery_audit_sink=audit_sink,
+                )
+                yield
+        finally:
+            await model.aclose()
 
     application = FastAPI(
         title="AIOS Resolution/Remediation Agent",

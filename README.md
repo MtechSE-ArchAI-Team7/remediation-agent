@@ -9,6 +9,10 @@ The presentation-only [`demo-ui`](demo-ui/README.md) provides a React dashboard 
 for manually submitting the Agent 2 handoff to the hosted AgentCore runtime. It intentionally has no end-user
 authentication and must not be treated as a production interface.
 
+Assessment-ready results and reproduction commands are collected in
+[`docs/ASSESSMENT_EVIDENCE.md`](docs/ASSESSMENT_EVIDENCE.md). The report keeps deterministic evidence separate from
+the optional one-trial hosted demonstration and never invents a live result that was not supplied.
+
 ## Agent details
 
 | Property | Implementation |
@@ -80,6 +84,8 @@ and thirteen deterministic workflow-only tools. `GET /v1/tools` exposes the same
 [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md), including each tool's typed boundary, authority, availability gate,
 description, model-visible argument names, and safety controls. Catalogue entries are operations of this one agent, not
 agents or subagents. The hosted-tool migration advances the catalogue response to version `1.1`.
+The same exporter also generates `demo-ui/src/generated/tool-catalog.json`; the React boundary panel therefore uses
+the identical identifiers, modes, effects, availability gates, and controls rather than a separately maintained list.
 
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
@@ -157,13 +163,15 @@ selected provider/model combination must support both structured output and tool
 
 | `AIOS_LLM_PROVIDER` | Adapter | Intended use | Additional configuration |
 |---|---|---|---|
-| `bedrock` | `langchain_aws.ChatBedrockConverse` | Deployment target | `AIOS_LLM_MODEL` and `AIOS_AWS_REGION`; AWS credential provider chain |
-| `openai` | `langchain_openai.ChatOpenAI` | Optional local experiments | `AIOS_LLM_MODEL`, `OPENAI_API_KEY`, optional `AIOS_OPENAI_BASE_URL` |
+| `bedrock` | `langchain_aws.ChatBedrockConverse` | Supported deployment/local fallback | `AIOS_LLM_MODEL` and `AIOS_AWS_REGION`; AWS credential provider chain |
+| `openai` | `langchain_openai.ChatOpenAI` | AgentCore IAM gateway or direct local/rollback mode | `AIOS_LLM_MODEL`; select `AIOS_OPENAI_AUTH_MODE` and configure either AWS Region + gateway ARN or an API key/secret ARN |
 | `deepseek` | `langchain_deepseek.ChatDeepSeek` | Optional local experiments | `AIOS_LLM_MODEL`, `DEEPSEEK_API_KEY`, optional `AIOS_DEEPSEEK_BASE_URL` |
 | `fake` | `FakeStructuredModel` | Unit, graph, security, and demonstration tests | Injection-only; rejected by the production dependency builder |
 
-All live adapters record provider/model, prompt version, latency, token usage when available, refusal state, and response
-digests. Credentials and unrestricted prompt content are not recorded.
+All live adapters record provider/model, prompt version, latency, token usage when available, refusal state, response
+digests, and an optional bounded provider reasoning summary. OpenAI does not expose raw reasoning tokens; the UI labels
+summaries separately from schema-validated decision rationales. Credentials, prompts, repository contents, and raw
+provider responses are not recorded.
 
 ## Repository structure
 
@@ -271,8 +279,12 @@ The runtime fails closed when required settings are absent.
 | `AIOS_POLICY_FILE` | Required reviewed operator policy; `config/policies/reference.json` is an example only |
 | `AIOS_LLM_PROVIDER` | `bedrock`, `openai`, or `deepseek`; `fake` is test-injection only |
 | `AIOS_LLM_MODEL` | Provider-compatible model or Bedrock inference-profile ID |
-| `AIOS_AWS_REGION` | Required for Bedrock |
-| `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` | Provider credentials for optional local adapters |
+| `AIOS_AWS_REGION` | Required for Bedrock and OpenAI IAM-gateway mode |
+| `AIOS_OPENAI_AUTH_MODE` | `api_key` by default; use `aws_iam_gateway` for the authenticated AgentCore gateway |
+| `AIOS_OPENAI_GATEWAY_ARN` | Required only in IAM-gateway mode; the HTTPS inference URL is derived from this ARN |
+| `OPENAI_API_KEY`, `AIOS_OPENAI_SECRET_ARN` | Direct OpenAI credential for local development or hosted rollback; both are forbidden in IAM-gateway mode |
+| `AIOS_OPENAI_BASE_URL` | Optional only in direct API-key mode; arbitrary base URLs are forbidden in IAM-gateway mode |
+| `DEEPSEEK_API_KEY` | Provider credential for the optional local DeepSeek adapter |
 | `AIOS_POSTGRES_DSN` | PostgreSQL checkpoint DSN |
 | `AIOS_CHECKPOINT_ENCRYPTION_KEY` | Exactly 16, 24, or 32 UTF-8 bytes for AES checkpoint encryption |
 | `AIOS_SANDBOX_IMAGE` | Restricted validation image; defaults to `aios-remediation-sandbox:local` |
@@ -296,37 +308,35 @@ Contents and Pull Requests write permission only when draft-PR writes are intent
 implemented. GitHub authentication, availability, API limits, hosted-server changes, and feature entitlements remain
 external runtime dependencies.
 
-`config/policies/demo.json` is a deliberately write-enabled policy scoped only to the Team 7 GitHub demo repository.
+`config/policies/demo.json` is a deliberately write-enabled policy scoped only to the Team 7 buggy e-commerce demo
+repository.
 The reference policy is also GitHub-only but remains write-disabled and should remain the safer starting point for other
 operators.
 
-## Ten-scenario demonstration
+## Buggy e-commerce demonstration
 
-The separate `aios-remediation-demo` repository contains ten immutable scenario branches and the matching diagnosis
-handoffs. List them from this repository with:
+The presentation UI preloads one `DiagnosisHandoffV1` for the deployed division-by-zero defect in
+`MtechSE-ArchAI-Team7/buggy-ecommerce-demo`. The handoff is pinned to the immutable commit currently deployed by Elastic
+Beanstalk and treats the deployment URL only as upstream evidence; Agent 3 never deploys or mutates that environment.
 
-```bash
-uv run python scripts/run_demo.py list
-```
+The reviewed demo policies allow changes only to `server.js`, dependency-free calculation helpers under `lib/`, and
+regression tests under `tests/`. Every candidate must pass `node --check server.js` and
+`node --test tests/calculate-average.test.js` without network access or package installation. The expected remediation
+extracts the average calculation into dependency-free logic, returns a typed client error for a zero divisor, preserves
+valid division, and adds the named built-in `node:test` regression file. Package manifests remain approval-required.
 
-Run a deterministic-model rehearsal through the real LangGraph workflow, GitHub's hosted MCP server, and Docker sandbox
-without creating remote state. This mode still requires `AIOS_GITHUB_TOKEN` and network access for clone and inspection:
+Hosted validation records prove the execution boundary without exposing the session: each task records the
+`AGENTCORE_CODE_INTERPRETER` backend, executor identifier, workspace/input digest, one-way session digest, enforced
+controls, outcome, duration, and explicit cleanup status. A fresh managed session is used for each operator-owned task.
+AWS documents JavaScript execution through its Node.js runtime in the
+[runtime selection guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-runtime-selection.html)
+and lists bundled Node.js libraries in the
+[pre-installed library reference](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-preinstalled-libraries.html).
+This scenario uses only built-in Node functionality and downloads no packages during validation.
 
-```bash
-uv run python scripts/run_demo.py scripted 01
-```
-
-Approval scenarios require `--reviewer` and always stop for interactive confirmation. Add `--github-writes` only when
-the private repository, reviewed demo policy, fine-grained token, and intentional draft-PR side effects are ready. Live
-mode submits the pinned handoff to the running API and expects configured GitHub writes:
-
-```bash
-uv run python scripts/run_demo.py live 01 --reviewer operator@example.org
-```
-
-The runner refuses duplicate open case/base draft PRs unless `--allow-duplicate` is explicit. Scenario 10 must finish
-as `UNSAFE_REMEDIATION`; it never creates a remote branch or PR. The target repository's cleanup script is dry-run-first
-and can close only matching demo drafts and delete only their generated `aios/remediation/case-demo-*` branches.
+Starting the preloaded run may create a generated branch and draft pull request when both runtime and policy GitHub
+writes are enabled. It never merges the pull request or deploys the result. Merely loading the UI, testing provider
+connectivity, or deploying Agent 3 does not submit the handoff or write to the target repository.
 
 ## HTTP API and lifecycle
 
@@ -393,6 +403,23 @@ make schemas
 Run the corresponding command after changing an API route, response model, example, tool descriptor, handoff, or policy
 model. The default test suite includes OpenAPI and tool-catalogue drift checks.
 
+### Assessment evaluation
+
+The tracked evaluation manifest at `config/evaluation/division-by-zero.json` fixes the sole scenario, source commit,
+four-tool inspection allowlist, required JavaScript tasks, terminal state, cleanup requirement, and zero-remote-write
+assertion. The default evaluation is credential-free and repeatable:
+
+```bash
+make evaluate
+make assessment-report
+```
+
+`make evaluate-hosted` is opt-in and runs one live trial with the configured model, GitHub MCP, immutable clone, and
+AgentCore Code Interpreter. The evaluator forces both GitHub write gates off regardless of ambient settings; an
+approval interrupt or any created remote object fails the evaluation. Its `1/1` result is demonstration evidence, not
+a statistically meaningful success rate. Sanitised run JSON is written under ignored `.artifacts/evaluation/`; only
+the generated report and catalogue JSON are tracked.
+
 ## Quality and test commands
 
 ```bash
@@ -401,17 +428,23 @@ make lint
 make format-check
 make typecheck
 make test
+make test-model-live
 make test-mcp
 make test-mcp-live
+make test-code-interpreter-live
 make security
 make build
 ```
 
 `make test` uses fake providers, an in-process GitHub-shaped MCP fixture, and in-memory checkpoints. It requires no cloud
 credentials, network access, GitHub repository, Docker daemon, PostgreSQL, EKS, or deployed service. `make test-mcp`
-runs the focused discovery, Streamable HTTP lifecycle, contract, and security suite. `make test-mcp-live` is explicitly
-opt-in and requires `AIOS_GITHUB_TOKEN`, `AIOS_LIVE_GITHUB_MCP_REPOSITORY_URL`, and
+runs the focused discovery, Streamable HTTP lifecycle, contract, and security suite. `make test-model-live` is
+explicitly opt-in, uses the AWS credential provider chain, and makes one bounded structured request through the
+configured authenticated gateway. `make test-mcp-live` is also opt-in and requires `AIOS_GITHUB_TOKEN`,
+`AIOS_LIVE_GITHUB_MCP_REPOSITORY_URL`, and
 `AIOS_LIVE_GITHUB_MCP_COMMIT_SHA` for an immutable public fixture; it is excluded from the default suite.
+`make test-code-interpreter-live` is separately opt-in. It runs harmless `node --check` and built-in `node:test`
+commands in fresh Code Interpreter sessions and asserts the backend, hashed-session evidence, and cleanup.
 
 Opt-in integration and image commands are:
 
@@ -466,16 +499,18 @@ bucket condition and object ARN to `a2a/tasks/*`; the existing `runs/*` artifact
 projections.
 
 Create the initial AgentCore Runtime manually with A2A protocol, IAM/SigV4 inbound authentication, public networking,
-and an immutable image URI. The release workflow never creates IAM, Memory, storage, secrets, runtimes, or endpoints.
+and an immutable image URI. The release workflow never creates IAM, Memory, secrets, runtimes, or endpoints; it does
+enforce and preserve the runtime's managed session-storage mount.
 Configure these non-secret environment variables during that initial provisioning:
 
 ```text
 AIOS_LLM_PROVIDER=openai
-AIOS_LLM_MODEL=gpt-5.6-terra
+AIOS_LLM_MODEL=kei-openai-target/gpt-5.6-terra
 AIOS_AWS_REGION=ap-southeast-1
-AIOS_OPENAI_SECRET_ARN=<openai-secrets-manager-arn>
+AIOS_OPENAI_AUTH_MODE=aws_iam_gateway
+AIOS_OPENAI_GATEWAY_ARN=arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju
 AIOS_POLICY_FILE=/app/config/policies/agentcore-demo.json
-AIOS_GITHUB_REPOSITORY=MtechSE-ArchAI-Team7/aios-remediation-demo
+AIOS_GITHUB_REPOSITORY=MtechSE-ArchAI-Team7/buggy-ecommerce-demo
 AIOS_GITHUB_WRITES_ENABLED=true
 AIOS_AGENTCORE_MEMORY_ID=<memory-id>
 AIOS_RUNTIME_SECRET_ARN=<secrets-manager-arn>
@@ -486,19 +521,32 @@ AIOS_WORKSPACE_ROOT=/mnt/workspace/runs
 AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 ```
 
-Mount managed session storage at `/mnt/workspace`. Store a two-field runtime JSON secret containing `github_token` and
-an exact 32-byte UTF-8 `checkpoint_encryption_key`. Store the OpenAI credential separately as the exact JSON document
-`{"OPENAI_APIKEY":"..."}` and grant the execution role read access only to those two secret ARNs. Never set
-`OPENAI_API_KEY` in AgentCore. The OpenAI adapter uses the Responses API with medium reasoning, a 4,096 completion-token
-limit, and provider response storage disabled. Keep Nova Micro invocation access only while a reversible Bedrock runtime
-version is required. The role also needs scoped ECR/logging, AgentCore Memory event access, Code Interpreter session
-operations, and object access only to the dedicated artifact bucket.
+Configure managed session storage exactly as
+`[{"sessionStorage":{"mountPath":"/mnt/workspace"}}]`. The hosted process performs a bounded create/remove probe below
+`/mnt/workspace/runs` during startup and fails with `WORKSPACE_ROOT_UNAVAILABLE` before model work when the mount is not
+writable. The release workflow adds the mount to older runtimes whose filesystem configuration is absent and preserves
+it on deployment and rollback. Store a two-field runtime JSON secret containing `github_token` and
+an exact 32-byte UTF-8 `checkpoint_encryption_key`. In IAM-gateway mode, do not set `OPENAI_API_KEY`,
+`AIOS_OPENAI_SECRET_ARN`, or `AIOS_OPENAI_BASE_URL`. Grant the runtime execution role
+`bedrock-agentcore:InvokeGateway` only on the configured gateway ARN. The transport obtains fresh credentials from the
+AWS provider chain for every request, replaces the SDK placeholder bearer header with SigV4, disables redirects, and
+rejects every host or path except the derived gateway origin and `/inference/v1/responses`.
+
+Direct mode remains available for local development and emergency rollback: set `AIOS_OPENAI_AUTH_MODE=api_key` and
+provide either `OPENAI_API_KEY` locally or `AIOS_OPENAI_SECRET_ARN` in AgentCore. The hosted secret must contain exactly
+`{"OPENAI_APIKEY":"..."}`. The qualified GPT-5.6 model name retains the Responses API, medium reasoning, a 4,096
+completion-token limit, `store=False`, and requests `reasoning.summary=auto`. Reasoning summaries are optional, bounded,
+and redacted; they are not raw chain-of-thought. Keep the OpenAI secret
+while the gateway service role or rollback procedure still uses it. The runtime role also needs scoped ECR/logging,
+AgentCore Memory event access, Code Interpreter session operations, and object access only to the dedicated artifact
+bucket.
 
 AgentCore Memory stores encrypted LangGraph checkpoints using actor `resolution-remediation-agent` and the run UUID as
 thread ID. Git operations use the mounted disposable workspace. Validation copies a secret-free archive to a fresh
 Code Interpreter session, runs only operator-owned JSON argv through a fixed `shell=False` runner, and always stops the
-session. The initial hosted policy supports pytest and JSON validation using an offline tool bundle; no package download
-or repository network access is allowed inside validation. Artifacts and audit events are redacted before immutable,
+session. The hosted e-commerce policy runs only the fixed JavaScript syntax and dependency-free regression tasks in
+the managed Node.js runtime; no package download or repository network access is allowed inside validation. Artifacts
+and audit events are redacted before immutable,
 digest-addressed S3 writes. GitHub writes remain double-gated and can create a draft PR but never merge it.
 
 Optional direct Agent 4 delivery is disabled by default. When `AIOS_AGENT4_DELIVERY_ENABLED=true`, the runtime also
@@ -513,6 +561,21 @@ server protocol if readiness or probing fails. A restored release still fails in
 investigate it.
 This host-release automation deploys the remediation service itself; it does not expand the workflow's authority to
 deploy customer changes, merge pull requests, mutate production, or execute rollback instructions.
+
+For gateway cutover, snapshot the current direct-mode runtime, deploy the backward-compatible UI, and create one
+immutable runtime version with the new image, explicit `/mnt/workspace` session storage, the qualified model,
+`aws_iam_gateway`, the gateway ARN, and no `AIOS_OPENAI_SECRET_ARN`. Preserve A2A protocol, network, lifecycle, MMDSv2,
+and unrelated environment values. After `READY`, run the provider probe and the code-defect demonstration through the
+UI, including approval, explainability trace, validation, cleanup, and draft-PR evidence. Keep the direct OpenAI secret
+and runtime-role secret permission through assessment. On failure, restore the snapshotted direct-mode image and
+environment while retaining the explicit workspace mount. The old unauthenticated LLM gateway and separate agent
+gateway remain out of scope.
+
+The supplementary `ExplainabilityTraceV1` A2A data part is emitted at approval checkpoints and terminal completion.
+It contains redacted audit decisions, policy controls, bounded MCP call records, evidence metadata without file
+contents, model metrics, and optional reasoning summaries. The primary diagnosis, approval, remediation handoff, and
+delivery schemas retain version `1.0`. A terminal `explainability.json` copy is included in the immutable evidence
+bundle.
 
 ## Sandbox and policy boundary
 

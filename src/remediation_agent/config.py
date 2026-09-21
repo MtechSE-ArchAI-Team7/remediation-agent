@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_AGENTCORE_GATEWAY_ARN = re.compile(
+    r"^arn:aws:bedrock-agentcore:(?P<region>[a-z0-9-]+):(?P<account>[0-9]{12}):gateway/"
+    r"(?P<gateway_id>[a-z0-9-]+)$"
+)
 
 
 class CheckpointSettings(BaseSettings):
@@ -40,8 +46,10 @@ class Settings(BaseSettings):
     llm_provider: Literal["fake", "bedrock", "openai", "deepseek"]
     llm_model: str | None = None
     aws_region: str | None = None
+    openai_auth_mode: Literal["api_key", "aws_iam_gateway"] = "api_key"
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_secret_arn: str | None = None
+    openai_gateway_arn: str | None = None
     deepseek_api_key: SecretStr | None = Field(default=None, validation_alias="DEEPSEEK_API_KEY")
     openai_base_url: str | None = None
     deepseek_base_url: str | None = None
@@ -68,7 +76,7 @@ class Settings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8080, ge=1, le=65535)
-    prompt_version: str = "remediation-v1"
+    prompt_version: str = "remediation-v2"
 
     agentcore_memory_id: str | None = None
     runtime_secret_arn: str | None = None
@@ -91,6 +99,7 @@ class Settings(BaseSettings):
         "deepseek_base_url",
         "openai_api_key",
         "openai_secret_arn",
+        "openai_gateway_arn",
         "deepseek_api_key",
         "postgres_dsn",
         "checkpoint_encryption_key",
@@ -133,8 +142,24 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_LLM_MODEL is required for live model providers")
         if self.llm_provider == "bedrock" and not self.aws_region:
             raise ValueError("AIOS_AWS_REGION is required for Bedrock")
-        if self.llm_provider == "openai" and self.openai_api_key is None and self.openai_secret_arn is None:
-            raise ValueError("OPENAI_API_KEY or AIOS_OPENAI_SECRET_ARN is required for OpenAI")
+        if self.llm_provider == "openai":
+            if self.openai_auth_mode == "api_key":
+                if self.openai_api_key is None and self.openai_secret_arn is None:
+                    raise ValueError("OPENAI_API_KEY or AIOS_OPENAI_SECRET_ARN is required for OpenAI API-key mode")
+                if self.openai_gateway_arn is not None:
+                    raise ValueError("AIOS_OPENAI_GATEWAY_ARN is only valid in AWS IAM gateway mode")
+            else:
+                if self.aws_region is None:
+                    raise ValueError("AIOS_AWS_REGION is required for OpenAI AWS IAM gateway mode")
+                if self.openai_gateway_arn is None:
+                    raise ValueError("AIOS_OPENAI_GATEWAY_ARN is required for OpenAI AWS IAM gateway mode")
+                if self.openai_api_key is not None or self.openai_secret_arn is not None:
+                    raise ValueError("OpenAI API keys and AIOS_OPENAI_SECRET_ARN are forbidden in AWS IAM gateway mode")
+                if self.openai_base_url is not None:
+                    raise ValueError("AIOS_OPENAI_BASE_URL is forbidden in AWS IAM gateway mode")
+                self._validated_openai_gateway_parts()
+        elif self.openai_gateway_arn is not None:
+            raise ValueError("AIOS_OPENAI_GATEWAY_ARN requires AIOS_LLM_PROVIDER=openai")
         if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
             raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
         if self.github_writes_enabled and self.github_token is None and self.runtime_secret_arn is None:
@@ -146,6 +171,23 @@ class Settings(BaseSettings):
                 "AIOS_AGENT4_RUNTIME_ARN and AIOS_AGENT4_REGION are required when Agent 4 delivery is enabled"
             )
         return self
+
+    def openai_gateway_base_url(self) -> str:
+        """Derive the sole OpenAI-compatible base URL permitted for the configured gateway."""
+
+        region, gateway_id = self._validated_openai_gateway_parts()
+        return f"https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/inference/v1"
+
+    def _validated_openai_gateway_parts(self) -> tuple[str, str]:
+        if self.openai_gateway_arn is None:
+            raise ValueError("AIOS_OPENAI_GATEWAY_ARN is required for OpenAI AWS IAM gateway mode")
+        match = _AGENTCORE_GATEWAY_ARN.fullmatch(self.openai_gateway_arn)
+        if match is None:
+            raise ValueError("AIOS_OPENAI_GATEWAY_ARN must be a valid AWS AgentCore gateway ARN")
+        region = match.group("region")
+        if region != self.aws_region:
+            raise ValueError("AIOS_OPENAI_GATEWAY_ARN Region must match AIOS_AWS_REGION")
+        return region, match.group("gateway_id")
 
     def require_persistent_checkpointing(self) -> tuple[str, str]:
         if self.postgres_dsn is None:

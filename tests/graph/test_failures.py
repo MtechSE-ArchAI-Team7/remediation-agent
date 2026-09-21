@@ -103,7 +103,7 @@ async def test_github_write_target_must_match_handoff_repository() -> None:
     service, model, repository, _, _, _, _ = build_test_service(
         responses,
         github_writes_enabled=True,
-        github_repository="MtechSE-ArchAI-Team7/aios-remediation-demo",
+        github_repository="MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
     )
     payload = diagnosis_handoff().model_dump(mode="json")
     payload["repository"] = {
@@ -126,13 +126,13 @@ async def test_partial_github_failure_retains_prepared_payload_and_cleanup_evide
     service, _, repository, sandbox, pr, _, _ = build_test_service(
         scripted_responses(),
         github_writes_enabled=True,
-        github_repository="MtechSE-ArchAI-Team7/aios-remediation-demo",
+        github_repository="MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
     )
     payload = diagnosis_handoff().model_dump(mode="json")
     payload["repository"] = {
         "provider": "GITHUB",
-        "url": "https://github.com/MtechSE-ArchAI-Team7/aios-remediation-demo.git",
-        "base_branch": "scenario/01-invalid-quantity",
+        "url": "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git",
+        "base_branch": "main",
         "commit_sha": "a" * 40,
     }
 

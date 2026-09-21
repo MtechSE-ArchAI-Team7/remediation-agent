@@ -11,9 +11,25 @@ from uuid import uuid4
 
 from unidiff import PatchSet  # type: ignore[attr-defined]
 
-from remediation_agent.domain.enums import ValidationOutcome
-from remediation_agent.domain.models import ArtifactManifest, CleanupResult, ValidationTaskResult, WorkspaceRef
-from remediation_agent.ports.models import PatchApplyRequest, PatchApplyResult, ValidationTaskRequest
+from remediation_agent.domain.enums import (
+    ValidationBackend,
+    ValidationCleanupStatus,
+    ValidationOutcome,
+)
+from remediation_agent.domain.models import (
+    ArtifactManifest,
+    CleanupResult,
+    ValidationExecutionRecord,
+    ValidationTaskResult,
+    WorkspaceRef,
+)
+from remediation_agent.ports.models import (
+    PatchApplyRequest,
+    PatchApplyResult,
+    SandboxExecutionProfile,
+    SandboxTaskExecution,
+    ValidationTaskRequest,
+)
 
 _CONTAINER_TMPFS = "/tmp:rw,noexec,nosuid,size=64m"  # noqa: S108  # nosec B108
 
@@ -30,6 +46,20 @@ class DockerSandboxExecutor:
         self.image = image
         self._active_containers: dict[str, str] = {}
 
+    def execution_profile(self) -> SandboxExecutionProfile:
+        return SandboxExecutionProfile(
+            backend=ValidationBackend.DOCKER,
+            executor_id=self.image,
+            enforced_controls=[
+                "OPERATOR_DEFINED_TASK",
+                "FIXED_ARGV_NO_SHELL",
+                "NETWORK_DISABLED",
+                "NON_ROOT",
+                "RESOURCE_LIMITS",
+                "TIMEOUT_AND_OUTPUT_CAP",
+            ],
+        )
+
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult:
         root = self._workspace(request.workspace)
         self._validate_patch_paths(root, request.unified_diff)
@@ -43,7 +73,7 @@ class DockerSandboxExecutor:
         await self._run(self._git_argv(root, "reset", "--hard", workspace.base_commit), cwd=root, timeout=60.0)
         await self._run(self._git_argv(root, "clean", "-fdx"), cwd=root, timeout=60.0)
 
-    async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult:
+    async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
         root = self._workspace(request.workspace)
         unresolved_workdir = root / request.task.cwd
         cursor = root
@@ -105,7 +135,7 @@ class DockerSandboxExecutor:
             if container_removed:
                 self._active_containers.pop(container_name, None)
             duration_ms = int((time.monotonic() - started) * 1_000)
-            return ValidationTaskResult(
+            result = ValidationTaskResult(
                 task_name=request.task_name,
                 outcome=ValidationOutcome.TIMED_OUT if container_removed else ValidationOutcome.ERROR,
                 duration_ms=duration_ms,
@@ -115,6 +145,11 @@ class DockerSandboxExecutor:
                     else "Validation timed out and forced container cleanup failed."
                 ),
             )
+            return self._task_execution(
+                request,
+                result,
+                ValidationCleanupStatus.SUCCEEDED if container_removed else ValidationCleanupStatus.FAILED,
+            )
         except (OSError, RuntimeError):
             if await self._remove_container(container_name, root):
                 self._active_containers.pop(container_name, None)
@@ -123,7 +158,7 @@ class DockerSandboxExecutor:
             self._active_containers.pop(container_name, None)
         duration_ms = int((time.monotonic() - started) * 1_000)
         outcome = ValidationOutcome.PASSED if return_code == 0 else ValidationOutcome.FAILED
-        return ValidationTaskResult(
+        result = ValidationTaskResult(
             task_name=request.task_name,
             outcome=outcome,
             exit_code=return_code,
@@ -131,6 +166,30 @@ class DockerSandboxExecutor:
             stdout=stdout,
             stderr=stderr,
             output_truncated=truncated,
+        )
+        return self._task_execution(request, result, ValidationCleanupStatus.SUCCEEDED)
+
+    def _task_execution(
+        self,
+        request: ValidationTaskRequest,
+        result: ValidationTaskResult,
+        cleanup_status: ValidationCleanupStatus,
+    ) -> SandboxTaskExecution:
+        profile = self.execution_profile()
+        input_digest = "sha256:" + hashlib.sha256(request.model_dump_json().encode("utf-8")).hexdigest()
+        return SandboxTaskExecution(
+            result=result,
+            execution=ValidationExecutionRecord(
+                attempt=request.attempt,
+                task_name=request.task_name,
+                backend=profile.backend,
+                executor_id=profile.executor_id,
+                input_digest=input_digest,
+                enforced_controls=profile.enforced_controls,
+                cleanup_status=cleanup_status,
+                outcome=result.outcome,
+                duration_ms=result.duration_ms,
+            ),
         )
 
     async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest:

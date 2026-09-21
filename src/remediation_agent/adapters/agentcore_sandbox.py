@@ -20,9 +20,13 @@ import boto3  # type: ignore[import-untyped]
 from botocore.config import Config  # type: ignore[import-untyped]
 
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor, SandboxError
-from remediation_agent.domain.enums import ValidationOutcome
-from remediation_agent.domain.models import ValidationTaskResult
-from remediation_agent.ports.models import ValidationTaskRequest
+from remediation_agent.domain.enums import (
+    ValidationBackend,
+    ValidationCleanupStatus,
+    ValidationOutcome,
+)
+from remediation_agent.domain.models import ValidationExecutionRecord, ValidationTaskResult
+from remediation_agent.ports.models import SandboxExecutionProfile, SandboxTaskExecution, ValidationTaskRequest
 
 _MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _MAX_ARCHIVE_FILES = 50_000
@@ -79,7 +83,21 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
             ),
         )
 
-    async def run_task(self, request: ValidationTaskRequest) -> ValidationTaskResult:
+    def execution_profile(self) -> SandboxExecutionProfile:
+        return SandboxExecutionProfile(
+            backend=ValidationBackend.AGENTCORE_CODE_INTERPRETER,
+            executor_id=self.code_interpreter_identifier,
+            enforced_controls=[
+                "OPERATOR_DEFINED_TASK",
+                "FIXED_ARGV_NO_SHELL",
+                "FRESH_MANAGED_SESSION",
+                "SECRET_FREE_ARCHIVE",
+                "TIMEOUT_AND_OUTPUT_CAP",
+                "SESSION_CLEANUP",
+            ],
+        )
+
+    async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
         root = self._workspace(request.workspace)
         self._validate_workdir(root, request.task.cwd)
         self._validate_environment(request.task.environment)
@@ -90,43 +108,85 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
 
         started = time.monotonic()
         session_id: str | None = None
+        raw_result: dict[str, str | int | bool] | None = None
+        task_result: ValidationTaskResult | None = None
+        failure: Exception | None = None
         try:
             session_id = await asyncio.to_thread(self._start_session, request.workspace.workspace_id)
             await asyncio.to_thread(self._upload, session_id, archive, bundle)
-            result = await asyncio.wait_for(
+            raw_result = await asyncio.wait_for(
                 asyncio.to_thread(self._execute, session_id, request),
                 timeout=float(request.task.timeout_seconds) + 30.0,
             )
         except TimeoutError:
-            return ValidationTaskResult(
+            task_result = ValidationTaskResult(
                 task_name=request.task_name,
                 outcome=ValidationOutcome.TIMED_OUT,
                 duration_ms=int((time.monotonic() - started) * 1_000),
                 stderr="Validation task exceeded its configured timeout.",
             )
         except Exception as exc:  # noqa: BLE001 - normalize cloud SDK failures at the adapter boundary
-            raise SandboxError(f"AgentCore validation failed: {type(exc).__name__}") from exc
-        finally:
-            if session_id is not None:
-                stopped = await asyncio.to_thread(self._stop_session, session_id)
-                if not stopped:
-                    raise SandboxError("Code Interpreter session cleanup failed")
+            failure = exc
 
-        raw_exit_code = result["exit_code"]
-        raw_truncated = result["truncated"]
-        if not isinstance(raw_exit_code, int) or isinstance(raw_exit_code, bool) or not isinstance(raw_truncated, bool):
-            raise SandboxError("trusted validation runner returned invalid result types")
-        stdout, stdout_truncated = _cap(result["stdout"], request.task.output_limit_bytes)
-        remaining = max(0, request.task.output_limit_bytes - len(stdout.encode("utf-8")))
-        stderr, stderr_truncated = _cap(result["stderr"], remaining)
-        return ValidationTaskResult(
-            task_name=request.task_name,
-            outcome=ValidationOutcome.PASSED if raw_exit_code == 0 else ValidationOutcome.FAILED,
-            exit_code=raw_exit_code,
-            duration_ms=int((time.monotonic() - started) * 1_000),
-            stdout=stdout,
-            stderr=stderr,
-            output_truncated=stdout_truncated or stderr_truncated or raw_truncated,
+        cleanup_status = ValidationCleanupStatus.NOT_APPLICABLE
+        if session_id is not None:
+            stopped = await asyncio.to_thread(self._stop_session, session_id)
+            cleanup_status = ValidationCleanupStatus.SUCCEEDED if stopped else ValidationCleanupStatus.FAILED
+
+        if failure is not None:
+            suffix = " and session cleanup failed" if cleanup_status is ValidationCleanupStatus.FAILED else ""
+            task_result = ValidationTaskResult(
+                task_name=request.task_name,
+                outcome=ValidationOutcome.ERROR,
+                duration_ms=int((time.monotonic() - started) * 1_000),
+                stderr=f"AgentCore validation failed: {type(failure).__name__}{suffix}",
+            )
+
+        if task_result is None:
+            if raw_result is None:
+                raise SandboxError("Code Interpreter returned no validation result")
+            raw_exit_code = raw_result["exit_code"]
+            raw_truncated = raw_result["truncated"]
+            if (
+                not isinstance(raw_exit_code, int)
+                or isinstance(raw_exit_code, bool)
+                or not isinstance(raw_truncated, bool)
+            ):
+                raise SandboxError("trusted validation runner returned invalid result types")
+            stdout, stdout_truncated = _cap(raw_result["stdout"], request.task.output_limit_bytes)
+            remaining = max(0, request.task.output_limit_bytes - len(stdout.encode("utf-8")))
+            stderr, stderr_truncated = _cap(raw_result["stderr"], remaining)
+            task_result = ValidationTaskResult(
+                task_name=request.task_name,
+                outcome=ValidationOutcome.PASSED if raw_exit_code == 0 else ValidationOutcome.FAILED,
+                exit_code=raw_exit_code,
+                duration_ms=int((time.monotonic() - started) * 1_000),
+                stdout=stdout,
+                stderr=stderr,
+                output_truncated=stdout_truncated or stderr_truncated or raw_truncated,
+            )
+        if cleanup_status is ValidationCleanupStatus.FAILED:
+            task_result = task_result.model_copy(
+                update={
+                    "outcome": ValidationOutcome.ERROR,
+                    "stderr": "Code Interpreter session cleanup failed.",
+                }
+            )
+        profile = self.execution_profile()
+        return SandboxTaskExecution(
+            result=task_result,
+            execution=ValidationExecutionRecord(
+                attempt=request.attempt,
+                task_name=request.task_name,
+                backend=profile.backend,
+                executor_id=profile.executor_id,
+                input_digest=archive_digest(archive),
+                session_digest=archive_digest(session_id.encode("utf-8")) if session_id else None,
+                enforced_controls=profile.enforced_controls,
+                cleanup_status=cleanup_status,
+                outcome=task_result.outcome,
+                duration_ms=task_result.duration_ms,
+            ),
         )
 
     def _start_session(self, workspace_id: str) -> str:
