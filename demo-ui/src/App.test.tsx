@@ -50,12 +50,13 @@ describe("AIOS remediation console", () => {
     fetchMock.mockResolvedValue(response(runView("DRAFT_PR_CREATED")));
     render(<App />);
 
+    expect(screen.getByRole("tab", { name: "Run Console" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Tool and policy boundary")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Agent" }));
     expect(screen.getByText("Tool and policy boundary")).toBeInTheDocument();
-    const boundaryLink = screen.getByRole("link", { name: "Tool boundary" });
-    boundaryLink.focus();
-    expect(boundaryLink).toHaveFocus();
     expect(screen.getByText("4", { selector: ".boundary-summary strong" })).toBeInTheDocument();
     expect(screen.getByText("13", { selector: ".boundary-summary strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Run Console" }));
     expect(screen.getByText("MtechSE-ArchAI-Team7/buggy-ecommerce-demo")).toBeInTheDocument();
     expect(screen.getByText("TICKET-111")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /aios-ecommerce\.ap-southeast-1\.elasticbeanstalk\.com/ })).toHaveAttribute(
@@ -152,8 +153,12 @@ describe("AIOS remediation console", () => {
   it("shows stable gateway failures in readable form", async () => {
     fetchMock.mockResolvedValue(response({ error: "AGENTCORE_TIMEOUT" }, 504));
     render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "System Status" }));
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
     expect(await screen.findByText("agentcore timeout")).toBeInTheDocument();
+    expect(screen.getByText("UNAVAILABLE")).toHaveClass("error");
+    fireEvent.click(screen.getByRole("tab", { name: "Run Console" }));
+    expect(screen.getByText("agentcore timeout")).not.toBeVisible();
   });
 
   it("shows the bounded A2A failure code for rejected runs", async () => {
@@ -168,6 +173,7 @@ describe("AIOS remediation console", () => {
   it("does not mislabel non-JSON gateway responses as invalid handoff JSON", async () => {
     fetchMock.mockResolvedValue(nonJsonResponse());
     render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "System Status" }));
     fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
 
     expect(await screen.findByText("invalid gateway response")).toBeInTheDocument();
@@ -180,6 +186,51 @@ describe("AIOS remediation console", () => {
     fireEvent.change(screen.getByLabelText("Diagnosis handoff JSON"), { target: { value: "{" } });
 
     expect(screen.getByRole("button", { name: "Create remediation run" })).toBeDisabled();
+  });
+
+  it("supports keyboard tab navigation and preserves Run Console input", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText("Advanced input"));
+    const input = screen.getByLabelText("Diagnosis handoff JSON");
+    fireEvent.change(input, { target: { value: '{"case_id":"preserved"}' } });
+
+    const runTab = screen.getByRole("tab", { name: "Run Console" });
+    runTab.focus();
+    fireEvent.keyDown(runTab, { key: "ArrowRight" });
+
+    const agentTab = screen.getByRole("tab", { name: "Agent" });
+    expect(agentTab).toHaveFocus();
+    expect(agentTab).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("complementary", { name: "Run Console sections" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(agentTab, { key: "End" });
+    expect(screen.getByRole("tab", { name: "System Status" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("tab", { name: "Run Console" }));
+    expect(screen.getByLabelText("Diagnosis handoff JSON")).toHaveValue('{"case_id":"preserved"}');
+    expect(screen.getByRole("complementary", { name: "Run Console sections" })).toBeInTheDocument();
+  });
+
+  it("shows explicit provider probe results only in System Status", async () => {
+    fetchMock.mockResolvedValue(response({
+      output: {
+        status: "SUCCEEDED",
+        provider: "openai",
+        model: "kei-openai-target/gpt-5.6-terra",
+        duration_ms: 321,
+        input_tokens: 8,
+        output_tokens: 2,
+        response_digest: "sha256:probe",
+      },
+    }));
+    render(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "System Status" }));
+
+    expect(screen.getByText("NOT TESTED")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Test connection" }));
+
+    expect(await screen.findByText("openai · kei-openai-target/gpt-5.6-terra · 321 ms")).toBeInTheDocument();
+    expect(screen.getByText("AVAILABLE")).toHaveClass("success");
+    expect(fetchMock).toHaveBeenCalledWith("/api/probe", expect.objectContaining({ method: "POST" }));
   });
 
   it("presents workflow, validation, evidence, and the draft PR as console results", async () => {

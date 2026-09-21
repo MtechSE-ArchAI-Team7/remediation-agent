@@ -4,6 +4,12 @@ This presentation-only module is a React dashboard and a small Python Lambda gat
 serves the compiled application and signs calls to the existing AgentCore runtime. It deliberately has no login,
 Cognito, API Gateway, database, or user-management layer.
 
+The console is organized into three top-level views. **Run Console** contains the diagnosis handoff, workflow,
+approval, explainability, and results. **Agent** contains the deployed region/runtime/model configuration and the
+generated capability catalogue. **System Status** distinguishes page-serving and configured dependencies from the
+only live dependency check: the operator-triggered OpenAI provider probe. Switching views never starts a run or a
+connectivity check.
+
 ## Browser/API contract
 
 | Route | Purpose |
@@ -29,9 +35,10 @@ compatible and simply omit the explainability section.
 
 The four-lane tool boundary is generated from the Python operational catalogue and separates the configured model,
 four model-callable inspection/control tools, deterministic policy/approval boundary, and thirteen workflow-only
-operations. A live trace highlights tools and policy controls actually used. When typed validation execution records
-are present, the dedicated panel shows the backend, operator-owned task controls, input and hashed-session evidence,
-outcome, and cleanup status; older traces without this additive field still render normally.
+operations. It is a configuration-focused catalogue; run-specific tool calls and policy controls remain in the Run
+Console explainability trace. When typed validation execution records are present, the dedicated explainability panel
+shows the backend, operator-owned task controls, input and hashed-session evidence, outcome, and cleanup status; older
+traces without this additive field still render normally.
 
 ## Development and build
 

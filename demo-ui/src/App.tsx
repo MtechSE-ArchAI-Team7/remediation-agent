@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { decideRun, GatewayError, getRun, probeModel, startRun } from "./api";
 import toolCatalog from "./generated/tool-catalog.json";
 import divisionByZero from "./scenarios/division-by-zero.json";
@@ -6,6 +7,21 @@ import type { ApprovalStatus, ExplainabilityTrace, RemediationRunView } from "./
 
 const RUN_STORAGE_KEY = "aios-remediation-ecommerce-run-id";
 const SUCCESS_STATUSES = new Set(["DRAFT_PR_CREATED", "DRAFT_PR_PREPARED"]);
+
+const AGENT_CONFIG = {
+  region: "ap-southeast-1",
+  runtime: "AgentCore",
+  provider: "OpenAI",
+  model: "kei-openai-target/gpt-5.6-terra",
+} as const;
+
+const CONSOLE_TABS = [
+  { id: "run", label: "Run Console" },
+  { id: "agent", label: "Agent" },
+  { id: "status", label: "System Status" },
+] as const;
+
+type ConsoleTab = (typeof CONSOLE_TABS)[number]["id"];
 
 const WORKFLOW_STEPS = [
   ["Handoff", "Diagnosis accepted"],
@@ -53,9 +69,9 @@ function displayStatus(value: string): string {
 }
 
 function statusTone(value: string): string {
-  if (["PASSED", "APPROVED", "DRAFT_PR_CREATED", "DRAFT_PR_PREPARED"].includes(value)) return "success";
-  if (value === "PENDING" || value === "AWAITING_APPROVAL" || value.includes("TIMED_OUT")) return "warning";
-  if (value.includes("FAILED") || value.includes("ERROR") || value.includes("DENIED") || value === "REJECTED") {
+  if (["PASSED", "APPROVED", "AVAILABLE", "DRAFT_PR_CREATED", "DRAFT_PR_PREPARED"].includes(value)) return "success";
+  if (["PENDING", "TESTING", "AWAITING_APPROVAL"].includes(value) || value.includes("TIMED_OUT")) return "warning";
+  if (value.includes("FAILED") || value.includes("ERROR") || value.includes("DENIED") || ["REJECTED", "UNAVAILABLE"].includes(value)) {
     return "error";
   }
   return "neutral";
@@ -94,13 +110,9 @@ function formatArguments(argumentsValue: Record<string, unknown>): string {
   return entries.map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`).join(" · ");
 }
 
-function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
+function ToolBoundaryPanel() {
   const modelTools = toolCatalog.tools.filter((tool) => tool.execution_mode !== "DETERMINISTIC_WORKFLOW");
   const workflowTools = toolCatalog.tools.filter((tool) => tool.execution_mode === "DETERMINISTIC_WORKFLOW");
-  const calledTools = new Set(trace?.inspection_tool_calls.map((call) => call.tool_name) ?? []);
-  const triggeredControls = new Set(trace?.events.flatMap((event) => event.policy_control_ids) ?? []);
-  const validationBackends = new Set((trace?.validation_executions ?? []).map((item) => item.backend));
-  const configuredModel = trace?.model_calls[0];
   const groupedWorkflowTools = workflowTools.reduce<Record<string, typeof workflowTools>>((groups, tool) => {
     groups[tool.category] = [...(groups[tool.category] ?? []), tool];
     return groups;
@@ -126,7 +138,7 @@ function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
           <div className="lane-heading"><span>1</span><div><strong>Configured model</strong><small>Proposes and selects; cannot grant authority</small></div></div>
           <div className="lane-content">
             <span className="boundary-node neutral">
-              {configuredModel ? `${configuredModel.provider} / ${configuredModel.model}` : "Configured at runtime"}
+              {AGENT_CONFIG.provider} / {AGENT_CONFIG.model}
               <small>Structured output and bounded tool calling</small>
             </span>
           </div>
@@ -135,8 +147,8 @@ function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
           <div className="lane-heading"><span>2</span><div><strong>Model-callable allowlist</strong><small>Read-only inspection and one local finish control</small></div></div>
           <div className="lane-content tool-node-list">
             {modelTools.map((tool) => (
-              <span className={`boundary-node ${calledTools.has(tool.operation) ? "executed" : `effect-${tool.effect.toLowerCase().replaceAll("_", "-")}`}`} key={tool.tool_id}>
-                <code>{tool.operation}</code><small>{calledTools.has(tool.operation) ? "Executed" : tool.effect.replaceAll("_", " ")}</small>
+              <span className={`boundary-node effect-${tool.effect.toLowerCase().replaceAll("_", "-")}`} key={tool.tool_id}>
+                <code>{tool.operation}</code><small>{tool.effect.replaceAll("_", " ")}</small>
               </span>
             ))}
           </div>
@@ -145,7 +157,6 @@ function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
           <div className="lane-heading"><span>3</span><div><strong>Host policy and approval boundary</strong><small>Repository, commit, path, limits, task names, and write gates</small></div></div>
           <div className="lane-content">
             <span className="boundary-node policy">Operator policy is authoritative</span>
-            {[...triggeredControls].map((control) => <code className="triggered-control" key={control}>{control}</code>)}
           </div>
         </li>
         <li className="boundary-lane">
@@ -165,9 +176,6 @@ function ToolBoundaryPanel({ trace }: { trace: ExplainabilityTrace | null }) {
               <strong>Optional remote write</strong>
               <span>Application gate + operator-policy gate · draft only · never merge or deploy</span>
             </div>
-            {validationBackends.size > 0 && (
-              <div className="active-backends"><strong>Observed validation backend</strong>{[...validationBackends].map((backend) => <code key={backend}>{displayStatus(backend)}</code>)}</div>
-            )}
           </div>
         </li>
       </ol>
@@ -340,14 +348,17 @@ function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
 }
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState<ConsoleTab>("run");
   const [handoffText, setHandoffText] = useState(JSON.stringify(divisionByZero, null, 2));
   const [runId, setRunId] = useState(() => localStorage.getItem(RUN_STORAGE_KEY) ?? "");
   const [run, setRun] = useState<RemediationRunView | null>(null);
   const [busy, setBusy] = useState<"run" | "probe" | null>(null);
-  const [error, setError] = useState("");
+  const [runError, setRunError] = useState("");
+  const [probeError, setProbeError] = useState("");
   const [probe, setProbe] = useState("");
   const [reviewer, setReviewer] = useState("Arabasta");
   const [comment, setComment] = useState("Approved for the AgentCore demonstration.");
+  const tabRefs = useRef<Record<ConsoleTab, HTMLButtonElement | null>>({ run: null, agent: null, status: null });
 
   const parsedHandoff = useMemo(() => {
     try {
@@ -358,10 +369,9 @@ export default function App() {
   }, [handoffText]);
 
   async function start() {
-    setError("");
-    setProbe("");
+    setRunError("");
     if (parsedHandoff === null) {
-      setError("The handoff JSON is not valid.");
+      setRunError("The handoff JSON is not valid.");
       return;
     }
     const nextRunId = crypto.randomUUID();
@@ -375,16 +385,16 @@ export default function App() {
       localStorage.setItem(RUN_STORAGE_KEY, response.output.task_id);
       localStorage.setItem(`${RUN_STORAGE_KEY}:session`, response.output.session_id);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setRunError(errorMessage(caught));
     } finally {
       setBusy(null);
     }
   }
 
   async function resume() {
-    setError("");
+    setRunError("");
     if (!runId) {
-      setError("Create a run before attempting to refresh it.");
+      setRunError("Create a run before attempting to refresh it.");
       return;
     }
     setBusy("run");
@@ -394,7 +404,7 @@ export default function App() {
       const response = await getRun(runId, sessionId);
       setRun(response.output);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setRunError(errorMessage(caught));
     } finally {
       setBusy(null);
     }
@@ -402,7 +412,7 @@ export default function App() {
 
   async function decide(status: ApprovalStatus) {
     if (!run?.approval_request) return;
-    setError("");
+    setRunError("");
     setBusy("run");
     try {
       const response = await decideRun(run.run_id, run.session_id, {
@@ -414,21 +424,21 @@ export default function App() {
       });
       setRun(response.output);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setRunError(errorMessage(caught));
     } finally {
       setBusy(null);
     }
   }
 
   async function probeOpenAI() {
-    setError("");
+    setProbeError("");
     setProbe("");
     setBusy("probe");
     try {
       const response = await probeModel();
       setProbe(`${response.output.provider} · ${response.output.model} · ${response.output.duration_ms} ms`);
     } catch (caught) {
-      setError(errorMessage(caught));
+      setProbeError(errorMessage(caught));
     } finally {
       setBusy(null);
     }
@@ -437,15 +447,30 @@ export default function App() {
   const result = run?.result;
   const successful = run ? SUCCESS_STATUSES.has(run.status) : false;
   const runStatus = run?.status ?? (busy === "run" ? "PENDING" : "READY");
-  const requestFailure = error || (run?.failure_code ? run.failure_code.replaceAll("_", " ").toLowerCase() : "");
+  const requestFailure = runError || (run?.failure_code ? run.failure_code.replaceAll("_", " ").toLowerCase() : "");
+  const probeStatus = busy === "probe" ? "TESTING" : probe ? "AVAILABLE" : probeError ? "UNAVAILABLE" : "NOT TESTED";
   const approvalReasons = run?.approval_request
     ? run.approval_request.reasons.filter((reason) => reason.trim() !== run.approval_request?.summary.trim())
     : [];
 
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % CONSOLE_TABS.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + CONSOLE_TABS.length) % CONSOLE_TABS.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = CONSOLE_TABS.length - 1;
+    else return;
+
+    event.preventDefault();
+    const nextTab = CONSOLE_TABS[nextIndex].id;
+    setActiveTab(nextTab);
+    tabRefs.current[nextTab]?.focus();
+  }
+
   return (
     <div className="console-root">
       <header className="utility-header">
-        <a className="product-brand" href="#overview" aria-label="AIOS Operations home">
+        <a className="product-brand" href="#overview" aria-label="AIOS Operations home" onClick={() => setActiveTab("run")}>
           <span className="product-mark">A</span>
           <span>AIOS Operations</span>
         </a>
@@ -457,56 +482,67 @@ export default function App() {
         </div>
       </header>
 
-      <div className="console-frame">
-        <aside className="service-nav" aria-label="Page sections">
+      <nav className="console-tabs" aria-label="Remediation console views" role="tablist">
+        {CONSOLE_TABS.map((tab, index) => (
+          <button
+            key={tab.id}
+            id={`tab-${tab.id}`}
+            ref={(element) => { tabRefs.current[tab.id] = element; }}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls={`panel-${tab.id}`}
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleTabKeyDown(event, index)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className={`console-frame ${activeTab === "run" ? "has-service-nav" : ""}`}>
+        {activeTab === "run" && <aside className="service-nav" aria-label="Run Console sections">
           <div className="service-nav-title">
-            <span>Service</span>
-            <strong>Remediation</strong>
+            <span>Run Console</span>
+            <strong>Sections</strong>
           </div>
           <nav>
             <a href="#overview" className="active">Overview</a>
             <a href="#handoff">Handoff</a>
             <a href="#workflow">Workflow</a>
-            <a href="#tool-boundary">Tool boundary</a>
             {run?.approval_request && <a href="#approval">Approval</a>}
             {run?.explainability && <a href="#explainability">Explainability</a>}
             {result && <a href="#results">Results</a>}
-            <a href="#connectivity">Connectivity</a>
           </nav>
           <div className="service-nav-meta">
             <span>Environment</span>
             <strong>Demo</strong>
           </div>
-        </aside>
+        </aside>}
 
         <main className="console-main">
-          <nav className="breadcrumbs" aria-label="Breadcrumb">
-            <a href="#overview">AIOS</a><span>/</span><a href="#handoff">Remediation</a><span>/</span><strong>Run console</strong>
-          </nav>
+          <section id="panel-run" role="tabpanel" aria-labelledby="tab-run" hidden={activeTab !== "run"}>
+            <nav className="breadcrumbs" aria-label="Breadcrumb">
+              <a href="#overview">AIOS</a><span>/</span><a href="#handoff">Remediation</a><span>/</span><strong>Run Console</strong>
+            </nav>
 
-          <section className="page-header" id="overview">
-            <div>
-              <h1>Remediation console</h1>
-              <p>Create and monitor a bounded remediation run from an Agent 2 diagnosis handoff.</p>
-            </div>
-            <span className={`status-badge ${statusTone(runStatus)}`}><i />{displayStatus(runStatus)}</span>
-          </section>
+            <section className="page-header" id="overview">
+              <div>
+                <h1>Remediation console</h1>
+                <p>Create and monitor a bounded remediation run from an Agent 2 diagnosis handoff.</p>
+              </div>
+              <span className={`status-badge ${statusTone(runStatus)}`}><i />{displayStatus(runStatus)}</span>
+            </section>
 
-          <section className="service-summary" aria-label="Runtime configuration">
-            <div><span>Region</span><strong>ap-southeast-1</strong></div>
-            <div><span>Runtime</span><strong>AgentCore</strong></div>
-            <div><span>Model provider</span><strong>OpenAI</strong></div>
-            <div><span>Model</span><strong>kei-openai-target/gpt-5.6-terra</strong></div>
-          </section>
+            {requestFailure && (
+              <div className="alert error" role="alert">
+                <span className="alert-icon">!</span>
+                <div><strong>Request failed</strong><p>{requestFailure}</p></div>
+              </div>
+            )}
 
-          {requestFailure && (
-            <div className="alert error" role="alert">
-              <span className="alert-icon">!</span>
-              <div><strong>Request failed</strong><p>{requestFailure}</p></div>
-            </div>
-          )}
-
-          <div className="primary-grid">
+            <div className="primary-grid">
             <section className="content-card" id="handoff">
               <header className="card-header">
                 <div><h2>Create remediation run</h2><p>Submit a typed diagnosis against an immutable repository commit.</p></div>
@@ -584,11 +620,9 @@ export default function App() {
                 )}
               </div>
             </section>
-          </div>
+            </div>
 
-          <ToolBoundaryPanel trace={run?.explainability ?? null} />
-
-          {run?.approval_request && (
+            {run?.approval_request && (
             <section className="content-card approval-card" id="approval">
               <header className="card-header warning-header">
                 <div><span className="section-kicker">Review required · {run.approval_request.kind}</span><h2>Approval checkpoint</h2></div>
@@ -614,11 +648,11 @@ export default function App() {
                 </div>
               </div>
             </section>
-          )}
+            )}
 
-          {run?.explainability && <ExplainabilityPanel trace={run.explainability} />}
+            {run?.explainability && <ExplainabilityPanel trace={run.explainability} />}
 
-          {result && (
+            {result && (
             <section id="results" className="results-section">
               <div className={`outcome-banner ${statusTone(result.final_status)}`}>
                 <div><span className="outcome-icon">{successful ? "✓" : "!"}</span><div><strong>{displayStatus(result.final_status)}</strong><p>The remediation workflow has reached a terminal state.</p></div></div>
@@ -679,14 +713,73 @@ export default function App() {
                 )}
               </div>
             </section>
-          )}
+            )}
+          </section>
 
-          <section className="content-card connectivity-card" id="connectivity">
-            <div><h2>Provider connectivity</h2><p>Run an explicit OpenAI connectivity check. No request is sent automatically when this page loads.</p></div>
-            <div className="connectivity-actions">
-              <span className={probe ? "probe-result available" : "probe-result"}>{probe || "Not tested"}</span>
-              <button className="secondary" disabled={busy !== null} onClick={probeOpenAI}>{busy === "probe" ? "Testing…" : "Test connection"}</button>
-            </div>
+          <section id="panel-agent" role="tabpanel" aria-labelledby="tab-agent" hidden={activeTab !== "agent"}>
+            <nav className="breadcrumbs" aria-label="Breadcrumb">
+              <span>AIOS</span><span>/</span><span>Remediation</span><span>/</span><strong>Agent</strong>
+            </nav>
+            <section className="page-header">
+              <div>
+                <h1>Remediation agent</h1>
+                <p>Deployment configuration and the generated capability boundary for Agent 3.</p>
+              </div>
+              <span className="status-badge neutral"><i />Configured</span>
+            </section>
+            <section className="service-summary" aria-label="Runtime configuration">
+              <div><span>Region</span><strong>{AGENT_CONFIG.region}</strong></div>
+              <div><span>Runtime</span><strong>{AGENT_CONFIG.runtime}</strong></div>
+              <div><span>Model provider</span><strong>{AGENT_CONFIG.provider}</strong></div>
+              <div><span>Model</span><strong>{AGENT_CONFIG.model}</strong></div>
+            </section>
+            <ToolBoundaryPanel />
+          </section>
+
+          <section id="panel-status" role="tabpanel" aria-labelledby="tab-status" hidden={activeTab !== "status"}>
+            <nav className="breadcrumbs" aria-label="Breadcrumb">
+              <span>AIOS</span><span>/</span><span>Remediation</span><span>/</span><strong>System Status</strong>
+            </nav>
+            <section className="page-header">
+              <div>
+                <h1>System status</h1>
+                <p>Upstream dependencies and explicitly tested provider connectivity.</p>
+              </div>
+            </section>
+
+            {probeError && (
+              <div className="alert error" role="alert">
+                <span className="alert-icon">!</span>
+                <div><strong>Provider check failed</strong><p>{probeError}</p></div>
+              </div>
+            )}
+
+            <section className="content-card dependency-card" aria-label="Upstream dependencies">
+              <header className="card-header">
+                <div><span className="section-kicker">Demo environment</span><h2>Dependency status</h2><p>Only the model provider row performs a live check.</p></div>
+              </header>
+              <div className="dependency-list">
+                <article className="dependency-row">
+                  <div><strong>Demo UI gateway</strong><p>This console loaded successfully. No additional health request is made.</p></div>
+                  <span className="status-badge success"><i />Serving</span>
+                </article>
+                <article className="dependency-row">
+                  <div><strong>Remediation runtime</strong><p>The AgentCore dependency is configured; this page does not actively probe runtime health.</p></div>
+                  <span className="status-badge neutral"><i />Configured</span>
+                </article>
+                <article className="dependency-row provider-row">
+                  <div>
+                    <strong>OpenAI model provider</strong>
+                    <p>Runs one explicit provider request through the configured AgentCore runtime.</p>
+                    <span className={probe ? "probe-result available" : "probe-result"}>{probe || "No provider check has been run."}</span>
+                  </div>
+                  <div className="dependency-actions">
+                    <span className={`status-badge ${statusTone(probeStatus)}`}><i />{probeStatus}</span>
+                    <button className="secondary" disabled={busy !== null} onClick={probeOpenAI}>{busy === "probe" ? "Testing…" : "Test connection"}</button>
+                  </div>
+                </article>
+              </div>
+            </section>
           </section>
         </main>
       </div>
