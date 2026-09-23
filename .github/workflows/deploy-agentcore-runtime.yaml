@@ -83,7 +83,7 @@ jobs:
         env:
           AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
           AWS_REGION: ${{ inputs.aws-region }}
-          GITHUB_REPOSITORY: ${{ inputs.github-repository }}
+          TARGET_GITHUB_REPOSITORY: ${{ inputs.github-repository }}
           IMAGE_DIGEST: ${{ inputs.image-digest }}
           IMAGE_URI: ${{ inputs.image-uri }}
           READINESS_TIMEOUT_SECONDS: ${{ inputs.readiness-timeout-seconds }}
@@ -96,8 +96,8 @@ jobs:
             echo "The AgentCore Runtime identifier is invalid." >&2
             exit 1
           fi
-          if [[ ! "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
-             (( ${#GITHUB_REPOSITORY} > 200 )); then
+          if [[ ! "$TARGET_GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+             (( ${#TARGET_GITHUB_REPOSITORY} > 200 )); then
             echo "The GitHub repository must use a bounded owner/repository slug." >&2
             exit 1
           fi
@@ -182,7 +182,7 @@ jobs:
             echo "AGENTCORE_EXECUTION_ROLE_ARN=$runtime_role_arn"
             echo "AGENTCORE_RUNTIME_ARN=$runtime_arn"
             echo "AGENTCORE_TARGET_IMAGE=$target_image"
-            echo "AGENTCORE_TARGET_GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+            echo "AGENTCORE_TARGET_GITHUB_REPOSITORY=$TARGET_GITHUB_REPOSITORY"
             echo "AGENTCORE_PREVIOUS_IMAGE=$current_image"
             echo "AGENTCORE_PREVIOUS_VERSION=$runtime_version"
             echo "AGENTCORE_PREVIOUS_PROTOCOL=$current_protocol"
@@ -195,7 +195,7 @@ jobs:
             echo "target-image=$target_image"
           } >>"$GITHUB_OUTPUT"
           if [[ "$current_image" == "$target_image" && "$current_protocol" == "$SERVER_PROTOCOL" &&
-                "$current_repository" == "$GITHUB_REPOSITORY" && "$filesystem_ready" == "true" ]]; then
+                "$current_repository" == "$TARGET_GITHUB_REPOSITORY" && "$filesystem_ready" == "true" ]]; then
             echo "already-current=true" >>"$GITHUB_OUTPUT"
           else
             echo "already-current=false" >>"$GITHUB_OUTPUT"
@@ -208,7 +208,7 @@ jobs:
         env:
           AGENT_RUNTIME_ID: ${{ inputs.agent-runtime-id }}
           AWS_REGION: ${{ inputs.aws-region }}
-          GITHUB_REPOSITORY: ${{ inputs.github-repository }}
+          TARGET_GITHUB_REPOSITORY: ${{ inputs.github-repository }}
         run: |
           set -euo pipefail
 
@@ -221,7 +221,7 @@ jobs:
             --arg image "$AGENTCORE_TARGET_IMAGE" \
             --arg role "$AGENTCORE_EXECUTION_ROLE_ARN" \
             --arg protocol "$AGENTCORE_TARGET_PROTOCOL" \
-            --arg repository "$GITHUB_REPOSITORY" \
+            --arg repository "$TARGET_GITHUB_REPOSITORY" \
             --arg token "$client_token" \
             '($current[0] | {
               environmentVariables: (.environmentVariables + {AIOS_GITHUB_REPOSITORY: $repository}),

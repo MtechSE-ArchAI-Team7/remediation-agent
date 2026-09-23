@@ -114,11 +114,10 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
 def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> None:
     workflow = _load_workflow("deploy-agentcore-runtime.yaml")
     deploy = _jobs(workflow)["deploy"]
+    steps = cast(list[dict[str, object]], deploy["steps"])
     workflow_call = cast(dict[str, object], _trigger(workflow)["workflow_call"])
     inputs = cast(dict[str, object], workflow_call["inputs"])
-    script = "\n".join(
-        value for step in cast(list[dict[str, object]], deploy["steps"]) if isinstance((value := step.get("run")), str)
-    )
+    script = "\n".join(value for step in steps if isinstance((value := step.get("run")), str))
 
     assert "server-protocol" in inputs
     assert cast(dict[str, object], inputs["github-repository"])["required"] is True
@@ -132,7 +131,16 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert "AGENTCORE_PREVIOUS_PROTOCOL" in script
     assert "AIOS_GITHUB_REPOSITORY: $repository" in script
     assert 'current_repository="$(jq -r' in script
-    assert '"$current_repository" == "$GITHUB_REPOSITORY"' in script
+    assert '"$current_repository" == "$TARGET_GITHUB_REPOSITORY"' in script
     assert script.count("--arg repository") == 1
+    target_bindings = 0
+    for step in steps:
+        environment = step.get("env")
+        if not isinstance(environment, dict):
+            continue
+        assert "GITHUB_REPOSITORY" not in environment
+        if environment.get("TARGET_GITHUB_REPOSITORY") == "${{ inputs.github-repository }}":
+            target_bindings += 1
+    assert target_bindings == 2
     assert "create-agent-runtime" not in script
     assert "delete-agent-runtime" not in script
