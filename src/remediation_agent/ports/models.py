@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeVar
+from datetime import datetime
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
 from remediation_agent.domain.enums import ModelOperation, ValidationBackend
 from remediation_agent.domain.models import (
     ArtifactManifest,
+    ArtifactRef,
     CleanupResult,
     DraftPrMetadata,
     DraftPrPayload,
+    IncidentMemoryRecordV1,
     ModelCallRecord,
     NonEmptyStr,
     RemediationHandoffV1,
@@ -25,6 +28,21 @@ from remediation_agent.domain.models import (
 from remediation_agent.policy.models import ValidationTaskConfig
 
 TModel = TypeVar("TModel", bound=BaseModel)
+type ArtifactReadErrorCode = Literal[
+    "ARTIFACT_NOT_FOUND",
+    "ARTIFACT_ACCESS_DENIED",
+    "ARTIFACT_TOO_LARGE",
+    "ARTIFACT_INTEGRITY_FAILED",
+    "ARTIFACT_PREVIEW_UNSUPPORTED",
+]
+
+
+class ArtifactReadError(RuntimeError):
+    """Bounded artifact-preview failure safe to translate at transport boundaries."""
+
+    def __init__(self, code: ArtifactReadErrorCode) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class TreeRequest(StrictModel):
@@ -146,6 +164,19 @@ class ModelRequest(StrictModel):
     payload: dict[str, object]
 
 
+class IncidentMemoryRetrievalRequest(StrictModel):
+    repository: NonEmptyStr
+    remediation_type: NonEmptyStr
+    issue_summary: str = Field(min_length=1, max_length=10_000)
+    diagnosis_summary: str = Field(min_length=1, max_length=20_000)
+    requested_at: datetime
+
+
+class IncidentMemoryStoreRequest(StrictModel):
+    record: IncidentMemoryRecordV1
+    idempotency_token: NonEmptyStr
+
+
 @dataclass(frozen=True)
 class ModelGeneration[TModel: BaseModel]:
     value: TModel
@@ -170,6 +201,23 @@ class CreatedDraftPr(StrictModel):
 class ArtifactWriteRequest(StrictModel):
     run_id: NonEmptyStr
     files: dict[str, str]
+
+
+class ArtifactReadRequest(StrictModel):
+    run_id: NonEmptyStr
+    artifact: ArtifactRef
+    max_object_bytes: int = Field(gt=0)
+    max_preview_bytes: int = Field(gt=0)
+
+
+class ArtifactReadResult(StrictModel):
+    name: NonEmptyStr
+    media_type: NonEmptyStr
+    digest: NonEmptyStr
+    content: str
+    size_bytes: int = Field(ge=0)
+    truncated: bool
+    digest_verified: bool
 
 
 class AuditWriteRequest(StrictModel):

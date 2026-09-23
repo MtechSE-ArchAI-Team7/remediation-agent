@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import tarfile
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 from typing import cast
 
 import pytest
+from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
 from remediation_agent.adapters.agentcore import (
     AgentCoreOpenAISecret,
     AgentCoreRuntimeSecret,
+    S3ArtifactReader,
     S3ArtifactStore,
     S3AuditSink,
     SecretsManagerOpenAISecretProvider,
@@ -22,9 +26,15 @@ from remediation_agent.adapters.agentcore import (
 from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterpreterSandbox
 from remediation_agent.adapters.sandbox import SandboxError
 from remediation_agent.domain.enums import ValidationOutcome
-from remediation_agent.domain.models import WorkspaceRef
+from remediation_agent.domain.models import ArtifactRef, WorkspaceRef
 from remediation_agent.policy.models import ValidationTaskConfig
-from remediation_agent.ports.models import ArtifactWriteRequest, AuditWriteRequest, ValidationTaskRequest
+from remediation_agent.ports.models import (
+    ArtifactReadError,
+    ArtifactReadRequest,
+    ArtifactWriteRequest,
+    AuditWriteRequest,
+    ValidationTaskRequest,
+)
 
 
 class _FakeSecrets:
@@ -40,10 +50,18 @@ class _FakeSecrets:
 class _FakeS3:
     def __init__(self) -> None:
         self.puts: list[dict[str, object]] = []
+        self.objects: dict[str, bytes] = {}
 
     def put_object(self, **kwargs: object) -> Mapping[str, object]:
         self.puts.append(kwargs)
+        self.objects[cast(str, kwargs["Key"])] = cast(bytes, kwargs["Body"])
         return {}
+
+    def get_object(self, **kwargs: object) -> Mapping[str, object]:
+        key = cast(str, kwargs["Key"])
+        if key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        return {"Body": BytesIO(self.objects[key])}
 
 
 class _FakeCodeInterpreter:
@@ -135,6 +153,133 @@ async def test_s3_artifacts_are_redacted_digest_addressed_and_immutable() -> Non
     assert put["ServerSideEncryption"] == "AES256"
     assert b"github_pat_" not in cast(bytes, put["Body"])
     assert manifest.artifacts[0].path.startswith("s3://artifact-bucket/runs/run-1/artifacts/")
+
+
+async def test_s3_artifact_reader_verifies_manifest_path_digest_redaction_and_truncation() -> None:
+    fake = _FakeS3()
+    body = b'password=visible-before-redaction\n{"result":"ok"}'
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    name = "result.json"
+    key = f"runs/run-1/artifacts/{digest.removeprefix('sha256:')}/{name}"
+    fake.objects[key] = body
+    reader = S3ArtifactReader("artifact-bucket", region_name="ap-southeast-1", client=fake)
+    artifact = ArtifactRef(
+        name=name,
+        path=f"s3://artifact-bucket/{key}",
+        digest=digest,
+        media_type="application/json",
+    )
+
+    result = await reader.read(
+        ArtifactReadRequest(run_id="run-1", artifact=artifact, max_object_bytes=1024, max_preview_bytes=16)
+    )
+
+    assert result.digest_verified
+    assert result.truncated
+    assert "visible-before-redaction" not in result.content
+    assert "[REDACTED]" in result.content
+    assert result.size_bytes == len(body)
+
+
+async def test_s3_artifact_reader_rejects_untrusted_path_and_digest_mismatch() -> None:
+    fake = _FakeS3()
+    reader = S3ArtifactReader("artifact-bucket", region_name="ap-southeast-1", client=fake)
+    artifact = ArtifactRef(
+        name="result.json",
+        path="s3://other-bucket/runs/run-1/artifacts/value/result.json",
+        digest="sha256:" + "a" * 64,
+        media_type="application/json",
+    )
+
+    with pytest.raises(ArtifactReadError, match="ARTIFACT_ACCESS_DENIED"):
+        await reader.read(
+            ArtifactReadRequest(run_id="run-1", artifact=artifact, max_object_bytes=1024, max_preview_bytes=1024)
+        )
+
+
+async def test_s3_artifact_reader_maps_missing_object_to_bounded_error() -> None:
+    digest = "sha256:" + "a" * 64
+    artifact = ArtifactRef(
+        name="missing.json",
+        path=f"s3://artifact-bucket/runs/run-1/artifacts/{'a' * 64}/missing.json",
+        digest=digest,
+        media_type="application/json",
+    )
+    reader = S3ArtifactReader("artifact-bucket", region_name="ap-southeast-1", client=_FakeS3())
+
+    with pytest.raises(ArtifactReadError, match="ARTIFACT_NOT_FOUND"):
+        await reader.read(
+            ArtifactReadRequest(run_id="run-1", artifact=artifact, max_object_bytes=1024, max_preview_bytes=1024)
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "media_type"),
+    [
+        ("result.json", "application/json"),
+        ("audit.jsonl", "application/x-ndjson"),
+        ("patch.diff", "text/x-diff"),
+        ("notes.txt", "text/plain"),
+    ],
+)
+async def test_s3_artifact_reader_supports_every_text_evidence_type(name: str, media_type: str) -> None:
+    fake = _FakeS3()
+    body = b"redacted evidence"
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    key = f"runs/run-1/artifacts/{digest.removeprefix('sha256:')}/{name}"
+    fake.objects[key] = body
+    artifact = ArtifactRef(
+        name=name,
+        path=f"s3://artifact-bucket/{key}",
+        digest=digest,
+        media_type=media_type,
+    )
+
+    result = await S3ArtifactReader("artifact-bucket", region_name="ap-southeast-1", client=fake).read(
+        ArtifactReadRequest(run_id="run-1", artifact=artifact, max_object_bytes=1024, max_preview_bytes=1024)
+    )
+
+    assert result.content == "redacted evidence"
+    assert result.media_type == media_type
+
+
+@pytest.mark.parametrize(
+    ("body", "recorded_body", "media_type", "max_object_bytes", "expected"),
+    [
+        (b"expected", b"tampered", "text/plain", 1024, "ARTIFACT_INTEGRITY_FAILED"),
+        (b"large", b"large", "text/plain", 2, "ARTIFACT_TOO_LARGE"),
+        (b"\xff", b"\xff", "text/plain", 1024, "ARTIFACT_PREVIEW_UNSUPPORTED"),
+        (b"value", b"value", "application/octet-stream", 1024, "ARTIFACT_PREVIEW_UNSUPPORTED"),
+    ],
+)
+async def test_s3_artifact_reader_fails_closed_for_unsafe_content(
+    body: bytes,
+    recorded_body: bytes,
+    media_type: str,
+    max_object_bytes: int,
+    expected: str,
+) -> None:
+    fake = _FakeS3()
+    digest = "sha256:" + hashlib.sha256(recorded_body).hexdigest()
+    key = f"runs/run-1/artifacts/{digest.removeprefix('sha256:')}/evidence.txt"
+    fake.objects[key] = body
+    reader = S3ArtifactReader("artifact-bucket", region_name="ap-southeast-1", client=fake)
+    artifact = ArtifactRef(
+        name="evidence.txt",
+        path=f"s3://artifact-bucket/{key}",
+        digest=digest,
+        media_type=media_type,
+    )
+
+    with pytest.raises(ArtifactReadError, match=expected):
+        await reader.read(
+            ArtifactReadRequest(
+                run_id="run-1",
+                artifact=artifact,
+                max_object_bytes=max_object_bytes,
+                max_preview_bytes=1024,
+            )
+        )
 
 
 async def test_s3_audit_sink_writes_sequenced_events_and_digest_manifest() -> None:

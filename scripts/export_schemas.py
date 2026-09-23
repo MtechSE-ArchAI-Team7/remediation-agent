@@ -14,6 +14,13 @@ from remediation_agent.domain.models import (
     ExplainabilityTraceV1,
     RemediationHandoffV1,
 )
+from remediation_agent.evaluation import (
+    EvaluationJudgeSuiteV1,
+    EvaluationSuiteManifestV2,
+    EvaluationSuiteResultV2,
+    MemoryBenchmarkManifestV1,
+    MemoryEvaluationResultV1,
+)
 from remediation_agent.policy.models import PolicyConfig
 
 
@@ -30,6 +37,11 @@ def main() -> None:
         "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),
         "remediation-policy.schema.json": PolicyConfig.model_json_schema(),
+        "evaluation-suite-v2.schema.json": EvaluationSuiteManifestV2.model_json_schema(),
+        "evaluation-result-v2.schema.json": EvaluationSuiteResultV2.model_json_schema(),
+        "evaluation-judge-v1.schema.json": EvaluationJudgeSuiteV1.model_json_schema(),
+        "memory-benchmark-v1.schema.json": MemoryBenchmarkManifestV1.model_json_schema(),
+        "memory-evaluation-result-v1.schema.json": MemoryEvaluationResultV1.model_json_schema(),
     }
     for name, schema in schemas.items():
         (output / name).write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")

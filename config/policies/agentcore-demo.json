@@ -71,5 +71,6 @@
     "write_audit_jsonl": true,
     "include_full_diff": true
   },
-  "github": {"writes_enabled": true}
+  "github": {"writes_enabled": true},
+  "incident_memory": {"writes_enabled": true}
 }

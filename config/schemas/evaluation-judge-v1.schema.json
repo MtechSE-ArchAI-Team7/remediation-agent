@@ -1,0 +1,275 @@
+{
+  "$defs": {
+    "JudgeAssessmentV1": {
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/JudgeDimensionV1"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "unsupported_claims": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Unsupported Claims",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dimensions"
+      ],
+      "title": "JudgeAssessmentV1",
+      "type": "object"
+    },
+    "JudgeDimensionName": {
+      "enum": [
+        "evidence_grounding",
+        "plan_quality",
+        "scope_minimality",
+        "safety_reasoning",
+        "final_handoff_usefulness"
+      ],
+      "title": "JudgeDimensionName",
+      "type": "string"
+    },
+    "JudgeDimensionV1": {
+      "additionalProperties": false,
+      "properties": {
+        "applicable": {
+          "title": "Applicable",
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "name": {
+          "$ref": "#/$defs/JudgeDimensionName"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        }
+      },
+      "required": [
+        "name",
+        "applicable",
+        "rationale"
+      ],
+      "title": "JudgeDimensionV1",
+      "type": "object"
+    },
+    "JudgeResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "assessment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JudgeAssessmentV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "input_tokens": {
+          "minimum": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "output_tokens": {
+          "minimum": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "overall_score": {
+          "anyOf": [
+            {
+              "maximum": 5.0,
+              "minimum": 1.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overall Score"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "COMPLETED",
+            "ERROR"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trial_id": {
+          "title": "Trial Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "trial_id",
+        "case_id",
+        "status",
+        "provider",
+        "model",
+        "prompt_version",
+        "duration_ms",
+        "input_tokens",
+        "output_tokens"
+      ],
+      "title": "JudgeResultV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "dimension_averages": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/JudgeDimensionName"
+      },
+      "title": "Dimension Averages",
+      "type": "object"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "overall_average": {
+      "anyOf": [
+        {
+          "maximum": 5.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Overall Average"
+    },
+    "prompt_version": {
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/$defs/JudgeResultV1"
+      },
+      "maxItems": 60,
+      "minItems": 1,
+      "title": "Results",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "suite_id": {
+      "title": "Suite Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "suite_id",
+    "generated_at",
+    "provider",
+    "model",
+    "prompt_version",
+    "results",
+    "dimension_averages"
+  ],
+  "title": "EvaluationJudgeSuiteV1",
+  "type": "object"
+}

@@ -12,6 +12,7 @@ from remediation_agent.adapters.a2a_delivery import AgentCoreA2ADelivery
 from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
+from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, DisabledIncidentMemory
 from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
@@ -35,6 +36,7 @@ from remediation_agent.config import Settings
 from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
+from remediation_agent.ports.protocols import IncidentMemoryPort
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
 from remediation_agent.tools.catalog import OPERATIONAL_TOOL_CATALOG, operational_tool_counts
 from remediation_agent.workflow.graph import build_graph
@@ -54,6 +56,17 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
         settings = Settings()  # type: ignore[call-arg]
         policy_config = load_policy(settings.policy_file)
         policy = PolicyEngine(policy_config)
+        incident_memory: IncidentMemoryPort
+        if settings.incident_memory_enabled:
+            memory_id, strategy_id, namespace, memory_region = settings.require_incident_memory_configuration()
+            incident_memory = AgentCoreIncidentMemory(
+                memory_id=memory_id,
+                strategy_id=strategy_id,
+                namespace=namespace,
+                region_name=memory_region,
+            )
+        else:
+            incident_memory = DisabledIncidentMemory()
         dsn, encryption_key = settings.require_persistent_checkpointing()
         model = build_structured_model(
             settings,
@@ -90,6 +103,8 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
                     prompt_version=settings.prompt_version,
                     github_writes_enabled=settings.github_writes_enabled,
                     github_repository=settings.github_repository,
+                    incident_memory=incident_memory,
+                    incident_memory_writes_enabled=settings.incident_memory_writes_enabled,
                 )
                 application.state.remediation_service = RemediationService(
                     build_graph(nodes, checkpointer),

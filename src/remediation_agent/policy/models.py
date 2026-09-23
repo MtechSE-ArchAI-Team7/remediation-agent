@@ -106,6 +106,10 @@ class GitHubPolicy(StrictModel):
     writes_enabled: bool = False
 
 
+class IncidentMemoryPolicy(StrictModel):
+    writes_enabled: bool = False
+
+
 class PolicyConfig(StrictModel):
     policy_id: NonEmptyStr
     version: NonEmptyStr
@@ -117,6 +121,7 @@ class PolicyConfig(StrictModel):
     mandatory_tasks: list[MandatoryTaskRule] = Field(default_factory=list)
     artifacts: ArtifactPolicy
     github: GitHubPolicy
+    incident_memory: IncidentMemoryPolicy = Field(default_factory=IncidentMemoryPolicy)
 
     @model_validator(mode="after")
     def references_known_tasks_and_bounded_limits(self) -> PolicyConfig:

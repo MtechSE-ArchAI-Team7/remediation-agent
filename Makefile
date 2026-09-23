@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted assessment-report build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build demo-ui-deploy db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted evaluate-judge evaluate-memory evaluate-memory-hosted evaluate-memory-judge memory-seed assessment-report build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build demo-ui-deploy db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -57,6 +57,22 @@ evaluate:
 
 evaluate-hosted:
 	uv run python scripts/run_evaluation.py hosted
+
+evaluate-judge:
+	uv run python scripts/run_evaluation.py judge
+
+evaluate-memory:
+	uv run python scripts/run_evaluation.py memory-deterministic
+
+evaluate-memory-hosted:
+	uv run python scripts/run_evaluation.py memory-hosted
+
+evaluate-memory-judge:
+	uv run python scripts/run_evaluation.py memory-judge
+
+memory-seed:
+	@test -n "$(AIOS_MEMORY_SEED_ARTIFACT)" || (echo "AIOS_MEMORY_SEED_ARTIFACT must name a completed passed evaluation artifact" && exit 2)
+	uv run python scripts/run_evaluation.py memory-seed --artifact "$(AIOS_MEMORY_SEED_ARTIFACT)"
 
 assessment-report:
 	uv run python scripts/run_evaluation.py report

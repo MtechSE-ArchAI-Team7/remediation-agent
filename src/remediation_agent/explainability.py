@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 _ActorType = Literal["DETERMINISTIC", "MODEL_ASSISTED", "TOOL", "HUMAN"]
 
 _MODEL_EVENTS = frozenset({"REPOSITORY_INSPECTED", "PLAN_CREATED", "RISK_ASSESSED", "PATCH_GENERATED"})
-_TOOL_EVENTS = frozenset({"INSPECTION_TOOL_CALL", "VALIDATION_TASK_EXECUTED"})
+_TOOL_EVENTS = frozenset(
+    {"INSPECTION_TOOL_CALL", "VALIDATION_TASK_EXECUTED", "INCIDENT_MEMORY_RETRIEVED", "INCIDENT_MEMORY_WRITE"}
+)
 _HUMAN_EVENTS = frozenset({"APPROVAL_DECIDED"})
 
 
@@ -102,6 +104,8 @@ def build_explainability_trace(
         evidence=evidence,
         model_calls=model_calls,
         validation_executions=state.get("validation_execution_records", [])[:100],
+        memory_retrieval=state.get("incident_memory_retrieval"),
+        memory_write=state.get("incident_memory_write"),
     )
 
 
@@ -124,6 +128,8 @@ def _stage_for_event(event_type: str) -> str:
         return "workspace"
     if event_type.startswith("INSPECTION") or event_type == "REPOSITORY_INSPECTED":
         return "inspection"
+    if event_type.startswith("INCIDENT_MEMORY"):
+        return "memory"
     if event_type.startswith("PLAN"):
         return "planning"
     if event_type.startswith("RISK"):

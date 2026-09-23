@@ -126,6 +126,212 @@
       "title": "FinalStatus",
       "type": "string"
     },
+    "IncidentMemoryMatchV1": {
+      "additionalProperties": false,
+      "properties": {
+        "admission_type": {
+          "$ref": "#/$defs/MemoryAdmissionType"
+        },
+        "age_days": {
+          "maximum": 30.0,
+          "minimum": 0.0,
+          "title": "Age Days",
+          "type": "number"
+        },
+        "changed_paths": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Changed Paths",
+          "type": "array"
+        },
+        "incident_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "incident_signature": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Incident Signature",
+          "type": "string"
+        },
+        "remediation_summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Remediation Summary",
+          "type": "string"
+        },
+        "repository": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Repository",
+          "type": "string"
+        },
+        "residual_risks": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Residual Risks",
+          "type": "array"
+        },
+        "rollback_summary": {
+          "default": "Not supplied.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rollback Summary",
+          "type": "string"
+        },
+        "root_cause": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Root Cause",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "validation": {
+          "items": {
+            "$ref": "#/$defs/IncidentValidationSummary"
+          },
+          "maxItems": 20,
+          "title": "Validation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "incident_id",
+        "admission_type",
+        "score",
+        "age_days",
+        "repository",
+        "incident_signature",
+        "root_cause",
+        "remediation_summary"
+      ],
+      "title": "IncidentMemoryMatchV1",
+      "type": "object"
+    },
+    "IncidentMemoryRetrievalV1": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "matches": {
+          "items": {
+            "$ref": "#/$defs/IncidentMemoryMatchV1"
+          },
+          "maxItems": 3,
+          "title": "Matches",
+          "type": "array"
+        },
+        "query_digest": {
+          "minLength": 1,
+          "title": "Query Digest",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/MemoryRetrievalStatus"
+        }
+      },
+      "required": [
+        "status",
+        "query_digest",
+        "duration_ms"
+      ],
+      "title": "IncidentMemoryRetrievalV1",
+      "type": "object"
+    },
+    "IncidentMemoryWriteReceiptV1": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "incident_id": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Incident Id"
+        },
+        "status": {
+          "$ref": "#/$defs/MemoryWriteStatus"
+        }
+      },
+      "required": [
+        "status",
+        "duration_ms"
+      ],
+      "title": "IncidentMemoryWriteReceiptV1",
+      "type": "object"
+    },
+    "IncidentValidationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ValidationOutcome"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "outcome"
+      ],
+      "title": "IncidentValidationSummary",
+      "type": "object"
+    },
     "InspectionToolCallRecord": {
       "additionalProperties": false,
       "properties": {
@@ -173,6 +379,34 @@
         "ERROR"
       ],
       "title": "InspectionToolStatus",
+      "type": "string"
+    },
+    "MemoryAdmissionType": {
+      "enum": [
+        "AUTO_VALIDATED",
+        "EVALUATION_SEED"
+      ],
+      "title": "MemoryAdmissionType",
+      "type": "string"
+    },
+    "MemoryRetrievalStatus": {
+      "enum": [
+        "DISABLED",
+        "NO_MATCH",
+        "RETRIEVED",
+        "ERROR"
+      ],
+      "title": "MemoryRetrievalStatus",
+      "type": "string"
+    },
+    "MemoryWriteStatus": {
+      "enum": [
+        "NOT_ELIGIBLE",
+        "STORED",
+        "ALREADY_EXISTS",
+        "ERROR"
+      ],
+      "title": "MemoryWriteStatus",
       "type": "string"
     },
     "ModelCallRecord": {
@@ -403,6 +637,28 @@
       "maxItems": 100,
       "title": "Inspection Tool Calls",
       "type": "array"
+    },
+    "memory_retrieval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IncidentMemoryRetrievalV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "memory_write": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IncidentMemoryWriteReceiptV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "model_calls": {
       "items": {

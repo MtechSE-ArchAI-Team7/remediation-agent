@@ -952,6 +952,14 @@ components:
           type: array
           maxItems: 100
           title: Validation Executions
+        memory_retrieval:
+          anyOf:
+          - $ref: '#/components/schemas/IncidentMemoryRetrievalV1'
+          - type: 'null'
+        memory_write:
+          anyOf:
+          - $ref: '#/components/schemas/IncidentMemoryWriteReceiptV1'
+          - type: 'null'
       additionalProperties: false
       type: object
       required:
@@ -995,6 +1003,155 @@ components:
       type: object
       title: HealthResponse
       description: Process-liveness response.
+    IncidentMemoryMatchV1:
+      properties:
+        incident_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Incident Id
+        admission_type:
+          $ref: '#/components/schemas/MemoryAdmissionType'
+        score:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Score
+        age_days:
+          type: number
+          maximum: 30.0
+          minimum: 0.0
+          title: Age Days
+        repository:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Repository
+        incident_signature:
+          type: string
+          maxLength: 1000
+          minLength: 1
+          title: Incident Signature
+        root_cause:
+          type: string
+          maxLength: 2000
+          minLength: 1
+          title: Root Cause
+        remediation_summary:
+          type: string
+          maxLength: 2000
+          minLength: 1
+          title: Remediation Summary
+        changed_paths:
+          items:
+            type: string
+            maxLength: 500
+            minLength: 1
+          type: array
+          maxItems: 20
+          title: Changed Paths
+        validation:
+          items:
+            $ref: '#/components/schemas/IncidentValidationSummary'
+          type: array
+          maxItems: 20
+          title: Validation
+        rollback_summary:
+          type: string
+          maxLength: 2000
+          minLength: 1
+          title: Rollback Summary
+          default: Not supplied.
+        residual_risks:
+          items:
+            type: string
+          type: array
+          maxItems: 20
+          title: Residual Risks
+      additionalProperties: false
+      type: object
+      required:
+      - incident_id
+      - admission_type
+      - score
+      - age_days
+      - repository
+      - incident_signature
+      - root_cause
+      - remediation_summary
+      title: IncidentMemoryMatchV1
+    IncidentMemoryRetrievalV1:
+      properties:
+        status:
+          $ref: '#/components/schemas/MemoryRetrievalStatus'
+        query_digest:
+          type: string
+          minLength: 1
+          title: Query Digest
+        matches:
+          items:
+            $ref: '#/components/schemas/IncidentMemoryMatchV1'
+          type: array
+          maxItems: 3
+          title: Matches
+        duration_ms:
+          type: integer
+          minimum: 0.0
+          title: Duration Ms
+        error_code:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Error Code
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      - query_digest
+      - duration_ms
+      title: IncidentMemoryRetrievalV1
+    IncidentMemoryWriteReceiptV1:
+      properties:
+        status:
+          $ref: '#/components/schemas/MemoryWriteStatus'
+        incident_id:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Incident Id
+        duration_ms:
+          type: integer
+          minimum: 0.0
+          title: Duration Ms
+        error_code:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Error Code
+      additionalProperties: false
+      type: object
+      required:
+      - status
+      - duration_ms
+      title: IncidentMemoryWriteReceiptV1
+    IncidentValidationSummary:
+      properties:
+        task_name:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Task Name
+        outcome:
+          $ref: '#/components/schemas/ValidationOutcome'
+      additionalProperties: false
+      type: object
+      required:
+      - task_name
+      - outcome
+      title: IncidentValidationSummary
     InspectionToolCallRecord:
       properties:
         call_id:
@@ -1034,6 +1191,28 @@ components:
       - DENIED
       - ERROR
       title: InspectionToolStatus
+    MemoryAdmissionType:
+      type: string
+      enum:
+      - AUTO_VALIDATED
+      - EVALUATION_SEED
+      title: MemoryAdmissionType
+    MemoryRetrievalStatus:
+      type: string
+      enum:
+      - DISABLED
+      - NO_MATCH
+      - RETRIEVED
+      - ERROR
+      title: MemoryRetrievalStatus
+    MemoryWriteStatus:
+      type: string
+      enum:
+      - NOT_ELIGIBLE
+      - STORED
+      - ALREADY_EXISTS
+      - ERROR
+      title: MemoryWriteStatus
     ModelCallRecord:
       properties:
         operation:

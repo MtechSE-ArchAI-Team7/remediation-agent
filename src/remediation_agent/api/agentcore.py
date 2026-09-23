@@ -16,6 +16,7 @@ from pydantic import Field, SecretStr
 from remediation_agent.adapters.a2a_delivery import AgentCoreA2ADelivery
 from remediation_agent.adapters.agentcore import (
     AgentCoreWorkspaceRecovery,
+    S3ArtifactReader,
     S3ArtifactStore,
     S3AuditSink,
     SecretsManagerOpenAISecretProvider,
@@ -24,6 +25,7 @@ from remediation_agent.adapters.agentcore import (
 from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterpreterSandbox
 from remediation_agent.adapters.checkpoint import agentcore_memory_checkpointer
 from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
+from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, DisabledIncidentMemory
 from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
@@ -40,7 +42,7 @@ from remediation_agent.domain.models import (
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.models import ModelRequest
-from remediation_agent.ports.protocols import StructuredModel
+from remediation_agent.ports.protocols import ArtifactReader, IncidentMemoryPort, StructuredModel
 from remediation_agent.service import (
     ApprovalConflictError,
     InvocationDeadlineError,
@@ -118,6 +120,7 @@ def create_agentcore_app(
     service: RemediationService | None = None,
     *,
     probe_provider: Literal["bedrock", "openai"] | None = None,
+    artifact_reader: ArtifactReader | None = None,
 ) -> FastAPI:
     """Create the AgentCore application with injectable boundaries for offline tests."""
 
@@ -129,6 +132,8 @@ def create_agentcore_app(
             application.state.probe_provider = probe_provider
         if service is not None:
             application.state.remediation_service = service
+        if artifact_reader is not None:
+            application.state.artifact_reader = artifact_reader
         if model is not None or service is not None:
             yield
             return
@@ -140,6 +145,17 @@ def create_agentcore_app(
         memory_id, secret_arn, artifact_bucket = settings.require_agentcore_configuration()
         policy_config = load_policy(settings.policy_file)
         policy = PolicyEngine(policy_config)
+        incident_memory: IncidentMemoryPort
+        if settings.incident_memory_enabled:
+            incident_memory_id, strategy_id, namespace, memory_region = settings.require_incident_memory_configuration()
+            incident_memory = AgentCoreIncidentMemory(
+                memory_id=incident_memory_id,
+                strategy_id=strategy_id,
+                namespace=namespace,
+                region_name=memory_region,
+            )
+        else:
+            incident_memory = DisabledIncidentMemory()
         runtime_secret = await SecretsManagerRuntimeSecretProvider(
             secret_arn,
             region_name=region_name,
@@ -180,6 +196,8 @@ def create_agentcore_app(
                 prompt_version=settings.prompt_version,
                 github_writes_enabled=settings.github_writes_enabled,
                 github_repository=settings.github_repository,
+                incident_memory=incident_memory,
+                incident_memory_writes_enabled=settings.incident_memory_writes_enabled,
             )
             checkpointer = agentcore_memory_checkpointer(
                 memory_id,
@@ -188,6 +206,7 @@ def create_agentcore_app(
             )
             application.state.structured_model = structured_model
             application.state.probe_provider = settings.llm_provider
+            application.state.artifact_reader = S3ArtifactReader(artifact_bucket, region_name=region_name)
             application.state.remediation_service = RemediationService(
                 build_graph(nodes, checkpointer),
                 max_active_runs=policy_config.limits.max_active_runs,

@@ -1,0 +1,743 @@
+{
+  "$defs": {
+    "EvaluationArtifactDigest": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "sha256"
+      ],
+      "title": "EvaluationArtifactDigest",
+      "type": "object"
+    },
+    "EvaluationJudgeInput": {
+      "additionalProperties": false,
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "changed_file_count": {
+          "minimum": 0,
+          "title": "Changed File Count",
+          "type": "integer"
+        },
+        "changed_files": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Changed Files",
+          "type": "array"
+        },
+        "diagnosis_summary": {
+          "maxLength": 10000,
+          "title": "Diagnosis Summary",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "final_status": {
+          "$ref": "#/$defs/FinalStatus"
+        },
+        "plan_summary": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plan Summary"
+        },
+        "policy_control_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Policy Control Ids",
+          "type": "array"
+        },
+        "residual_risks": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Residual Risks",
+          "type": "array"
+        },
+        "risk_summary": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Summary"
+        },
+        "rollback_summary": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rollback Summary"
+        },
+        "trial_id": {
+          "title": "Trial Id",
+          "type": "string"
+        },
+        "validation_outcomes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Validation Outcomes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "case_id",
+        "trial_id",
+        "diagnosis_summary",
+        "acceptance_criteria",
+        "evidence_ids",
+        "final_status",
+        "changed_file_count"
+      ],
+      "title": "EvaluationJudgeInput",
+      "type": "object"
+    },
+    "EvaluationMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "exclusiveMinimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "detail": {
+          "maxLength": 1000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "numerator",
+        "denominator",
+        "passed",
+        "detail"
+      ],
+      "title": "EvaluationMetric",
+      "type": "object"
+    },
+    "EvaluationSuiteMetricsV2": {
+      "additionalProperties": false,
+      "properties": {
+        "average_inspection_calls": {
+          "minimum": 0.0,
+          "title": "Average Inspection Calls",
+          "type": "number"
+        },
+        "cleanup_success_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "correct_route_accuracy": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "eventual_remediation_success": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "first_attempt_success": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "median_model_latency_ms": {
+          "minimum": 0.0,
+          "title": "Median Model Latency Ms",
+          "type": "number"
+        },
+        "median_remediation_latency_ms": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Median Remediation Latency Ms",
+          "type": "number"
+        },
+        "model_input_tokens": {
+          "minimum": 0,
+          "title": "Model Input Tokens",
+          "type": "integer"
+        },
+        "model_output_tokens": {
+          "minimum": 0,
+          "title": "Model Output Tokens",
+          "type": "integer"
+        },
+        "p95_model_latency_ms": {
+          "minimum": 0.0,
+          "title": "P95 Model Latency Ms",
+          "type": "number"
+        },
+        "p95_remediation_latency_ms": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "P95 Remediation Latency Ms",
+          "type": "number"
+        },
+        "remote_objects_created": {
+          "minimum": 0,
+          "title": "Remote Objects Created",
+          "type": "integer"
+        },
+        "revision_recovery_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "unnecessary_approval_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "unsafe_action_prevention_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "unsupported_tool_call_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        },
+        "validation_pass_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        }
+      },
+      "required": [
+        "eventual_remediation_success",
+        "first_attempt_success",
+        "correct_route_accuracy",
+        "validation_pass_rate",
+        "revision_recovery_rate",
+        "unsafe_action_prevention_rate",
+        "unsupported_tool_call_rate",
+        "cleanup_success_rate",
+        "unnecessary_approval_rate",
+        "average_inspection_calls",
+        "remote_objects_created",
+        "median_model_latency_ms",
+        "p95_model_latency_ms",
+        "model_input_tokens",
+        "model_output_tokens"
+      ],
+      "title": "EvaluationSuiteMetricsV2",
+      "type": "object"
+    },
+    "EvaluationTrialV2": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_route": {
+          "$ref": "#/$defs/ExpectedRoute"
+        },
+        "case_id": {
+          "title": "Case Id",
+          "type": "string"
+        },
+        "cleanup_succeeded": {
+          "title": "Cleanup Succeeded",
+          "type": "boolean"
+        },
+        "commit_pinned_successes": {
+          "minimum": 0,
+          "title": "Commit Pinned Successes",
+          "type": "integer"
+        },
+        "denied_tool_calls": {
+          "minimum": 0,
+          "title": "Denied Tool Calls",
+          "type": "integer"
+        },
+        "error_codes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Error Codes",
+          "type": "array"
+        },
+        "expected_route": {
+          "$ref": "#/$defs/ExpectedRoute"
+        },
+        "final_status": {
+          "$ref": "#/$defs/FinalStatus"
+        },
+        "first_attempt_passed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Attempt Passed"
+        },
+        "generated_at": {
+          "format": "date-time",
+          "title": "Generated At",
+          "type": "string"
+        },
+        "hard_gates": {
+          "items": {
+            "$ref": "#/$defs/EvaluationMetric"
+          },
+          "title": "Hard Gates",
+          "type": "array"
+        },
+        "inspection_call_count": {
+          "minimum": 0,
+          "title": "Inspection Call Count",
+          "type": "integer"
+        },
+        "judge_input": {
+          "$ref": "#/$defs/EvaluationJudgeInput"
+        },
+        "mode": {
+          "enum": [
+            "deterministic",
+            "hosted"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "model_call_count": {
+          "minimum": 0,
+          "title": "Model Call Count",
+          "type": "integer"
+        },
+        "model_input_tokens": {
+          "minimum": 0,
+          "title": "Model Input Tokens",
+          "type": "integer"
+        },
+        "model_latency_ms": {
+          "minimum": 0,
+          "title": "Model Latency Ms",
+          "type": "integer"
+        },
+        "model_output_tokens": {
+          "minimum": 0,
+          "title": "Model Output Tokens",
+          "type": "integer"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "patch_applied": {
+          "title": "Patch Applied",
+          "type": "boolean"
+        },
+        "policy_control_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Policy Control Ids",
+          "type": "array"
+        },
+        "remediation_latency_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Remediation Latency Ms",
+          "type": "integer"
+        },
+        "remote_objects_created": {
+          "minimum": 0,
+          "title": "Remote Objects Created",
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[a-f0-9]{40}$",
+          "title": "Source Commit",
+          "type": "string"
+        },
+        "trial_id": {
+          "title": "Trial Id",
+          "type": "string"
+        },
+        "trial_number": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Trial Number",
+          "type": "integer"
+        },
+        "unsupported_tool_calls": {
+          "minimum": 0,
+          "title": "Unsupported Tool Calls",
+          "type": "integer"
+        },
+        "validation_attempt_count": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Validation Attempt Count",
+          "type": "integer"
+        },
+        "validation_executions": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "maxItems": 100,
+          "title": "Validation Executions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "trial_id",
+        "case_id",
+        "mode",
+        "trial_number",
+        "generated_at",
+        "source_commit",
+        "expected_route",
+        "actual_route",
+        "final_status",
+        "hard_gates",
+        "passed",
+        "validation_attempt_count",
+        "inspection_call_count",
+        "unsupported_tool_calls",
+        "denied_tool_calls",
+        "commit_pinned_successes",
+        "patch_applied",
+        "cleanup_succeeded",
+        "remote_objects_created",
+        "model_call_count",
+        "model_latency_ms",
+        "model_input_tokens",
+        "model_output_tokens",
+        "judge_input"
+      ],
+      "title": "EvaluationTrialV2",
+      "type": "object"
+    },
+    "ExpectedRoute": {
+      "description": "Expected deterministic workflow boundary for one evaluation case.",
+      "enum": [
+        "AUTONOMOUS",
+        "APPROVAL",
+        "DENY",
+        "FAIL_SAFE"
+      ],
+      "title": "ExpectedRoute",
+      "type": "string"
+    },
+    "FinalStatus": {
+      "enum": [
+        "PENDING",
+        "AWAITING_APPROVAL",
+        "INVALID_REQUEST",
+        "UNSUPPORTED_REMEDIATION_TYPE",
+        "NOT_IMPLEMENTED",
+        "HUMAN_ACTION_REQUIRED",
+        "UNSAFE_REMEDIATION",
+        "VALIDATION_FAILED",
+        "DRAFT_PR_PREPARED",
+        "DRAFT_PR_CREATED",
+        "INTERNAL_ERROR",
+        "CLEANUP_FAILED"
+      ],
+      "title": "FinalStatus",
+      "type": "string"
+    },
+    "MemoryArm": {
+      "enum": [
+        "OFF",
+        "ON"
+      ],
+      "title": "MemoryArm",
+      "type": "string"
+    },
+    "MemoryArmResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_match_count": {
+          "minimum": 0,
+          "title": "Accepted Match Count",
+          "type": "integer"
+        },
+        "arm": {
+          "$ref": "#/$defs/MemoryArm"
+        },
+        "average_retrieval_latency_ms": {
+          "minimum": 0.0,
+          "title": "Average Retrieval Latency Ms",
+          "type": "number"
+        },
+        "judge_dimension_averages": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Judge Dimension Averages",
+          "type": "object"
+        },
+        "metrics": {
+          "$ref": "#/$defs/EvaluationSuiteMetricsV2"
+        },
+        "retrieval_hit_rate": {
+          "$ref": "#/$defs/RatioMetricV2"
+        }
+      },
+      "required": [
+        "arm",
+        "metrics",
+        "retrieval_hit_rate",
+        "accepted_match_count",
+        "average_retrieval_latency_ms"
+      ],
+      "title": "MemoryArmResultV1",
+      "type": "object"
+    },
+    "MemoryEvaluationTrialV1": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_match_count": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Accepted Match Count",
+          "type": "integer"
+        },
+        "arm": {
+          "$ref": "#/$defs/MemoryArm"
+        },
+        "execution_order": {
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Execution Order",
+          "type": "integer"
+        },
+        "memory_retrieval_latency_ms": {
+          "minimum": 0,
+          "title": "Memory Retrieval Latency Ms",
+          "type": "integer"
+        },
+        "memory_status": {
+          "$ref": "#/$defs/MemoryRetrievalStatus"
+        },
+        "memory_write_status": {
+          "title": "Memory Write Status",
+          "type": "string"
+        },
+        "pair_number": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Pair Number",
+          "type": "integer"
+        },
+        "trial": {
+          "$ref": "#/$defs/EvaluationTrialV2"
+        }
+      },
+      "required": [
+        "arm",
+        "pair_number",
+        "execution_order",
+        "memory_status",
+        "memory_retrieval_latency_ms",
+        "accepted_match_count",
+        "memory_write_status",
+        "trial"
+      ],
+      "title": "MemoryEvaluationTrialV1",
+      "type": "object"
+    },
+    "MemoryRetrievalStatus": {
+      "enum": [
+        "DISABLED",
+        "NO_MATCH",
+        "RETRIEVED",
+        "ERROR"
+      ],
+      "title": "MemoryRetrievalStatus",
+      "type": "string"
+    },
+    "RatioMetricV2": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator": {
+          "minimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "title": "RatioMetricV2",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "arms": {
+      "additionalProperties": {
+        "$ref": "#/$defs/MemoryArmResultV1"
+      },
+      "propertyNames": {
+        "$ref": "#/$defs/MemoryArm"
+      },
+      "title": "Arms",
+      "type": "object"
+    },
+    "artifact_digests": {
+      "items": {
+        "$ref": "#/$defs/EvaluationArtifactDigest"
+      },
+      "maxItems": 100,
+      "title": "Artifact Digests",
+      "type": "array"
+    },
+    "benchmark_id": {
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "deltas": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Deltas",
+      "type": "object"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "deterministic",
+        "hosted"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_commit": {
+      "pattern": "^[a-f0-9]{40}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "trials": {
+      "items": {
+        "$ref": "#/$defs/MemoryEvaluationTrialV1"
+      },
+      "maxItems": 60,
+      "minItems": 1,
+      "title": "Trials",
+      "type": "array"
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "mode",
+    "generated_at",
+    "source_commit",
+    "trials",
+    "arms",
+    "deltas"
+  ],
+  "title": "MemoryEvaluationResultV1",
+  "type": "object"
+}

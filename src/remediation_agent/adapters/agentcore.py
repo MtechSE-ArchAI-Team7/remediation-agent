@@ -13,7 +13,7 @@ import boto3  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from pydantic import SecretStr, field_validator
 
-from remediation_agent.adapters.evidence import SecretRedactor
+from remediation_agent.adapters.evidence import SecretRedactor, build_artifact_preview
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.domain.models import (
     ArtifactManifest,
@@ -22,7 +22,13 @@ from remediation_agent.domain.models import (
     StrictModel,
     WorkspaceRef,
 )
-from remediation_agent.ports.models import ArtifactWriteRequest, AuditWriteRequest
+from remediation_agent.ports.models import (
+    ArtifactReadError,
+    ArtifactReadRequest,
+    ArtifactReadResult,
+    ArtifactWriteRequest,
+    AuditWriteRequest,
+)
 
 
 class AgentCoreRuntimeSecret(StrictModel):
@@ -58,6 +64,12 @@ class _SecretsManagerClient(Protocol):
 
 class _S3Client(Protocol):
     def put_object(self, **kwargs: object) -> Mapping[str, object]: ...
+
+    def get_object(self, **kwargs: object) -> Mapping[str, object]: ...
+
+
+class _ReadableBody(Protocol):
+    def read(self, amount: int | None = None) -> bytes: ...
 
 
 class SecretsManagerRuntimeSecretProvider:
@@ -165,6 +177,57 @@ class S3ArtifactStore:
             status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
             if status != 412:
                 raise
+
+
+class S3ArtifactReader:
+    """Read one manifest-selected, digest-addressed artifact from the configured bucket."""
+
+    def __init__(
+        self,
+        bucket: str,
+        *,
+        region_name: str,
+        client: _S3Client | None = None,
+        redactor: SecretRedactor | None = None,
+    ) -> None:
+        self.bucket = bucket
+        self._client = client or cast(_S3Client, boto3.client("s3", region_name=region_name))
+        self._redactor = redactor or SecretRedactor()
+
+    async def read(self, request: ArtifactReadRequest) -> ArtifactReadResult:
+        try:
+            run_id = _safe_segment(request.run_id, "run ID")
+            relative = _safe_relative(request.artifact.name)
+        except ValueError as exc:
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED") from exc
+        if request.artifact.media_type not in {
+            "application/json",
+            "application/x-ndjson",
+            "text/x-diff",
+            "text/plain",
+        }:
+            raise ArtifactReadError("ARTIFACT_PREVIEW_UNSUPPORTED")
+        digest_value = request.artifact.digest.removeprefix("sha256:")
+        if len(digest_value) != 64 or any(character not in "0123456789abcdef" for character in digest_value):
+            raise ArtifactReadError("ARTIFACT_INTEGRITY_FAILED")
+        key = f"runs/{run_id}/artifacts/{digest_value}/{relative.as_posix()}"
+        if request.artifact.path != f"s3://{self.bucket}/{key}":
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+        try:
+            response = await asyncio.to_thread(self._client.get_object, Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                raise ArtifactReadError("ARTIFACT_NOT_FOUND") from exc
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED") from exc
+        body = response.get("Body")
+        if not hasattr(body, "read"):
+            raise ArtifactReadError("ARTIFACT_PREVIEW_UNSUPPORTED")
+        content = await asyncio.to_thread(
+            cast(_ReadableBody, body).read,
+            request.max_object_bytes + 1,
+        )
+        return build_artifact_preview(request, content, self._redactor)
 
 
 class S3AuditSink:

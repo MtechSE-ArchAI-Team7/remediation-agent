@@ -14,11 +14,15 @@ from remediation_agent.domain.models import (
     ArtifactManifest,
     CleanupResult,
     DownstreamDeliveryReceiptV1,
+    IncidentMemoryRetrievalV1,
+    IncidentMemoryWriteReceiptV1,
     ModelCallRecord,
     RepositoryRef,
     WorkspaceRef,
 )
 from remediation_agent.ports.models import (
+    ArtifactReadRequest,
+    ArtifactReadResult,
     ArtifactWriteRequest,
     AuditWriteRequest,
     BranchRequest,
@@ -30,6 +34,8 @@ from remediation_agent.ports.models import (
     DraftPrRequest,
     FileContent,
     HandoffDeliveryRequest,
+    IncidentMemoryRetrievalRequest,
+    IncidentMemoryStoreRequest,
     ModelGeneration,
     ModelRequest,
     PatchApplyRequest,
@@ -124,6 +130,10 @@ class ArtifactStore(Protocol):
     async def write_bundle(self, request: ArtifactWriteRequest) -> ArtifactManifest: ...
 
 
+class ArtifactReader(Protocol):
+    async def read(self, request: ArtifactReadRequest) -> ArtifactReadResult: ...
+
+
 class AuditSink(Protocol):
     async def write(self, request: AuditWriteRequest) -> None: ...
 
@@ -132,6 +142,14 @@ class HandoffDeliveryPort(Protocol):
     """Deliver a completed handoff without granting workflow mutation authority."""
 
     async def deliver(self, request: HandoffDeliveryRequest) -> DownstreamDeliveryReceiptV1: ...
+
+
+class IncidentMemoryPort(Protocol):
+    """Advisory long-term memory boundary controlled entirely by the host."""
+
+    async def retrieve(self, request: IncidentMemoryRetrievalRequest) -> IncidentMemoryRetrievalV1: ...
+
+    async def store(self, request: IncidentMemoryStoreRequest) -> IncidentMemoryWriteReceiptV1: ...
 
 
 class ReadinessProbe(Protocol):

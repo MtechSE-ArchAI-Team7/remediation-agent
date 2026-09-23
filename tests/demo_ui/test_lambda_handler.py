@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError, ReadTimeoutError  # type: ignore[im
 _ROOT = Path(__file__).resolve().parents[2]
 _HANDLER_PATH = _ROOT / "demo-ui" / "backend" / "handler.py"
 _RUN_ID = "2db1f13e-7351-4a1f-a4c6-630646366d52"
+_DIGEST = "sha256:" + "a" * 64
 
 
 class _FakeAgentCore:
@@ -133,6 +134,102 @@ def test_get_uses_separate_task_and_session_ids(handler: _HandlerModule) -> None
     assert json.loads(fake.calls[0]["payload"])["method"] == "GetTask"
     assert json.loads(fake.calls[0]["payload"])["params"] == {"id": _RUN_ID}
     assert fake.calls[0]["runtimeSessionId"] == _RUN_ID
+
+
+def test_artifact_preview_relays_typed_manifest_identity_without_object_path(handler: _HandlerModule) -> None:
+    preview = {
+        "schema_version": "1.0",
+        "run_id": _RUN_ID,
+        "name": "patch.diff",
+        "media_type": "text/x-diff",
+        "digest": _DIGEST,
+        "content": "--- a/server.js\n+++ b/server.js",
+        # A2A data parts use protobuf Struct, which serializes JSON integers as doubles.
+        "size_bytes": 35.0,
+        "truncated": False,
+        "digest_verified": True,
+    }
+    envelope = {
+        "jsonrpc": "2.0",
+        "id": "response-1",
+        "result": {
+            "message": {
+                "parts": [
+                    {
+                        "mediaType": "application/vnd.aios.artifact-preview-result.v1+json",
+                        "data": preview,
+                    }
+                ]
+            }
+        },
+    }
+    fake = _FakeAgentCore(_upstream(envelope))
+    handler._agentcore_client = fake
+
+    response = handler.lambda_handler(
+        _event(
+            "POST",
+            f"/api/runs/{_RUN_ID}/artifacts/preview",
+            {"session_id": _RUN_ID, "artifact_name": "patch.diff", "digest": _DIGEST},
+        ),
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    assert _body(response)["output"] == {**preview, "size_bytes": 35}
+    call = fake.calls[0]
+    assert call["runtimeSessionId"] == _RUN_ID
+    payload = json.loads(call["payload"])
+    assert payload["params"]["message"]["parts"] == [
+        {
+            "data": {
+                "schema_version": "1.0",
+                "run_id": _RUN_ID,
+                "artifact_name": "patch.diff",
+                "digest": _DIGEST,
+            },
+            "mediaType": "application/vnd.aios.artifact-preview-request.v1+json",
+        }
+    ]
+    assert "path" not in json.dumps(payload)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"session_id": _RUN_ID, "artifact_name": "patch.diff", "digest": "sha256:short"},
+        {"session_id": "not-a-uuid", "artifact_name": "patch.diff", "digest": _DIGEST},
+        {"session_id": _RUN_ID, "artifact_name": "", "digest": _DIGEST},
+        {"session_id": _RUN_ID, "artifact_name": "patch.diff", "digest": _DIGEST, "path": "s3://bad"},
+    ],
+)
+def test_artifact_preview_rejects_invalid_browser_requests(handler: _HandlerModule, body: object) -> None:
+    response = handler.lambda_handler(
+        _event("POST", f"/api/runs/{_RUN_ID}/artifacts/preview", body),
+        None,
+    )
+    assert response["statusCode"] == 400
+    assert _body(response) == {"error": "INVALID_ARTIFACT_PREVIEW_REQUEST"}
+
+
+def test_artifact_preview_maps_bounded_runtime_failure(handler: _HandlerModule) -> None:
+    envelope = _task_response(state="TASK_STATE_REJECTED")
+    task = envelope["result"]["task"]
+    task["status"]["message"] = {"parts": [{"mediaType": "text/plain", "text": "ARTIFACT_NOT_FOUND"}]}
+    handler._agentcore_client = _FakeAgentCore(_upstream(envelope))
+
+    response = handler.lambda_handler(
+        _event(
+            "POST",
+            f"/api/runs/{_RUN_ID}/artifacts/preview",
+            {"session_id": _RUN_ID, "artifact_name": "missing.json", "digest": _DIGEST},
+        ),
+        None,
+    )
+
+    assert response["statusCode"] == 404
+    assert _body(response) == {"error": "ARTIFACT_NOT_FOUND"}
 
 
 def test_checkpoint_explainability_part_is_normalized(handler: _HandlerModule) -> None:

@@ -16,6 +16,8 @@ EXPLAINABILITY_TRACE_MEDIA_TYPE = "application/vnd.aios.explainability-trace.v1+
 DELIVERY_RECEIPT_MEDIA_TYPE = "application/vnd.aios.delivery-receipt.v1+json"
 PROVIDER_PROBE_REQUEST_MEDIA_TYPE = "application/vnd.aios.provider-probe-request.v1+json"
 PROVIDER_PROBE_RESULT_MEDIA_TYPE = "application/vnd.aios.provider-probe-result.v1+json"
+ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE = "application/vnd.aios.artifact-preview-request.v1+json"
+ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE = "application/vnd.aios.artifact-preview-result.v1+json"
 
 
 class ProviderProbeRequestV1(StrictModel):
@@ -42,10 +44,32 @@ class ProviderProbeResultV1(StrictModel):
     response_digest: NonEmptyStr
 
 
+class ArtifactPreviewRequestV1(StrictModel):
+    """Select one artifact by run-bound manifest identity, never by object path."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: NonEmptyStr
+    artifact_name: str = Field(min_length=1, max_length=255)
+    digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class ArtifactPreviewResultV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: NonEmptyStr
+    name: NonEmptyStr
+    media_type: NonEmptyStr
+    digest: NonEmptyStr
+    content: str
+    size_bytes: int = Field(ge=0)
+    truncated: bool
+    digest_verified: Literal[True] = True
+
+
 SUPPORTED_INPUT_MEDIA_TYPES = frozenset(
     {
         DIAGNOSIS_HANDOFF_MEDIA_TYPE,
         APPROVAL_DECISION_MEDIA_TYPE,
         PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
+        ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
     }
 )

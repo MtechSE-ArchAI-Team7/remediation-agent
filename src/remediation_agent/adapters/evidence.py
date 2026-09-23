@@ -10,7 +10,13 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from remediation_agent.domain.models import ArtifactManifest, ArtifactRef, AuditEvent
-from remediation_agent.ports.models import ArtifactWriteRequest, AuditWriteRequest
+from remediation_agent.ports.models import (
+    ArtifactReadError,
+    ArtifactReadRequest,
+    ArtifactReadResult,
+    ArtifactWriteRequest,
+    AuditWriteRequest,
+)
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password|credential)\s*[:=]\s*[^\s,;]+"),
@@ -139,6 +145,42 @@ class LocalArtifactStore:
         return ArtifactManifest(run_id=request.run_id, artifacts=refs)
 
 
+class LocalArtifactReader:
+    """Read a manifest-selected local artifact without accepting an arbitrary path."""
+
+    def __init__(self, root: Path, redactor: SecretRedactor | None = None) -> None:
+        self.root = root.resolve()
+        self.redactor = redactor or SecretRedactor()
+
+    async def read(self, request: ArtifactReadRequest) -> ArtifactReadResult:
+        if request.artifact.media_type not in _PREVIEW_MEDIA_TYPES:
+            raise ArtifactReadError("ARTIFACT_PREVIEW_UNSUPPORTED")
+        relative = PurePosixPath(request.artifact.name)
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+        run_directory = (self.root / request.run_id).resolve()
+        if not run_directory.is_relative_to(self.root) or run_directory == self.root:
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+        unresolved_target = run_directory / relative
+        path_cursor = unresolved_target
+        while path_cursor != run_directory:
+            if path_cursor.is_symlink():
+                raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+            path_cursor = path_cursor.parent
+        target = unresolved_target.resolve()
+        if not target.is_relative_to(run_directory):
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+        if request.artifact.path != f"{request.run_id}/{relative.as_posix()}":
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED")
+        try:
+            body = target.read_bytes()
+        except FileNotFoundError as exc:
+            raise ArtifactReadError("ARTIFACT_NOT_FOUND") from exc
+        except OSError as exc:
+            raise ArtifactReadError("ARTIFACT_ACCESS_DENIED") from exc
+        return build_artifact_preview(request, body, self.redactor)
+
+
 class JsonlAuditSink:
     def __init__(self, artifact_root: Path, redactor: SecretRedactor | None = None) -> None:
         self.artifact_root = artifact_root.resolve()
@@ -172,3 +214,41 @@ def _media_type(name: str) -> str:
     if name.endswith(".diff"):
         return "text/x-diff"
     return "text/plain"
+
+
+_PREVIEW_MEDIA_TYPES = frozenset({"application/json", "application/x-ndjson", "text/x-diff", "text/plain"})
+
+
+def build_artifact_preview(
+    request: ArtifactReadRequest,
+    body: bytes,
+    redactor: SecretRedactor,
+) -> ArtifactReadResult:
+    if len(body) > request.max_object_bytes:
+        raise ArtifactReadError("ARTIFACT_TOO_LARGE")
+    digest = "sha256:" + hashlib.sha256(body).hexdigest()
+    if digest != request.artifact.digest:
+        raise ArtifactReadError("ARTIFACT_INTEGRITY_FAILED")
+    try:
+        content = body.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ArtifactReadError("ARTIFACT_PREVIEW_UNSUPPORTED") from exc
+    redacted = redactor.redact(content)
+    preview = redacted.encode("utf-8")[: request.max_preview_bytes]
+    while preview:
+        try:
+            rendered = preview.decode("utf-8")
+            break
+        except UnicodeDecodeError:
+            preview = preview[:-1]
+    else:
+        rendered = ""
+    return ArtifactReadResult(
+        name=request.artifact.name,
+        media_type=request.artifact.media_type,
+        digest=request.artifact.digest,
+        content=rendered,
+        size_bytes=len(body),
+        truncated=len(redacted.encode("utf-8")) > len(preview),
+        digest_verified=True,
+    )

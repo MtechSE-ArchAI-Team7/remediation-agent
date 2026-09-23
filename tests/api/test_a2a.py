@@ -11,11 +11,13 @@ import httpx
 import pytest
 from a2a.types import a2a_pb2 as a2a_pb
 
-from remediation_agent.adapters.fakes import FakeStructuredModel
+from remediation_agent.adapters.fakes import FakeStructuredModel, MemoryArtifactReader
 from remediation_agent.api.a2a import build_agent_card, create_a2a_app
 from remediation_agent.api.a2a_contracts import (
     APPROVAL_DECISION_MEDIA_TYPE,
     APPROVAL_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
@@ -27,6 +29,8 @@ from remediation_agent.domain.enums import ApprovalStatus, FinalStatus, ModelOpe
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
+    ArtifactManifest,
+    ArtifactRef,
     DiagnosisHandoffV1,
     ExplainabilityTraceV1,
     RemediationHandoffV1,
@@ -99,6 +103,17 @@ def _result(run_id: str) -> RemediationHandoffV1:
         run_id=run_id,
         final_status=FinalStatus.DRAFT_PR_PREPARED,
         repository=source.repository,
+        artifact_manifest=ArtifactManifest(
+            run_id=run_id,
+            artifacts=[
+                ArtifactRef(
+                    name="result.json",
+                    path=f"s3://artifact-bucket/runs/{run_id}/artifacts/{'a' * 64}/result.json",
+                    digest="sha256:" + "a" * 64,
+                    media_type="application/json",
+                )
+            ],
+        ),
     )
 
 
@@ -118,14 +133,18 @@ def _send(data: dict[str, object], media_type: str, *, task_id: str | None = Non
     return {"jsonrpc": "2.0", "id": "request-1", "method": "SendMessage", "params": {"message": message}}
 
 
-async def test_agent_card_is_strict_a2a_v1_with_sigv4_and_two_skills() -> None:
+async def test_agent_card_is_strict_a2a_v1_with_sigv4_and_read_only_artifact_skill() -> None:
     card = build_agent_card("https://runtime.example/")
     assert card.supported_interfaces[0].protocol_version == "1.0"
     assert card.supported_interfaces[0].protocol_binding == "JSONRPC"
     assert card.capabilities.streaming is True
     assert card.capabilities.push_notifications is False
     assert set(card.security_schemes) == {"aws_sigv4"}
-    assert [skill.id for skill in card.skills] == ["remediate_repository", "runtime_readiness_probe"]
+    assert [skill.id for skill in card.skills] == [
+        "remediate_repository",
+        "runtime_readiness_probe",
+        "view_remediation_artifact",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -257,6 +276,110 @@ async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> No
     assert completed["artifacts"][0]["parts"][0]["mediaType"] == REMEDIATION_HANDOFF_MEDIA_TYPE
     assert completed["artifacts"][0]["parts"][1]["mediaType"] == EXPLAINABILITY_TRACE_MEDIA_TYPE
     assert fetched.json()["result"]["id"] == task_id
+
+
+async def test_artifact_preview_is_session_bound_manifest_selected_and_model_free() -> None:
+    service = _FakeService()
+    model = FakeStructuredModel({})
+    reader = MemoryArtifactReader()
+    app = create_a2a_app(
+        model,
+        cast(RemediationService, service),
+        probe_provider="bedrock",
+        artifact_reader=reader,
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            started = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE),
+            )
+            task_id = started.json()["result"]["task"]["id"]
+            reader.contents[(task_id, "result.json")] = '{"status":"redacted"}'
+            await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(_decision().model_dump(mode="json"), APPROVAL_DECISION_MEDIA_TYPE, task_id=task_id),
+            )
+            preview = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(
+                    {
+                        "schema_version": "1.0",
+                        "run_id": task_id,
+                        "artifact_name": "result.json",
+                        "digest": "sha256:" + "a" * 64,
+                    },
+                    ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+                ),
+            )
+            missing = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(
+                    {
+                        "schema_version": "1.0",
+                        "run_id": task_id,
+                        "artifact_name": "unlisted.json",
+                        "digest": "sha256:" + "b" * 64,
+                    },
+                    ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+                ),
+            )
+
+    message = preview.json()["result"]["message"]
+    assert message["parts"][0]["mediaType"] == ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE
+    assert message["parts"][0]["data"]["content"] == '{"status":"redacted"}'
+    assert missing.json()["result"]["task"]["status"]["message"]["parts"][0]["text"] == "ARTIFACT_NOT_FOUND"
+    assert len(reader.requests) == 1
+    assert model.requests == []
+    assert service.starts == [(diagnosis_handoff(), task_id)]
+    assert service.approvals == [(task_id, _decision())]
+
+
+async def test_artifact_preview_rejects_cross_context_lookup() -> None:
+    service = _FakeService()
+    app = create_a2a_app(
+        FakeStructuredModel({}),
+        cast(RemediationService, service),
+        probe_provider="bedrock",
+        artifact_reader=MemoryArtifactReader(),
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            started = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE),
+            )
+            task_id = started.json()["result"]["task"]["id"]
+            await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(_decision().model_dump(mode="json"), APPROVAL_DECISION_MEDIA_TYPE, task_id=task_id),
+            )
+            other_context = "3db1f13e-7351-4a1f-a4c6-630646366d53"
+            request = _send(
+                {
+                    "schema_version": "1.0",
+                    "run_id": task_id,
+                    "artifact_name": "result.json",
+                    "digest": "sha256:" + "a" * 64,
+                },
+                ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+            )
+            request["params"]["message"]["contextId"] = other_context  # type: ignore[index]
+            preview = await client.post(
+                "/",
+                headers={**_HEADERS, "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": other_context},
+                json=request,
+            )
+
+    task = preview.json()["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_REJECTED"
+    assert task["status"]["message"]["parts"][0]["text"] == "ARTIFACT_NOT_FOUND"
 
 
 async def test_stream_emits_created_task_before_working_status() -> None:

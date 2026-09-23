@@ -1,0 +1,367 @@
+{
+  "$defs": {
+    "EvaluationInspectionCall": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "maxProperties": 20,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "tool_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name"
+      ],
+      "title": "EvaluationInspectionCall",
+      "type": "object"
+    },
+    "IncidentMemoryRecordV1": {
+      "additionalProperties": false,
+      "description": "Bounded long-term incident summary; never raw source, prompts, or patches.",
+      "properties": {
+        "admission_type": {
+          "$ref": "#/$defs/MemoryAdmissionType"
+        },
+        "changed_paths": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Changed Paths",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "evidence_digests": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Evidence Digests",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "incident_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "incident_signature": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Incident Signature",
+          "type": "string"
+        },
+        "model_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "model_provider": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Provider",
+          "type": "string"
+        },
+        "policy_version": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "prompt_version": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "remediation_summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Remediation Summary",
+          "type": "string"
+        },
+        "repository": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Repository",
+          "type": "string"
+        },
+        "residual_risks": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Residual Risks",
+          "type": "array"
+        },
+        "rollback_summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rollback Summary",
+          "type": "string"
+        },
+        "root_cause": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Root Cause",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_commit": {
+          "pattern": "^[0-9a-fA-F]{7,64}$",
+          "title": "Source Commit",
+          "type": "string"
+        },
+        "validation": {
+          "items": {
+            "$ref": "#/$defs/IncidentValidationSummary"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Validation",
+          "type": "array"
+        }
+      },
+      "required": [
+        "incident_id",
+        "repository",
+        "source_commit",
+        "incident_signature",
+        "root_cause",
+        "remediation_summary",
+        "changed_paths",
+        "validation",
+        "rollback_summary",
+        "policy_version",
+        "prompt_version",
+        "model_provider",
+        "model_name",
+        "evidence_ids",
+        "evidence_digests",
+        "admission_type",
+        "created_at"
+      ],
+      "title": "IncidentMemoryRecordV1",
+      "type": "object"
+    },
+    "IncidentValidationSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/ValidationOutcome"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "outcome"
+      ],
+      "title": "IncidentValidationSummary",
+      "type": "object"
+    },
+    "MemoryAdmissionType": {
+      "enum": [
+        "AUTO_VALIDATED",
+        "EVALUATION_SEED"
+      ],
+      "title": "MemoryAdmissionType",
+      "type": "string"
+    },
+    "MemoryArm": {
+      "enum": [
+        "OFF",
+        "ON"
+      ],
+      "title": "MemoryArm",
+      "type": "string"
+    },
+    "MemoryBenchmarkCaseV1": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "memory_on_inspection_calls": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/EvaluationInspectionCall"
+              },
+              "maxItems": 20,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Memory On Inspection Calls"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IncidentMemoryRecordV1"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "case_id"
+      ],
+      "title": "MemoryBenchmarkCaseV1",
+      "type": "object"
+    },
+    "ValidationOutcome": {
+      "enum": [
+        "NOT_RUN",
+        "PASSED",
+        "FAILED",
+        "ERROR",
+        "TIMED_OUT"
+      ],
+      "title": "ValidationOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "benchmark_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Benchmark Id",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/MemoryBenchmarkCaseV1"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Cases",
+      "type": "array"
+    },
+    "counterbalanced_orders": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/MemoryArm"
+        },
+        "type": "array"
+      },
+      "maxItems": 5,
+      "minItems": 1,
+      "title": "Counterbalanced Orders",
+      "type": "array"
+    },
+    "evaluation_suite_path": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Evaluation Suite Path",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "trials_per_case": {
+      "default": 3,
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Trials Per Case",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "benchmark_id",
+    "evaluation_suite_path",
+    "counterbalanced_orders",
+    "cases"
+  ],
+  "title": "MemoryBenchmarkManifestV1",
+  "type": "object"
+}

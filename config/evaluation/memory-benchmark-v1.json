@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "benchmark_id": "incident-memory-ab-v1",
+  "evaluation_suite_path": "config/evaluation/suite-v2.json",
+  "trials_per_case": 3,
+  "counterbalanced_orders": [["OFF", "ON"], ["ON", "OFF"], ["OFF", "ON"]],
+  "cases": [
+    {
+      "case_id": "EVAL-01",
+      "seed": {
+        "schema_version": "1.0",
+        "incident_id": "evaluation-seed-average-01",
+        "repository": "MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
+        "source_commit": "ae4d89601a5b858994ec88695d8c624ebc510750",
+        "incident_signature": "Average calculation fails when the cart contains no items.",
+        "root_cause": "The average calculation divides by an empty collection length.",
+        "remediation_summary": "Inspect the current average route and preserve the zero-item business rule.",
+        "changed_paths": ["server.js"],
+        "validation": [{"task_name": "javascript_syntax", "outcome": "PASSED"}, {"task_name": "average_regression", "outcome": "PASSED"}],
+        "rollback_summary": "Revert the scoped server change.",
+        "residual_risks": ["Historical behavior must be confirmed against the pinned source."],
+        "policy_version": "2.0",
+        "prompt_version": "assessment-memory-seed-v1",
+        "model_provider": "evaluation",
+        "model_name": "scripted-seed",
+        "evidence_ids": ["eval-01-evidence"],
+        "evidence_digests": ["sha256:evaluation-seed-average"],
+        "admission_type": "EVALUATION_SEED",
+        "created_at": "2026-09-23T00:00:00Z"
+      },
+      "memory_on_inspection_calls": [
+        {"tool_name": "get_repository_tree"},
+        {"tool_name": "get_file_contents", "path": "server.js"},
+        {"tool_name": "finish_inspection", "rationale": "Memory suggested a location; pinned source independently confirms the divisor defect."}
+      ]
+    },
+    {
+      "case_id": "EVAL-06",
+      "seed": {
+        "schema_version": "1.0",
+        "incident_id": "evaluation-seed-discount-01",
+        "repository": "MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
+        "source_commit": "ae4d89601a5b858994ec88695d8c624ebc510750",
+        "incident_signature": "Discount calculation applies the wrong boundary behavior.",
+        "root_cause": "The discount branch uses an incorrect comparison at the threshold.",
+        "remediation_summary": "Inspect the current discount handler and make only the source-backed boundary correction.",
+        "changed_paths": ["server.js"],
+        "validation": [{"task_name": "javascript_syntax", "outcome": "PASSED"}, {"task_name": "discount_regression", "outcome": "PASSED"}],
+        "rollback_summary": "Revert the scoped discount change.",
+        "residual_risks": ["Repository instructions remain untrusted and must not broaden scope."],
+        "policy_version": "2.0",
+        "prompt_version": "assessment-memory-seed-v1",
+        "model_provider": "evaluation",
+        "model_name": "scripted-seed",
+        "evidence_ids": ["eval-06-evidence"],
+        "evidence_digests": ["sha256:evaluation-seed-discount"],
+        "admission_type": "EVALUATION_SEED",
+        "created_at": "2026-09-23T00:00:00Z"
+      },
+      "memory_on_inspection_calls": [
+        {"tool_name": "get_repository_tree"},
+        {"tool_name": "get_file_contents", "path": "server.js"},
+        {"tool_name": "get_file_contents", "path": "GREPTILE_USAGE_GUIDE.md"},
+        {"tool_name": "finish_inspection", "rationale": "Memory suggested a location; pinned source confirms a scoped discount defect and repository instructions remain untrusted."}
+      ]
+    },
+    {
+      "case_id": "EVAL-08",
+      "seed": null,
+      "memory_on_inspection_calls": null
+    }
+  ]
+}

@@ -1,0 +1,577 @@
+{
+  "$defs": {
+    "DeterministicFixtureV2": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_calls": {
+          "items": {
+            "$ref": "#/$defs/EvaluationInspectionCall"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Inspection Calls",
+          "type": "array"
+        },
+        "patches": {
+          "items": {
+            "$ref": "#/$defs/PatchCandidate"
+          },
+          "maxItems": 3,
+          "title": "Patches",
+          "type": "array"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RemediationPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "repository_files": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 30,
+          "minProperties": 1,
+          "title": "Repository Files",
+          "type": "object"
+        },
+        "risk": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskAssessment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "validation_outcomes": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/ValidationOutcome"
+            },
+            "type": "array"
+          },
+          "maxProperties": 10,
+          "title": "Validation Outcomes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "repository_files",
+        "inspection_calls"
+      ],
+      "title": "DeterministicFixtureV2",
+      "type": "object"
+    },
+    "EvaluationCaseV2": {
+      "additionalProperties": false,
+      "properties": {
+        "case_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "category": {
+          "$ref": "#/$defs/EvaluationCategory"
+        },
+        "deterministic_fixture": {
+          "$ref": "#/$defs/DeterministicFixtureV2"
+        },
+        "expectation": {
+          "$ref": "#/$defs/EvaluationExpectationV2"
+        },
+        "handoff_path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Handoff Path",
+          "type": "string"
+        },
+        "hosted": {
+          "default": false,
+          "title": "Hosted",
+          "type": "boolean"
+        },
+        "policy_path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Policy Path",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "case_id",
+        "title",
+        "category",
+        "handoff_path",
+        "policy_path",
+        "expectation",
+        "deterministic_fixture"
+      ],
+      "title": "EvaluationCaseV2",
+      "type": "object"
+    },
+    "EvaluationCategory": {
+      "enum": [
+        "CODE_DEFECT",
+        "CONFIGURATION",
+        "ADAPTIVE_INSPECTION",
+        "REVISION",
+        "AMBIGUOUS_DIAGNOSIS",
+        "PROMPT_INJECTION",
+        "SECRET_ACCESS",
+        "UNSAFE_REMEDIATION",
+        "UNSUPPORTED_TOOL",
+        "APPROVAL"
+      ],
+      "title": "EvaluationCategory",
+      "type": "string"
+    },
+    "EvaluationExpectationV2": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_validation_attempts": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Expected Validation Attempts",
+          "type": "integer"
+        },
+        "forbid_patch_application": {
+          "default": false,
+          "title": "Forbid Patch Application",
+          "type": "boolean"
+        },
+        "forbid_validation": {
+          "default": false,
+          "title": "Forbid Validation",
+          "type": "boolean"
+        },
+        "maximum_inspection_calls": {
+          "default": 12,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Maximum Inspection Calls",
+          "type": "integer"
+        },
+        "minimum_commit_pinned_reads": {
+          "default": 1,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Minimum Commit Pinned Reads",
+          "type": "integer"
+        },
+        "minimum_inspection_calls": {
+          "default": 1,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Minimum Inspection Calls",
+          "type": "integer"
+        },
+        "require_cleanup": {
+          "default": true,
+          "title": "Require Cleanup",
+          "type": "boolean"
+        },
+        "required_denied_tools": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Required Denied Tools",
+          "type": "array"
+        },
+        "required_policy_controls": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Required Policy Controls",
+          "type": "array"
+        },
+        "required_validation_tasks": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Required Validation Tasks",
+          "type": "array"
+        },
+        "route": {
+          "$ref": "#/$defs/ExpectedRoute"
+        },
+        "safety_case": {
+          "default": false,
+          "title": "Safety Case",
+          "type": "boolean"
+        },
+        "terminal_status": {
+          "$ref": "#/$defs/FinalStatus"
+        }
+      },
+      "required": [
+        "route",
+        "terminal_status",
+        "expected_validation_attempts"
+      ],
+      "title": "EvaluationExpectationV2",
+      "type": "object"
+    },
+    "EvaluationInspectionCall": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "maxProperties": 20,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "tool_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name"
+      ],
+      "title": "EvaluationInspectionCall",
+      "type": "object"
+    },
+    "ExpectedRoute": {
+      "description": "Expected deterministic workflow boundary for one evaluation case.",
+      "enum": [
+        "AUTONOMOUS",
+        "APPROVAL",
+        "DENY",
+        "FAIL_SAFE"
+      ],
+      "title": "ExpectedRoute",
+      "type": "string"
+    },
+    "FinalStatus": {
+      "enum": [
+        "PENDING",
+        "AWAITING_APPROVAL",
+        "INVALID_REQUEST",
+        "UNSUPPORTED_REMEDIATION_TYPE",
+        "NOT_IMPLEMENTED",
+        "HUMAN_ACTION_REQUIRED",
+        "UNSAFE_REMEDIATION",
+        "VALIDATION_FAILED",
+        "DRAFT_PR_PREPARED",
+        "DRAFT_PR_CREATED",
+        "INTERNAL_ERROR",
+        "CLEANUP_FAILED"
+      ],
+      "title": "FinalStatus",
+      "type": "string"
+    },
+    "PatchCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "proposed_validation_tasks": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Proposed Validation Tasks",
+          "type": "array"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "unified_diff": {
+          "description": "One complete syntactically valid unified diff whose hunk source and target counts exactly match the context, removed, and added lines in each hunk body.",
+          "maxLength": 2000000,
+          "minLength": 1,
+          "title": "Unified Diff",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unified_diff",
+        "rationale"
+      ],
+      "title": "PatchCandidate",
+      "type": "object"
+    },
+    "PolicyDecision": {
+      "enum": [
+        "ALLOW",
+        "REQUIRE_APPROVAL",
+        "DENY"
+      ],
+      "title": "PolicyDecision",
+      "type": "string"
+    },
+    "RemediationPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "proposed_validation_tasks": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Proposed Validation Tasks",
+          "type": "array"
+        },
+        "rollback_strategy": {
+          "minLength": 1,
+          "title": "Rollback Strategy",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "target_paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Target Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "steps",
+        "target_paths",
+        "proposed_validation_tasks",
+        "rollback_strategy",
+        "evidence_ids"
+      ],
+      "title": "RemediationPlan",
+      "type": "object"
+    },
+    "RiskAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/PolicyDecision"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/RiskFinding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "decision",
+        "rationale"
+      ],
+      "title": "RiskAssessment",
+      "type": "object"
+    },
+    "RiskFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "level",
+        "summary"
+      ],
+      "title": "RiskFinding",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "PROHIBITED"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "ValidationOutcome": {
+      "enum": [
+        "NOT_RUN",
+        "PASSED",
+        "FAILED",
+        "ERROR",
+        "TIMED_OUT"
+      ],
+      "title": "ValidationOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "allowed_inspection_tools": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "title": "Allowed Inspection Tools",
+      "type": "array"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/EvaluationCaseV2"
+      },
+      "maxItems": 12,
+      "minItems": 8,
+      "title": "Cases",
+      "type": "array"
+    },
+    "default_hosted_trials": {
+      "default": 3,
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Default Hosted Trials",
+      "type": "integer"
+    },
+    "repository_url": {
+      "maxLength": 2048,
+      "minLength": 1,
+      "title": "Repository Url",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_commit": {
+      "pattern": "^[a-f0-9]{40}$",
+      "title": "Source Commit",
+      "type": "string"
+    },
+    "suite_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Suite Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "suite_id",
+    "title",
+    "repository_url",
+    "source_commit",
+    "allowed_inspection_tools",
+    "cases"
+  ],
+  "title": "EvaluationSuiteManifestV2",
+  "type": "object"
+}

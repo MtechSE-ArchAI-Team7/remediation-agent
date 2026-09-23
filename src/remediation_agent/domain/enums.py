@@ -85,6 +85,7 @@ class ModelOperation(StrEnum):
     RISK = "RISK"
     PATCH = "PATCH"
     REVISION = "REVISION"
+    EVALUATION_JUDGE = "EVALUATION_JUDGE"
 
 
 class InspectionToolStatus(StrEnum):
@@ -128,3 +129,22 @@ class WorkspaceStatus(StrEnum):
     RESTORED = "RESTORED"
     DESTROYED = "DESTROYED"
     CLEANUP_FAILED = "CLEANUP_FAILED"
+
+
+class MemoryRetrievalStatus(StrEnum):
+    DISABLED = "DISABLED"
+    NO_MATCH = "NO_MATCH"
+    RETRIEVED = "RETRIEVED"
+    ERROR = "ERROR"
+
+
+class MemoryWriteStatus(StrEnum):
+    NOT_ELIGIBLE = "NOT_ELIGIBLE"
+    STORED = "STORED"
+    ALREADY_EXISTS = "ALREADY_EXISTS"
+    ERROR = "ERROR"
+
+
+class MemoryAdmissionType(StrEnum):
+    AUTO_VALIDATED = "AUTO_VALIDATED"
+    EVALUATION_SEED = "EVALUATION_SEED"

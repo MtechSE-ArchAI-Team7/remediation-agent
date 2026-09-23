@@ -198,12 +198,12 @@ describe("AIOS remediation console", () => {
     runTab.focus();
     fireEvent.keyDown(runTab, { key: "ArrowRight" });
 
-    const agentTab = screen.getByRole("tab", { name: "Agent" });
-    expect(agentTab).toHaveFocus();
-    expect(agentTab).toHaveAttribute("aria-selected", "true");
+    const runsTab = screen.getByRole("tab", { name: "Runs" });
+    expect(runsTab).toHaveFocus();
+    expect(runsTab).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("complementary", { name: "Run Console sections" })).not.toBeInTheDocument();
 
-    fireEvent.keyDown(agentTab, { key: "End" });
+    fireEvent.keyDown(runsTab, { key: "End" });
     expect(screen.getByRole("tab", { name: "System Status" })).toHaveFocus();
     fireEvent.click(screen.getByRole("tab", { name: "Run Console" }));
     expect(screen.getByLabelText("Diagnosis handoff JSON")).toHaveValue('{"case_id":"preserved"}');
@@ -374,6 +374,31 @@ describe("AIOS remediation console", () => {
                 duration_ms: 318,
               },
             ],
+            memory_retrieval: {
+              status: "RETRIEVED",
+              query_digest: "sha256:memory-query",
+              duration_ms: 42,
+              error_code: null,
+              matches: [
+                {
+                  incident_id: "incident-safe-01",
+                  admission_type: "EVALUATION_SEED",
+                  score: 0.91,
+                  age_days: 2.5,
+                  repository: "MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
+                  incident_signature: "Average calculation rejected an empty item list.",
+                  root_cause: "The divisor could become zero.",
+                  remediation_summary: "Guard the empty-list branch.",
+                  changed_paths: ["server.js"],
+                },
+              ],
+            },
+            memory_write: {
+              status: "STORED",
+              incident_id: "incident-current-01",
+              duration_ms: 31,
+              error_code: null,
+            },
           },
         }),
       ),
@@ -401,5 +426,105 @@ describe("AIOS remediation console", () => {
     expect(screen.getAllByText("AGENTCORE CODE INTERPRETER").length).toBeGreaterThan(0);
     expect(screen.getByText("aws.codeinterpreter.v1")).toBeInTheDocument();
     expect(screen.getByText("SESSION CLEANUP")).toBeInTheDocument();
+    expect(screen.getByText("Historical incident memory")).toBeInTheDocument();
+    expect(screen.getByText("incident-safe-01")).toBeInTheDocument();
+    expect(screen.getByText("91% match")).toBeInTheDocument();
+    expect(screen.getByText("Memory cannot authorize paths or tools, replace repository inspection, reuse a patch, or bypass policy and validation.")).toBeInTheDocument();
+  });
+
+  it("lists, refreshes, opens, and forgets browser-local recent runs", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(runView("AWAITING_APPROVAL")))
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
+    await screen.findAllByText("AWAITING APPROVAL");
+    fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
+
+    expect((await screen.findAllByText("CASE-ECOM-AVG-001")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Runs saved in this browser. Opening a run retrieves its latest runtime state.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect((await screen.findAllByText("DRAFT PR CREATED")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Run Console" })).toHaveAttribute("aria-selected", "true"));
+    fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Forget" }));
+
+    expect(await screen.findByText("No saved runs. Create a remediation run to add it here.")).toBeInTheDocument();
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("runtime run will not be deleted"));
+  });
+
+  it("retains the last known run summary when a refresh fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response({ error: "AGENTCORE_TIMEOUT" }, 504));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
+    await screen.findAllByText("DRAFT PR CREATED");
+    fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByText("agentcore timeout")).toBeInTheDocument();
+    expect(screen.getByText("Last known state")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+  });
+
+  it("loads an integrity-checked artifact in an accessible searchable modal", async () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    fetchMock
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED", {
+        result: {
+          final_status: "DRAFT_PR_CREATED",
+          changed_files: ["server.js"],
+          remediation_plan_summary: "Fix the route.",
+          risk_summary: "Bounded change.",
+          validation_attempts: [],
+          errors: [],
+          draft_pr: null,
+          artifact_manifest: {
+            artifacts: [{ name: "result.json", path: "s3://demo/result.json", digest, media_type: "application/json" }],
+          },
+          audit_bundle_ref: null,
+        },
+      })))
+      .mockResolvedValueOnce(response({
+        output: {
+          schema_version: "1.0",
+          run_id: RUN_ID,
+          name: "result.json",
+          media_type: "application/json",
+          digest,
+          content: '{"status":"redacted","count":2}',
+          size_bytes: 31,
+          truncated: true,
+          digest_verified: true,
+        },
+      }));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
+    const viewButton = await screen.findByRole("button", { name: "View" });
+    fireEvent.click(viewButton);
+
+    const dialog = await screen.findByRole("dialog", { name: "result.json" });
+    expect(dialog).toHaveTextContent("Redacted demo evidence");
+    expect(await screen.findByText(/stored object digest was verified in full/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Search preview"), { target: { value: "redacted" } });
+    expect(screen.getByText("1 match")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy content" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('{"status":"redacted","count":2}'));
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(screen.getByText("SHA-256 verified")).toBeInTheDocument();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(viewButton).toHaveFocus();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `/api/runs/${RUN_ID}/artifacts/preview`,
+      expect.objectContaining({ body: expect.not.stringContaining("s3://") }),
+    );
   });
 });

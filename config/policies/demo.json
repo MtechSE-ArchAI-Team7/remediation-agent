@@ -111,5 +111,8 @@
   },
   "github": {
     "writes_enabled": true
+  },
+  "incident_memory": {
+    "writes_enabled": false
   }
 }

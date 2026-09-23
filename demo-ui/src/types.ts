@@ -88,6 +88,33 @@ export interface ValidationExecutionRecord {
   duration_ms: number;
 }
 
+export interface IncidentMemoryMatch {
+  incident_id: string;
+  admission_type: "AUTO_VALIDATED" | "EVALUATION_SEED";
+  score: number;
+  age_days: number;
+  repository: string;
+  incident_signature: string;
+  root_cause: string;
+  remediation_summary: string;
+  changed_paths: string[];
+}
+
+export interface IncidentMemoryRetrieval {
+  status: "DISABLED" | "NO_MATCH" | "RETRIEVED" | "ERROR";
+  query_digest: string;
+  matches: IncidentMemoryMatch[];
+  duration_ms: number;
+  error_code: string | null;
+}
+
+export interface IncidentMemoryWrite {
+  status: "NOT_ELIGIBLE" | "STORED" | "ALREADY_EXISTS" | "ERROR";
+  incident_id: string | null;
+  duration_ms: number;
+  error_code: string | null;
+}
+
 export interface ExplainabilityTrace {
   schema_version: "1.0";
   run_id: string;
@@ -97,6 +124,8 @@ export interface ExplainabilityTrace {
   evidence: ExplainabilityEvidence[];
   model_calls: ExplainabilityModelCall[];
   validation_executions?: ValidationExecutionRecord[];
+  memory_retrieval?: IncidentMemoryRetrieval | null;
+  memory_write?: IncidentMemoryWrite | null;
 }
 
 export interface ArtifactRef {
@@ -135,6 +164,22 @@ export interface RemediationRunView {
 
 export interface RunResponse {
   output: RemediationRunView;
+}
+
+export interface ArtifactPreview {
+  schema_version: "1.0";
+  run_id: string;
+  name: string;
+  media_type: string;
+  digest: string;
+  content: string;
+  size_bytes: number;
+  truncated: boolean;
+  digest_verified: true;
+}
+
+export interface ArtifactPreviewResponse {
+  output: ArtifactPreview;
 }
 
 export interface ProbeResponse {

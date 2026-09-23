@@ -20,6 +20,8 @@ from remediation_agent.adapters.a2a_task_store import S3A2ATaskStore
 from remediation_agent.api.a2a_contracts import (
     APPROVAL_DECISION_MEDIA_TYPE,
     APPROVAL_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE,
     DELIVERY_RECEIPT_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
@@ -30,7 +32,7 @@ from remediation_agent.api.a2a_contracts import (
 from remediation_agent.api.a2a_executor import RemediationA2AExecutor
 from remediation_agent.api.agentcore import create_agentcore_app
 from remediation_agent.config import Settings
-from remediation_agent.ports.protocols import StructuredModel
+from remediation_agent.ports.protocols import ArtifactReader, StructuredModel
 from remediation_agent.service import RemediationService
 
 
@@ -52,7 +54,7 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
     return a2a_pb.AgentCard(
         name="AIOS Resolution/Remediation Agent",
         description=(
-            "The single policy-bounded Agent 3 LangGraph workflow for repository remediation and readiness probes."
+            "The single policy-bounded Agent 3 LangGraph workflow with readiness and read-only evidence access."
         ),
         version="1.0.0",
         supported_interfaces=[
@@ -69,12 +71,17 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
         ),
         security_schemes={"aws_sigv4": sigv4},
         security_requirements=security,
-        default_input_modes=[DIAGNOSIS_HANDOFF_MEDIA_TYPE, APPROVAL_DECISION_MEDIA_TYPE],
+        default_input_modes=[
+            DIAGNOSIS_HANDOFF_MEDIA_TYPE,
+            APPROVAL_DECISION_MEDIA_TYPE,
+            ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+        ],
         default_output_modes=[
             APPROVAL_REQUEST_MEDIA_TYPE,
             REMEDIATION_HANDOFF_MEDIA_TYPE,
             EXPLAINABILITY_TRACE_MEDIA_TYPE,
             DELIVERY_RECEIPT_MEDIA_TYPE,
+            ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE,
         ],
         skills=[
             a2a_pb.AgentSkill(
@@ -103,6 +110,15 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
                 output_modes=[PROVIDER_PROBE_RESULT_MEDIA_TYPE],
                 security_requirements=security,
             ),
+            a2a_pb.AgentSkill(
+                id="view_remediation_artifact",
+                name="View remediation artifact",
+                description="Read one redacted, manifest-bound evidence artifact with integrity and size checks.",
+                tags=["evidence", "artifact", "read-only"],
+                input_modes=[ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE],
+                output_modes=[ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE],
+                security_requirements=security,
+            ),
         ],
     )
 
@@ -113,17 +129,20 @@ def create_a2a_app(
     *,
     probe_provider: str | None = None,
     task_store: TaskStore | None = None,
+    artifact_reader: ArtifactReader | None = None,
     runtime_url: str | None = None,
 ) -> Starlette:
     """Compose the hosted A2A application with injectable offline boundaries."""
 
+    store = _DeferredTaskStore(task_store or InMemoryTaskStore())
     executor = RemediationA2AExecutor(
         service,
         model=model,
         probe_provider=probe_provider,
+        artifact_reader=artifact_reader,
+        task_store=store,
     )
     context_builder = _AgentCoreV1CallContextBuilder()
-    store = _DeferredTaskStore(task_store or InMemoryTaskStore())
     card = build_agent_card(runtime_url or "http://localhost:9000/")
     application = cast(
         Starlette,
@@ -141,6 +160,7 @@ def create_a2a_app(
         model,
         service,
         probe_provider=cast(Any, probe_provider),
+        artifact_reader=artifact_reader,
     )
     dependency_lifespan = dependencies.router.lifespan_context
 
@@ -151,10 +171,12 @@ def create_a2a_app(
             runtime = cast(RemediationService, dependencies.state.remediation_service)
             configured_model = cast(StructuredModel | None, getattr(dependencies.state, "structured_model", None))
             configured_provider = cast(str | None, getattr(dependencies.state, "probe_provider", None))
+            configured_reader = cast(ArtifactReader | None, getattr(dependencies.state, "artifact_reader", None))
             executor.configure(
                 runtime,
                 model=configured_model,
                 probe_provider=configured_provider,
+                artifact_reader=configured_reader,
             )
             if task_store is None and service is None:
                 settings = Settings()  # type: ignore[call-arg]

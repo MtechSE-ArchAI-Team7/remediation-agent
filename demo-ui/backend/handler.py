@@ -20,7 +20,9 @@ from botocore.exceptions import BotoCoreError, ClientError, ReadTimeoutError
 _SITE_ROOT = Path(__file__).with_name("site")
 _RUN_PATH = re.compile(r"^/api/runs/([^/]+)$")
 _APPROVAL_PATH = re.compile(r"^/api/runs/([^/]+)/approval$")
+_ARTIFACT_PREVIEW_PATH = re.compile(r"^/api/runs/([^/]+)/artifacts/preview$")
 _FAILURE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+_ARTIFACT_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_AGENTCORE_RESPONSE_BYTES = 6_000_000
 _DIAGNOSIS_MEDIA_TYPE = "application/vnd.aios.diagnosis-handoff.v1+json"
 _APPROVAL_MEDIA_TYPE = "application/vnd.aios.approval-decision.v1+json"
@@ -30,6 +32,8 @@ _EXPLAINABILITY_MEDIA_TYPE = "application/vnd.aios.explainability-trace.v1+json"
 _DELIVERY_MEDIA_TYPE = "application/vnd.aios.delivery-receipt.v1+json"
 _PROBE_REQUEST_MEDIA_TYPE = "application/vnd.aios.provider-probe-request.v1+json"
 _PROBE_RESULT_MEDIA_TYPE = "application/vnd.aios.provider-probe-result.v1+json"
+_ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE = "application/vnd.aios.artifact-preview-request.v1+json"
+_ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE = "application/vnd.aios.artifact-preview-result.v1+json"
 _agentcore_client: Any | None = None
 
 
@@ -64,6 +68,30 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                     response_kind="run",
                 )
         return _json_response(400, {"error": "INVALID_START_REQUEST"})
+
+    artifact_match = _ARTIFACT_PREVIEW_PATH.fullmatch(path)
+    if artifact_match is not None and method == "POST":
+        run_id = _canonical_uuid(artifact_match.group(1))
+        body = _request_json(event)
+        preview_request = _artifact_preview_request(body)
+        if run_id is None or preview_request is None:
+            return _json_response(400, {"error": "INVALID_ARTIFACT_PREVIEW_REQUEST"})
+        session_id, artifact_name, digest = preview_request
+        return _invoke(
+            session_id,
+            _send_message(
+                session_id,
+                _ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+                {
+                    "schema_version": "1.0",
+                    "run_id": run_id,
+                    "artifact_name": artifact_name,
+                    "digest": digest,
+                },
+            ),
+            response_kind="artifact_preview",
+            artifact_identity=(run_id, artifact_name, digest),
+        )
 
     approval_match = _APPROVAL_PATH.fullmatch(path)
     if approval_match is not None and method == "POST":
@@ -117,7 +145,13 @@ def _agentcore() -> Any:
     return _agentcore_client
 
 
-def _invoke(session_id: str, payload: dict[str, Any], *, response_kind: str) -> dict[str, Any]:
+def _invoke(
+    session_id: str,
+    payload: dict[str, Any],
+    *,
+    response_kind: str,
+    artifact_identity: tuple[str, str, str] | None = None,
+) -> dict[str, Any]:
     runtime_arn = os.environ.get("AGENTCORE_RUNTIME_ARN", "")
     if not runtime_arn:
         return _json_response(503, {"error": "GATEWAY_NOT_CONFIGURED"})
@@ -144,7 +178,16 @@ def _invoke(session_id: str, payload: dict[str, Any], *, response_kind: str) -> 
             return _json_response(status_code, {"error": "AGENTCORE_INVOCATION_FAILED"})
         if "error" in parsed:
             return _json_response(502, {"error": "A2A_PROTOCOL_ERROR"})
-        normalized = _normalize_probe(parsed) if response_kind == "probe" else _normalize_run(parsed, session_id)
+        if response_kind == "probe":
+            normalized = _normalize_probe(parsed)
+        elif response_kind == "artifact_preview":
+            normalized = _normalize_artifact_preview(parsed, artifact_identity)
+            if normalized is None:
+                failure_code = _preview_failure_code(parsed)
+                if failure_code is not None:
+                    return _json_response(_artifact_failure_status(failure_code), {"error": failure_code})
+        else:
+            normalized = _normalize_run(parsed, session_id)
         if normalized is None:
             return _json_response(502, {"error": "INVALID_A2A_RESPONSE"})
         return _json_response(200, {"output": normalized})
@@ -212,6 +255,24 @@ def _session_from_body(body: object) -> str | None:
     return _canonical_uuid(body.get("session_id")) if isinstance(body, dict) else None
 
 
+def _artifact_preview_request(body: object) -> tuple[str, str, str] | None:
+    if not isinstance(body, dict) or set(body) != {"session_id", "artifact_name", "digest"}:
+        return None
+    session_id = _canonical_uuid(body.get("session_id"))
+    artifact_name = body.get("artifact_name")
+    digest = body.get("digest")
+    if (
+        session_id is None
+        or not isinstance(artifact_name, str)
+        or not 1 <= len(artifact_name) <= 255
+        or "\x00" in artifact_name
+        or not isinstance(digest, str)
+        or _ARTIFACT_DIGEST.fullmatch(digest) is None
+    ):
+        return None
+    return session_id, artifact_name, digest
+
+
 def _send_message(
     context_id: str,
     media_type: str,
@@ -241,6 +302,82 @@ def _normalize_probe(envelope: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(resource, dict):
         return None
     return _data_part(resource.get("parts"), _PROBE_RESULT_MEDIA_TYPE)
+
+
+def _normalize_artifact_preview(
+    envelope: dict[str, Any],
+    expected_identity: tuple[str, str, str] | None,
+) -> dict[str, Any] | None:
+    result = envelope.get("result")
+    resource = result.get("message") if isinstance(result, dict) else None
+    if not isinstance(resource, dict):
+        return None
+    preview = _data_part(resource.get("parts"), _ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE)
+    if not isinstance(preview, dict):
+        return None
+    required = {
+        "schema_version",
+        "run_id",
+        "name",
+        "media_type",
+        "digest",
+        "content",
+        "size_bytes",
+        "truncated",
+        "digest_verified",
+    }
+    if set(preview) != required:
+        return None
+    if expected_identity is None:
+        return None
+    run_id, artifact_name, digest = expected_identity
+    size_bytes = preview.get("size_bytes")
+    wire_size_is_integer = (
+        isinstance(size_bytes, (int, float))
+        and not isinstance(size_bytes, bool)
+        and 0 <= size_bytes <= 1_048_576
+        and float(size_bytes).is_integer()
+    )
+    if (
+        preview.get("schema_version") != "1.0"
+        or preview.get("run_id") != run_id
+        or preview.get("name") != artifact_name
+        or preview.get("digest") != digest
+        or preview.get("media_type") not in {"application/json", "application/x-ndjson", "text/x-diff", "text/plain"}
+        or not isinstance(preview.get("content"), str)
+        or len(str(preview["content"]).encode("utf-8")) > 262_144
+        or not wire_size_is_integer
+        or not isinstance(preview.get("truncated"), bool)
+        or preview.get("digest_verified") is not True
+    ):
+        return None
+    normalized = dict(preview)
+    normalized["size_bytes"] = int(size_bytes)
+    return normalized
+
+
+def _preview_failure_code(envelope: dict[str, Any]) -> str | None:
+    result = envelope.get("result")
+    task = result.get("task") if isinstance(result, dict) else None
+    if not isinstance(task, dict) and isinstance(result, dict):
+        task = result
+    status = task.get("status") if isinstance(task, dict) else None
+    message = status.get("message") if isinstance(status, dict) else None
+    return _failure_code(message.get("parts")) if isinstance(message, dict) else None
+
+
+def _artifact_failure_status(code: str) -> int:
+    if code == "ARTIFACT_NOT_FOUND":
+        return 404
+    if code == "ARTIFACT_ACCESS_DENIED":
+        return 403
+    if code == "ARTIFACT_TOO_LARGE":
+        return 413
+    if code == "ARTIFACT_PREVIEW_UNSUPPORTED":
+        return 415
+    if code in {"INVALID_ARTIFACT_PREVIEW_REQUEST", "ARTIFACT_INTEGRITY_FAILED"}:
+        return 400 if code.startswith("INVALID_") else 409
+    return 502
 
 
 def _normalize_run(envelope: dict[str, Any], session_id: str) -> dict[str, Any] | None:

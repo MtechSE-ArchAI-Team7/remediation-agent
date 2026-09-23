@@ -1,11 +1,18 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import { ArtifactModal } from "./ArtifactModal";
 import { decideRun, GatewayError, getRun, probeModel, startRun } from "./api";
+import {
+  LEGACY_RUN_STORAGE_KEY,
+  LocalRunHistoryRepository,
+  recentRunFromView,
+} from "./run-history";
+import type { RecentRunV1 } from "./run-history";
 import toolCatalog from "./generated/tool-catalog.json";
 import divisionByZero from "./scenarios/division-by-zero.json";
-import type { ApprovalStatus, ExplainabilityTrace, RemediationRunView } from "./types";
+import type { ApprovalStatus, ArtifactRef, ExplainabilityTrace, RemediationRunView } from "./types";
 
-const RUN_STORAGE_KEY = "aios-remediation-ecommerce-run-id";
+const RUN_STORAGE_KEY = LEGACY_RUN_STORAGE_KEY;
 const SUCCESS_STATUSES = new Set(["DRAFT_PR_CREATED", "DRAFT_PR_PREPARED"]);
 
 const AGENT_CONFIG = {
@@ -17,6 +24,7 @@ const AGENT_CONFIG = {
 
 const CONSOLE_TABS = [
   { id: "run", label: "Run Console" },
+  { id: "runs", label: "Runs" },
   { id: "agent", label: "Agent" },
   { id: "status", label: "System Status" },
 ] as const;
@@ -41,6 +49,7 @@ const WORKFLOW_TRACE_STAGES = [
 
 const EXPLAINABILITY_STAGES = [
   { id: "intake", label: "Intake", stages: ["intake", "scope"] },
+  { id: "memory", label: "Memory", stages: ["memory"] },
   { id: "inspection", label: "Inspect", stages: ["workspace", "inspection"] },
   { id: "planning", label: "Plan", stages: ["planning", "risk"] },
   { id: "approval", label: "Approve", stages: ["approval"] },
@@ -193,6 +202,8 @@ function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
   const totalOutputTokens = trace.model_calls.reduce((total, item) => total + (item.output_tokens ?? 0), 0);
   const totalLatency = trace.model_calls.reduce((total, item) => total + item.duration_ms, 0);
   const validationExecutions = trace.validation_executions ?? [];
+  const memory = trace.memory_retrieval;
+  const memoryWrite = trace.memory_write;
 
   return (
     <section className="content-card explainability-card" id="explainability">
@@ -214,6 +225,38 @@ function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
       </div>
 
       <div className="explainability-body">
+        <article className="trace-panel memory-panel" aria-label="Incident memory">
+          <header>
+            <div><h3>Historical incident memory</h3><p>Advisory suggestions only; current commit evidence remains authoritative.</p></div>
+            <span className={`status-badge ${statusTone(memory?.status ?? "DISABLED")}`}>{memory?.status ?? "DISABLED"}</span>
+          </header>
+          {memory?.status === "RETRIEVED" ? (
+            <div className="memory-match-list">
+              {memory.matches.map((match) => (
+                <section key={match.incident_id}>
+                  <div className="event-heading"><code>{match.incident_id}</code><strong>{Math.round(match.score * 100)}% match</strong></div>
+                  <p>{match.incident_signature}</p>
+                  <small>{match.repository} · {match.age_days.toFixed(1)} days old · {displayStatus(match.admission_type)}</small>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-state">
+              {memory?.status === "ERROR"
+                ? "Memory was unavailable—continued safely with normal commit-pinned inspection."
+                : memory?.status === "NO_MATCH"
+                  ? "No relevant historical incident—continued with normal commit-pinned inspection."
+                  : "Long-term incident memory was disabled for this run."}
+            </p>
+          )}
+          <dl className="property-table compact">
+            <div><dt>Retrieval latency</dt><dd>{memory ? `${memory.duration_ms.toLocaleString()} ms` : "Not run"}</dd></div>
+            <div><dt>Accepted matches</dt><dd>{memory?.matches.length ?? 0}</dd></div>
+            <div><dt>Final write</dt><dd><span className={`status-badge ${statusTone(memoryWrite?.status ?? "NOT_ELIGIBLE")}`}>{displayStatus(memoryWrite?.status ?? "NOT_ELIGIBLE")}</span></dd></div>
+          </dl>
+          <p className="memory-warning">Memory cannot authorize paths or tools, replace repository inspection, reuse a patch, or bypass policy and validation.</p>
+        </article>
+
         <h3>Workflow decision flow</h3>
         <div className="flow-legend" aria-label="Decision actor legend">
           <span><i className="actor deterministic" />Deterministic</span>
@@ -348,6 +391,7 @@ function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
 }
 
 export default function App() {
+  const historyRepository = useMemo(() => new LocalRunHistoryRepository(), []);
   const [activeTab, setActiveTab] = useState<ConsoleTab>("run");
   const [handoffText, setHandoffText] = useState(JSON.stringify(divisionByZero, null, 2));
   const [runId, setRunId] = useState(() => localStorage.getItem(RUN_STORAGE_KEY) ?? "");
@@ -356,9 +400,21 @@ export default function App() {
   const [runError, setRunError] = useState("");
   const [probeError, setProbeError] = useState("");
   const [probe, setProbe] = useState("");
+  const [recentRuns, setRecentRuns] = useState<RecentRunV1[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const [historyBusy, setHistoryBusy] = useState<string | null>(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<{ artifact: ArtifactRef; trigger: HTMLElement } | null>(null);
   const [reviewer, setReviewer] = useState("Arabasta");
   const [comment, setComment] = useState("Approved for the AgentCore demonstration.");
-  const tabRefs = useRef<Record<ConsoleTab, HTMLButtonElement | null>>({ run: null, agent: null, status: null });
+  const tabRefs = useRef<Record<ConsoleTab, HTMLButtonElement | null>>({ run: null, runs: null, agent: null, status: null });
+
+  useEffect(() => {
+    let active = true;
+    void historyRepository.list()
+      .then((items) => { if (active) setRecentRuns(items); })
+      .catch(() => { if (active) setHistoryError("Saved run history could not be loaded."); });
+    return () => { active = false; };
+  }, [historyRepository]);
 
   const parsedHandoff = useMemo(() => {
     try {
@@ -367,6 +423,17 @@ export default function App() {
       return null;
     }
   }, [handoffText]);
+
+  async function persistRecentRun(view: RemediationRunView, input: Record<string, unknown> | null = null) {
+    try {
+      const current = await historyRepository.list();
+      const previous = current.find((item) => item.task_id === view.task_id);
+      const items = await historyRepository.upsert(recentRunFromView(view, input, previous));
+      setRecentRuns(items);
+    } catch {
+      setHistoryError("The run succeeded, but its browser-local history could not be saved.");
+    }
+  }
 
   async function start() {
     setRunError("");
@@ -384,6 +451,7 @@ export default function App() {
       setRunId(response.output.task_id);
       localStorage.setItem(RUN_STORAGE_KEY, response.output.task_id);
       localStorage.setItem(`${RUN_STORAGE_KEY}:session`, response.output.session_id);
+      await persistRecentRun(response.output, parsedHandoff);
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -403,6 +471,7 @@ export default function App() {
       if (!sessionId) throw new GatewayError("MISSING_RUNTIME_SESSION", 400);
       const response = await getRun(runId, sessionId);
       setRun(response.output);
+      await persistRecentRun(response.output);
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -423,6 +492,7 @@ export default function App() {
         comment,
       });
       setRun(response.output);
+      await persistRecentRun(response.output);
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -442,6 +512,39 @@ export default function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  async function loadRecentRun(item: RecentRunV1, open: boolean) {
+    setHistoryError("");
+    setHistoryBusy(item.task_id);
+    if (open) {
+      setRunError("");
+      setRun(null);
+      setRunId(item.task_id);
+      localStorage.setItem(RUN_STORAGE_KEY, item.task_id);
+      localStorage.setItem(`${RUN_STORAGE_KEY}:session`, item.session_id);
+      setActiveTab("run");
+      setBusy("run");
+    }
+    try {
+      const response = await getRun(item.task_id, item.session_id);
+      setRun(response.output);
+      await persistRecentRun(response.output);
+    } catch (caught) {
+      const stale = { ...item, stale: true };
+      setRecentRuns(await historyRepository.upsert(stale));
+      const message = errorMessage(caught);
+      if (open) setRunError(message);
+      else setHistoryError(message);
+    } finally {
+      setHistoryBusy(null);
+      if (open) setBusy(null);
+    }
+  }
+
+  async function forgetRecentRun(item: RecentRunV1) {
+    if (!window.confirm(`Forget saved run ${item.task_id}? The runtime run will not be deleted.`)) return;
+    setRecentRuns(await historyRepository.remove(item.task_id));
   }
 
   const result = run?.result;
@@ -692,15 +795,15 @@ export default function App() {
                   <header className="card-header"><div><h2>Evidence artifacts</h2><p>Immutable references produced by this run.</p></div><span className="count-badge">{result.artifact_manifest?.artifacts.length ?? 0}</span></header>
                   <div className="table-scroll">
                     <table>
-                      <thead><tr><th>Name</th><th>Media type</th><th>Digest</th><th>Object reference</th></tr></thead>
+                      <thead><tr><th>Name</th><th>Media type</th><th>Digest</th><th>Object reference</th><th>Action</th></tr></thead>
                       <tbody>
                         {(result.artifact_manifest?.artifacts ?? []).map((artifact) => (
-                          <tr key={artifact.path}><td><strong>{artifact.name}</strong></td><td>{artifact.media_type}</td><td><code title={artifact.digest}>{shortDigest(artifact.digest)}</code></td><td><code title={artifact.path}>{artifact.path}</code></td></tr>
+                          <tr key={artifact.path}><td><strong>{artifact.name}</strong></td><td>{artifact.media_type}</td><td><code title={artifact.digest}>{shortDigest(artifact.digest)}</code></td><td><code title={artifact.path}>{artifact.path}</code></td><td><button className="secondary compact-button" type="button" onClick={(event) => setSelectedArtifact({ artifact, trigger: event.currentTarget })}>View</button></td></tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  {result.audit_bundle_ref && <div className="audit-reference"><span>Audit bundle</span><code>{result.audit_bundle_ref.path}</code></div>}
+                  {result.audit_bundle_ref && <div className="audit-reference"><span>Audit bundle</span><code>{result.audit_bundle_ref.path}</code><button className="secondary compact-button" type="button" onClick={(event) => setSelectedArtifact({ artifact: result.audit_bundle_ref!, trigger: event.currentTarget })}>View</button></div>}
                 </article>
 
                 {result.errors.length > 0 && (
@@ -714,6 +817,58 @@ export default function App() {
               </div>
             </section>
             )}
+          </section>
+
+          <section id="panel-runs" role="tabpanel" aria-labelledby="tab-runs" hidden={activeTab !== "runs"}>
+            <nav className="breadcrumbs" aria-label="Breadcrumb">
+              <span>AIOS</span><span>/</span><span>Remediation</span><span>/</span><strong>Runs</strong>
+            </nav>
+            <section className="page-header">
+              <div>
+                <h1>Recent runs</h1>
+                <p>Runs saved in this browser. Opening a run retrieves its latest runtime state.</p>
+              </div>
+              <span className="identifier-badge">{recentRuns.length} saved</span>
+            </section>
+            {historyError && (
+              <div className="alert error" role="alert">
+                <span className="alert-icon">!</span>
+                <div><strong>Run history update failed</strong><p>{historyError}</p></div>
+              </div>
+            )}
+            <section className="content-card recent-runs-card">
+              <header className="card-header">
+                <div><span className="section-kicker">Browser-local history</span><h2>Saved remediation runs</h2><p>This list is not shared with other browsers or operators.</p></div>
+              </header>
+              {recentRuns.length === 0 ? (
+                <div className="card-body"><div className="empty-state">No saved runs. Create a remediation run to add it here.</div></div>
+              ) : (
+                <div className="table-scroll">
+                  <table className="recent-runs-table">
+                    <thead><tr><th>Case</th><th>Status</th><th>Updated</th><th>Run ID</th><th>Evidence</th><th>Actions</th></tr></thead>
+                    <tbody>
+                      {recentRuns.map((item) => (
+                        <tr key={item.task_id}>
+                          <td><strong>{item.case_id ?? "Saved run"}</strong><small>{item.jira_ticket_id ?? item.repository ?? "Details available after refresh"}</small></td>
+                          <td><span className={`status-badge ${statusTone(item.status)}`}>{displayStatus(item.status)}</span>{item.stale && <small className="stale-label">Last known state</small>}</td>
+                          <td>{new Date(item.updated_at).toLocaleString()}</td>
+                          <td><code title={item.task_id}>{item.task_id}</code></td>
+                          <td>{item.artifact_count}</td>
+                          <td>
+                            <div className="table-actions">
+                              <button className="secondary" type="button" disabled={historyBusy !== null} onClick={() => void loadRecentRun(item, false)}>{historyBusy === item.task_id ? "Refreshing…" : "Refresh"}</button>
+                              <button className="primary" type="button" disabled={historyBusy !== null} onClick={() => void loadRecentRun(item, true)}>Open</button>
+                              {item.draft_pr_url && <a className="table-link" href={item.draft_pr_url} target="_blank" rel="noreferrer">Draft PR ↗</a>}
+                              <button className="link-button danger-link" type="button" disabled={historyBusy !== null} onClick={() => void forgetRecentRun(item)}>Forget</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </section>
 
           <section id="panel-agent" role="tabpanel" aria-labelledby="tab-agent" hidden={activeTab !== "agent"}>
@@ -783,6 +938,15 @@ export default function App() {
           </section>
         </main>
       </div>
+      {selectedArtifact && run && (
+        <ArtifactModal
+          artifact={selectedArtifact.artifact}
+          runId={run.task_id}
+          sessionId={run.session_id}
+          returnFocusTo={selectedArtifact.trigger}
+          onClose={() => setSelectedArtifact(null)}
+        />
+      )}
     </div>
   );
 }

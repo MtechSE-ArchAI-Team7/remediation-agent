@@ -18,6 +18,13 @@ from remediation_agent.domain.models import (
     ExplainabilityTraceV1,
     RemediationHandoffV1,
 )
+from remediation_agent.evaluation import (
+    EvaluationJudgeSuiteV1,
+    EvaluationSuiteManifestV2,
+    EvaluationSuiteResultV2,
+    MemoryBenchmarkManifestV1,
+    MemoryEvaluationResultV1,
+)
 from remediation_agent.policy.loader import PolicyLoadError, load_policy
 from remediation_agent.policy.models import PolicyConfig
 from tests.conftest import diagnosis_handoff
@@ -93,6 +100,11 @@ def test_committed_json_schemas_match_models() -> None:
         "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),
         "remediation-policy.schema.json": PolicyConfig.model_json_schema(),
+        "evaluation-suite-v2.schema.json": EvaluationSuiteManifestV2.model_json_schema(),
+        "evaluation-result-v2.schema.json": EvaluationSuiteResultV2.model_json_schema(),
+        "evaluation-judge-v1.schema.json": EvaluationJudgeSuiteV1.model_json_schema(),
+        "memory-benchmark-v1.schema.json": MemoryBenchmarkManifestV1.model_json_schema(),
+        "memory-evaluation-result-v1.schema.json": MemoryEvaluationResultV1.model_json_schema(),
     }
     for name, schema in expected.items():
         assert json.loads((schema_root / name).read_text()) == schema
@@ -123,6 +135,43 @@ def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
     assert settings.github_repository is None
     assert settings.openai_api_key is None
     assert settings.postgres_dsn is None
+
+
+def test_incident_memory_enablement_requires_complete_dedicated_configuration(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="Incident-memory configuration is incomplete"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="fake",
+            incident_memory_enabled=True,
+            _env_file=None,
+        )  # type: ignore[call-arg]
+
+    settings = Settings(
+        policy_file=tmp_path / "policy.json",
+        llm_provider="fake",
+        aws_region="ap-southeast-1",
+        incident_memory_enabled=True,
+        incident_memory_id="incident-memory-1",
+        incident_memory_strategy_id="strategy-1",
+        incident_memory_namespace="/aios/incidents/",
+        _env_file=None,
+    )  # type: ignore[call-arg]
+    assert settings.require_incident_memory_configuration() == (
+        "incident-memory-1",
+        "strategy-1",
+        "/aios/incidents/",
+        "ap-southeast-1",
+    )
+
+
+def test_incident_memory_writes_require_retrieval_enablement(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="WRITES_ENABLED requires"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="fake",
+            incident_memory_writes_enabled=True,
+            _env_file=None,
+        )  # type: ignore[call-arg]
 
 
 def test_openai_settings_accept_either_local_key_or_hosted_secret_arn(tmp_path: Path) -> None:

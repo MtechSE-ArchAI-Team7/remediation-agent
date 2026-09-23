@@ -11,7 +11,8 @@ authentication and must not be treated as a production interface.
 
 Assessment-ready results and reproduction commands are collected in
 [`docs/ASSESSMENT_EVIDENCE.md`](docs/ASSESSMENT_EVIDENCE.md). The report keeps deterministic evidence separate from
-the optional one-trial hosted demonstration and never invents a live result that was not supplied.
+the optional nine-trial hosted benchmark, the 18-run paired incident-memory benchmark, and never invents a live or
+judge result that was not supplied.
 
 ## Agent details
 
@@ -23,7 +24,8 @@ the optional one-trial hosted demonstration and never invents a live result that
 | Output | Versioned `RemediationHandoffV1` for the Verification/Monitoring Agent |
 | Supported remediation | Bounded `CODE` and `CONFIGURATION` changes |
 | Human-only remediation | Account unlock, password reset, access provisioning, privileged access, and production changes |
-| Persistence | In-memory checkpoints in tests; encrypted PostgreSQL locally; encrypted AgentCore Memory when hosted |
+| Workflow memory | In-memory checkpoints in tests; encrypted PostgreSQL locally; encrypted AgentCore Memory when hosted |
+| Incident memory | Optional AgentCore semantic retrieval of bounded, validated incident summaries; advisory only |
 | Approval | LangGraph interrupts bound to an exact plan or patch digest |
 | Deployment-target model provider | AWS Bedrock through `ChatBedrockConverse` |
 | Execution boundary | Docker locally; isolated AgentCore Code Interpreter sessions when hosted |
@@ -40,7 +42,8 @@ flowchart LR
     REST["Operator REST /v1"] --> Intake
     Intake --> Analysis["Analysis workflow subgraph"]
     Analysis --> Workspace["Create immutable-base workspace"]
-    Workspace --> Inspect["Model ↔ GitHub hosted MCP inspection loop"]
+    Workspace --> Memory["Retrieve advisory incident summaries"]
+    Memory --> Inspect["Model ↔ GitHub hosted MCP inspection loop"]
     Inspect --> Plan["Create structured remediation plan"]
     Plan --> Risk["Policy and risk assessment"]
     Risk -->|sensitive| Approval["Checkpointed approval interrupt"]
@@ -54,7 +57,8 @@ flowchart LR
     Validate -->|passed or exhausted| Evidence
     Evidence --> Draft["Prepare draft-PR payload"]
     Draft --> Cleanup["Destroy disposable workspace"]
-    Cleanup --> Artifact["Authoritative remediation handoff"]
+    Cleanup --> Store["Admit eligible incident summary"]
+    Store --> Artifact["Authoritative remediation handoff"]
     Artifact -. optional successful outcomes .-> Agent4["Agent 4 A2A delivery"]
 ```
 
@@ -62,14 +66,16 @@ The lifecycle is:
 
 1. Validate the versioned handoff, evidence references, remediation type, and repository policy.
 2. Create and checkpoint a disposable workspace at the immutable base commit.
-3. Start a run-scoped Streamable HTTP session with GitHub's fixed hosted MCP endpoint. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
-4. Require at least one successful commit-pinned tree or file call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session. Search results are locator hints and are not persisted as planning evidence.
-5. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
-6. Interrupt for approval when the plan or exact patch crosses an approval boundary.
-7. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
-8. Resolve proposed validation names through operator policy and run their fixed argument arrays in Docker locally or Code Interpreter when hosted.
-9. Evaluate results deterministically. Failed attempts restart from the immutable base and stop at the configured limit.
-10. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
+3. Optionally retrieve up to three recent, high-confidence incident summaries from a host-derived repository namespace. These untrusted suggestions are supplied only to inspection and never become current evidence or authority.
+4. Start a run-scoped Streamable HTTP session with GitHub's fixed hosted MCP endpoint. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
+5. Require at least one successful commit-pinned tree or file call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session. Search results are locator hints and are not persisted as planning evidence.
+6. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
+7. Interrupt for approval when the plan or exact patch crosses an approval boundary.
+8. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
+9. Resolve proposed validation names through operator policy and run their fixed argument arrays in Docker locally or Code Interpreter when hosted.
+10. Evaluate results deterministically. Failed attempts restart from the immutable base and stop at the configured limit.
+11. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
+12. After successful cleanup, optionally store only a bounded `AUTO_VALIDATED` incident summary when both write gates permit it. Storage failure never changes a successful remediation result.
 
 Model output never decides whether validation passed, lowers policy severity, supplies executable command strings, or
 calls workspace mutation, sandbox, Git, GitHub, artifact, approval, checkpoint, credential, or cleanup operations.
@@ -94,8 +100,9 @@ the identical identifiers, modes, effects, availability gates, and controls rath
 | Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` is used locally; `AgentCoreCodeInterpreterSandbox` retains the patch boundary and validates a sanitized copy in an isolated managed session. |
 | Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
 | Pull-request handling | `PullRequestProvider` | A deterministic draft payload is always prepared; authenticated GitHub draft creation is separately gated and merge is unavailable. |
-| Evidence and audit | `ArtifactStore`, `AuditSink` | Local files or immutable digest-addressed S3 objects hold redacted artifacts and hash-chained audit events. |
+| Evidence and audit | `ArtifactStore`, `ArtifactReader`, `AuditSink` | Local files or immutable digest-addressed S3 objects hold redacted artifacts and hash-chained audit events. Preview reads are manifest-selected, session-scoped, bounded, and digest-verified. |
 | Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL or AgentCore Memory persistence. |
+| Advisory incident history | `IncidentMemoryPort` | Disabled, fake, and AgentCore adapters retrieve/store bounded summaries in a host-derived namespace. It is not model-callable and cannot alter policy, validation, or evidence. |
 
 The reference policy defines these validation task names:
 
@@ -405,20 +412,61 @@ model. The default test suite includes OpenAPI and tool-catalogue drift checks.
 
 ### Assessment evaluation
 
-The tracked evaluation manifest at `config/evaluation/division-by-zero.json` fixes the sole scenario, source commit,
-four-tool inspection allowlist, required JavaScript tasks, terminal state, cleanup requirement, and zero-remote-write
-assertion. The default evaluation is credential-free and repeatable:
+`config/evaluation/suite-v2.json` defines ten deterministic cases against one immutable
+`buggy-ecommerce-demo` commit. The cases cover autonomous repair, protected-path approval, adaptive inspection,
+clean-base revision, contradicted diagnosis, repository prompt injection, denied secret access, unsafe-remediation
+denial, unsupported tools, and dependency approval. Handoffs and scripted fixtures are kept under
+`config/evaluation/`; the target repository is read-only. The default benchmark is credential-free and repeatable:
 
 ```bash
 make evaluate
 make assessment-report
 ```
 
-`make evaluate-hosted` is opt-in and runs one live trial with the configured model, GitHub MCP, immutable clone, and
-AgentCore Code Interpreter. The evaluator forces both GitHub write gates off regardless of ambient settings; an
-approval interrupt or any created remote object fails the evaluation. Its `1/1` result is demonstration evidence, not
-a statistically meaningful success rate. Sanitised run JSON is written under ignored `.artifacts/evaluation/`; only
-the generated report and catalogue JSON are tracked.
+`make evaluate-hosted` is opt-in and runs cases 01, 06, and 08 sequentially for three trials each with the configured
+model, GitHub MCP, immutable clone, and AgentCore Code Interpreter. Model-quality failures are recorded honestly;
+runner or artifact-integrity failures stop the command. Both GitHub write gates remain forced off.
+
+`make evaluate-judge` consumes the completed hosted artifact without rerunning remediation. It requires explicit
+`AIOS_EVAL_JUDGE_PROVIDER`, `AIOS_EVAL_JUDGE_MODEL`, and `AIOS_EVAL_JUDGE_PROMPT_VERSION` settings and rejects silent
+reuse of the candidate provider/model pair. The judge sees only a sanitized evidence bundle, has no tools, and is
+strictly non-gating. Missing hosted or judge artifacts appear as `NOT RUN` in the generated report.
+
+### Advisory incident memory and paired evaluation
+
+Checkpoint memory and long-term incident memory solve different problems. Checkpoints remain authoritative for run
+state, approval resume, and recovery. Optional AgentCore semantic memory contains only bounded summaries of validated,
+cleaned incidents. Retrieval is restricted to a host-derived repository namespace, three matches, score `>=0.70`, age
+`<=30` days, an 8 KiB aggregate context limit, and a five-second timeout. Retrieved text is untrusted and reaches only
+the inspection prompt; the workflow still requires current-commit tree/file evidence. It cannot add tools, authorize a
+path, lower policy, choose validation, or reuse a historical patch.
+
+Configure a dedicated existing AgentCore memory resource; the service never provisions or changes it:
+
+```text
+AIOS_INCIDENT_MEMORY_ENABLED=false
+AIOS_INCIDENT_MEMORY_WRITES_ENABLED=false
+AIOS_INCIDENT_MEMORY_ID=<dedicated-incident-memory-id>
+AIOS_INCIDENT_MEMORY_STRATEGY_ID=<semantic-strategy-id>
+AIOS_INCIDENT_MEMORY_NAMESPACE=/aios/incidents/
+```
+
+Writes additionally require `incident_memory.writes_enabled=true` in operator policy. Eligible runtime records are
+labelled `AUTO_VALIDATED`; they exclude source, patches, prompts, task output, credentials, environment values,
+approval content, and run/session identifiers. Evaluation seeds are labelled `EVALUATION_SEED` and require an
+explicit passed artifact:
+
+```bash
+AIOS_MEMORY_SEED_ARTIFACT=.artifacts/evaluation/hosted/suite-v2.json make memory-seed
+make evaluate-memory
+make evaluate-memory-hosted   # 18 sequential live runs; opt-in
+make evaluate-memory-judge    # post hoc and non-gating
+make assessment-report
+```
+
+The paired benchmark covers hosted cases 01, 06, and 08 for three counterbalanced off/on pairs per case. Writes are
+forced off in both arms to prevent contamination. The report shows each arm and observed deltas; missing live or judge
+artifacts remain `NOT RUN`, and no improvement is claimed from scripted evidence alone.
 
 ## Quality and test commands
 
@@ -467,13 +515,17 @@ Live model tests require their explicit marker/environment gate and never run in
 
 `Dockerfile.agentcore` packages the same one-agent LangGraph workflow behind A2A Protocol 1.0 on port `9000`. The
 hosted surface is JSON-RPC at `/`, discovery at `/.well-known/agent-card.json`, and health at `/ping`. The Agent Card
-advertises SigV4, streaming, `remediate_repository`, and `runtime_readiness_probe`; push notifications and A2A v0.3
-compatibility are disabled. The local/operator FastAPI `/v1` endpoints remain available in the standard image.
+advertises SigV4, streaming, `remediate_repository`, `runtime_readiness_probe`, and the deterministic read-only
+`view_remediation_artifact` capability; push notifications and A2A v0.3 compatibility are disabled. The local/operator
+FastAPI `/v1` endpoints remain available in the standard image.
 
 AgentCore's runtime session ID and A2A context ID remain transport scope; the server-generated A2A task UUID is bound
-to the LangGraph `run_id`. Diagnosis, approval, handoff, delivery receipt, and provider-probe data parts use versioned
-`application/vnd.aios.*.v1+json` media types. Hosted task projections exclude inbound history, are redacted and bounded,
-and are scoped by caller/session beneath `AIOS_A2A_TASK_STORE_PREFIX` in the artifact bucket.
+to the LangGraph `run_id`. Diagnosis, approval, handoff, delivery receipt, provider-probe, and artifact-preview data
+parts use versioned `application/vnd.aios.*.v1+json` media types. Hosted task projections exclude inbound history, are
+redacted and bounded, and are scoped by caller/session beneath `AIOS_A2A_TASK_STORE_PREFIX` in the artifact bucket.
+Artifact preview is outside the workflow: it first resolves the completed source task through that scoped store, then
+reads only the matching manifest reference from `runs/*`, verifies its digest, reapplies redaction, and returns bounded
+UTF-8 content without invoking the model or altering checkpoint state.
 
 After CI succeeds on a push to `main`, the release workflow publishes a `linux/arm64` commit-SHA tag to
 `734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent` and updates the existing AgentCore Runtime
@@ -592,5 +644,8 @@ cannot silently rewrite the proposal.
 
 The committed reference policy permits only its listed repository patterns and limits. Operators must create and review
 a suitable policy before using another repository. API caller authentication and trusted reviewer identity are not
-implemented. Docker daemon trust, mutable image provenance, local artifact durability, and live-provider behavior remain
-residual risks that deployments must address.
+implemented. The public demo can display all redacted artifacts—including patches, audit records, and model-call
+metadata—to a holder of the high-entropy run/session locator; redaction is defense in depth rather than authorization.
+Docker daemon trust, mutable image provenance, local artifact durability, locator disclosure, and live-provider behavior
+remain residual risks that deployments must address. Shared cross-user run history requires authenticated server-side
+ownership and is not provided by the browser-local recent-run list.

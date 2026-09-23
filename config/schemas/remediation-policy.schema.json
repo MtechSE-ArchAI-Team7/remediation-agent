@@ -37,6 +37,18 @@
       "title": "GitHubPolicy",
       "type": "object"
     },
+    "IncidentMemoryPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "writes_enabled": {
+          "default": false,
+          "title": "Writes Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "IncidentMemoryPolicy",
+      "type": "object"
+    },
     "Limits": {
       "additionalProperties": false,
       "properties": {
@@ -319,6 +331,9 @@
     },
     "github": {
       "$ref": "#/$defs/GitHubPolicy"
+    },
+    "incident_memory": {
+      "$ref": "#/$defs/IncidentMemoryPolicy"
     },
     "limits": {
       "$ref": "#/$defs/Limits"

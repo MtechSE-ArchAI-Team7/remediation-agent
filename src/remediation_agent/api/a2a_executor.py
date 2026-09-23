@@ -7,7 +7,7 @@ from typing import cast
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.server.tasks import TaskUpdater
+from a2a.server.tasks import TaskStore, TaskUpdater
 from a2a.types import a2a_pb2 as a2a_pb
 from google.protobuf import json_format  # type: ignore[import-untyped]
 from pydantic import ValidationError
@@ -15,23 +15,34 @@ from pydantic import ValidationError
 from remediation_agent.api.a2a_contracts import (
     APPROVAL_DECISION_MEDIA_TYPE,
     APPROVAL_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
+    ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE,
     DIAGNOSIS_HANDOFF_MEDIA_TYPE,
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
+    ArtifactPreviewRequestV1,
+    ArtifactPreviewResultV1,
     ProviderProbeModelResult,
     ProviderProbeRequestV1,
     ProviderProbeResultV1,
 )
 from remediation_agent.domain.enums import FinalStatus, ModelOperation
-from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
-from remediation_agent.ports.models import ModelRequest
-from remediation_agent.ports.protocols import StructuredModel
+from remediation_agent.domain.models import (
+    ApprovalDecisionV1,
+    DiagnosisHandoffV1,
+    RemediationHandoffV1,
+    RemediationRunView,
+)
+from remediation_agent.ports.models import ArtifactReadError, ArtifactReadRequest, ModelRequest
+from remediation_agent.ports.protocols import ArtifactReader, StructuredModel
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
 
 _LOGGER = logging.getLogger(__name__)
 _PROMPT_VERSION = "agentcore-smoke-v1"
+_MAX_ARTIFACT_OBJECT_BYTES = 1_048_576
+_MAX_ARTIFACT_PREVIEW_BYTES = 262_144
 
 _COMPLETED = {FinalStatus.DRAFT_PR_PREPARED, FinalStatus.DRAFT_PR_CREATED}
 _REJECTED = {
@@ -53,10 +64,14 @@ class RemediationA2AExecutor(AgentExecutor):
         *,
         model: StructuredModel | None = None,
         probe_provider: str | None = None,
+        artifact_reader: ArtifactReader | None = None,
+        task_store: TaskStore | None = None,
     ) -> None:
         self._service = service
         self._model = model
         self._probe_provider = probe_provider
+        self._artifact_reader = artifact_reader
+        self._task_store = task_store
 
     def configure(
         self,
@@ -64,12 +79,14 @@ class RemediationA2AExecutor(AgentExecutor):
         *,
         model: StructuredModel | None,
         probe_provider: str | None,
+        artifact_reader: ArtifactReader | None,
     ) -> None:
         """Bind dependencies constructed by the hosted application lifespan."""
 
         self._service = service
         self._model = model
         self._probe_provider = probe_provider
+        self._artifact_reader = artifact_reader
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
@@ -102,6 +119,22 @@ class RemediationA2AExecutor(AgentExecutor):
                 await updater.failed(_status_message(updater, "PROVIDER_PROBE_FAILED"))
                 return
             await event_queue.enqueue_event(probe)
+            return
+
+        if media_type == ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE:
+            try:
+                preview = await self._artifact_preview(context, task_id, context_id, payload)
+            except ValidationError:
+                await self._reject_transport(task_id, context_id, event_queue, "INVALID_ARTIFACT_PREVIEW_REQUEST")
+                return
+            except ArtifactReadError as exc:
+                await self._reject_transport(task_id, context_id, event_queue, exc.code)
+                return
+            except Exception:  # noqa: BLE001 - artifact failures expose only bounded codes
+                _LOGGER.exception("A2A artifact preview failed")
+                await self._reject_transport(task_id, context_id, event_queue, "ARTIFACT_PREVIEW_FAILED")
+                return
+            await event_queue.enqueue_event(preview)
             return
 
         updater = TaskUpdater(event_queue, task_id, context_id)
@@ -236,6 +269,53 @@ class RemediationA2AExecutor(AgentExecutor):
             parts=[_data_part(result.model_dump(mode="json"), PROVIDER_PROBE_RESULT_MEDIA_TYPE)],
         )
 
+    async def _artifact_preview(
+        self,
+        context: RequestContext,
+        task_id: str,
+        context_id: str,
+        payload: dict[str, object],
+    ) -> a2a_pb.Message:
+        request = ArtifactPreviewRequestV1.model_validate(payload)
+        if self._artifact_reader is None or self._task_store is None:
+            raise ArtifactReadError("ARTIFACT_PREVIEW_UNSUPPORTED")
+        source_task = await self._task_store.get(request.run_id, context.call_context)
+        if source_task is None or source_task.context_id != context_id:
+            raise ArtifactReadError("ARTIFACT_NOT_FOUND")
+        handoff = _remediation_handoff(source_task)
+        manifest = handoff.artifact_manifest
+        if manifest is None or manifest.run_id != request.run_id:
+            raise ArtifactReadError("ARTIFACT_NOT_FOUND")
+        artifact = next(
+            (
+                item
+                for item in manifest.artifacts
+                if item.name == request.artifact_name and item.digest == request.digest
+            ),
+            None,
+        )
+        if artifact is None:
+            raise ArtifactReadError("ARTIFACT_NOT_FOUND")
+        preview = await self._artifact_reader.read(
+            ArtifactReadRequest(
+                run_id=request.run_id,
+                artifact=artifact,
+                max_object_bytes=_MAX_ARTIFACT_OBJECT_BYTES,
+                max_preview_bytes=_MAX_ARTIFACT_PREVIEW_BYTES,
+            )
+        )
+        result = ArtifactPreviewResultV1(
+            run_id=request.run_id,
+            **preview.model_dump(mode="python"),
+        )
+        return a2a_pb.Message(
+            role=a2a_pb.Role.ROLE_AGENT,
+            task_id=task_id,
+            context_id=context_id,
+            message_id=f"artifact-preview-{task_id}",
+            parts=[_data_part(result.model_dump(mode="json"), ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE)],
+        )
+
     @staticmethod
     async def _reject_transport(
         task_id: str,
@@ -266,6 +346,21 @@ def _validated_data_part(context: RequestContext) -> tuple[str, dict[str, object
         json_format.MessageToDict(part.data, preserving_proto_field_name=True),
     )
     return part.media_type, payload
+
+
+def _remediation_handoff(task: a2a_pb.Task) -> RemediationHandoffV1:
+    if task.status.state != a2a_pb.TaskState.TASK_STATE_COMPLETED:
+        raise ArtifactReadError("ARTIFACT_NOT_FOUND")
+    for artifact in task.artifacts:
+        for part in artifact.parts:
+            if part.media_type != REMEDIATION_HANDOFF_MEDIA_TYPE or part.WhichOneof("content") != "data":
+                continue
+            payload = json_format.MessageToDict(part.data, preserving_proto_field_name=True)
+            try:
+                return RemediationHandoffV1.model_validate(payload)
+            except ValidationError as exc:
+                raise ArtifactReadError("ARTIFACT_INTEGRITY_FAILED") from exc
+    raise ArtifactReadError("ARTIFACT_NOT_FOUND")
 
 
 def _data_part(payload: dict[str, object], media_type: str) -> a2a_pb.Part:

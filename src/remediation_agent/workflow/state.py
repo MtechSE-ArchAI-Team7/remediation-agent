@@ -15,6 +15,8 @@ from remediation_agent.domain.models import (
     DownstreamDeliveryReceiptV1,
     DraftPrMetadata,
     ErrorRecord,
+    IncidentMemoryRetrievalV1,
+    IncidentMemoryWriteReceiptV1,
     InspectionArtifact,
     InspectionPlan,
     InspectionToolCallRecord,
@@ -46,6 +48,7 @@ class RemediationState(TypedDict, total=False):
     inspection_plan: InspectionPlan
     inspection_artifacts: list[InspectionArtifact]
     inspection_tool_calls: list[InspectionToolCallRecord]
+    incident_memory_retrieval: IncidentMemoryRetrievalV1
 
     remediation_plan: RemediationPlan
     risk_assessment: RiskAssessment
@@ -76,6 +79,7 @@ class RemediationState(TypedDict, total=False):
     proposed_commit: str
     artifact_manifest: ArtifactManifest
     cleanup_result: CleanupResult
+    incident_memory_write: IncidentMemoryWriteReceiptV1
 
     model_calls: list[ModelCallRecord]
     errors: list[ErrorRecord]

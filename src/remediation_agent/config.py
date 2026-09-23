@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     prompt_version: str = "remediation-v2"
 
     agentcore_memory_id: str | None = None
+    incident_memory_enabled: bool = False
+    incident_memory_writes_enabled: bool = False
+    incident_memory_id: str | None = None
+    incident_memory_strategy_id: str | None = None
+    incident_memory_namespace: str | None = None
     runtime_secret_arn: str | None = None
     artifact_bucket: str | None = None
     a2a_task_store_prefix: str = "a2a/tasks"
@@ -106,6 +111,9 @@ class Settings(BaseSettings):
         "github_token",
         "github_repository",
         "agentcore_memory_id",
+        "incident_memory_id",
+        "incident_memory_strategy_id",
+        "incident_memory_namespace",
         "runtime_secret_arn",
         "artifact_bucket",
         "agent4_runtime_arn",
@@ -170,7 +178,35 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AIOS_AGENT4_RUNTIME_ARN and AIOS_AGENT4_REGION are required when Agent 4 delivery is enabled"
             )
+        if self.incident_memory_writes_enabled and not self.incident_memory_enabled:
+            raise ValueError("AIOS_INCIDENT_MEMORY_WRITES_ENABLED requires AIOS_INCIDENT_MEMORY_ENABLED")
+        if self.incident_memory_enabled:
+            missing = [
+                name
+                for name, value in (
+                    ("AIOS_AWS_REGION", self.aws_region),
+                    ("AIOS_INCIDENT_MEMORY_ID", self.incident_memory_id),
+                    ("AIOS_INCIDENT_MEMORY_STRATEGY_ID", self.incident_memory_strategy_id),
+                    ("AIOS_INCIDENT_MEMORY_NAMESPACE", self.incident_memory_namespace),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(f"Incident-memory configuration is incomplete: {', '.join(missing)}")
+            namespace = cast(str, self.incident_memory_namespace)
+            if re.fullmatch(r"/[A-Za-z0-9._/-]+/", namespace) is None or ".." in namespace or "//" in namespace:
+                raise ValueError("AIOS_INCIDENT_MEMORY_NAMESPACE must be a safe absolute namespace ending in /")
         return self
+
+    def require_incident_memory_configuration(self) -> tuple[str, str, str, str]:
+        if not self.incident_memory_enabled:
+            raise ValueError("incident memory is disabled")
+        return (
+            cast(str, self.incident_memory_id),
+            cast(str, self.incident_memory_strategy_id),
+            cast(str, self.incident_memory_namespace),
+            cast(str, self.aws_region),
+        )
 
     def openai_gateway_base_url(self) -> str:
         """Derive the sole OpenAI-compatible base URL permitted for the configured gateway."""

@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from remediation_agent.adapters.evidence import SecretRedactor
 from remediation_agent.domain.enums import (
     InspectionToolStatus,
+    MemoryRetrievalStatus,
+    MemoryWriteStatus,
     ModelOperation,
     PolicyDecision,
     ValidationBackend,
@@ -30,6 +32,8 @@ from remediation_agent.domain.models import (
     DraftPrMetadata,
     GetFileContentsArgs,
     GetRepositoryTreeArgs,
+    IncidentMemoryRetrievalV1,
+    IncidentMemoryWriteReceiptV1,
     InspectionArtifact,
     InspectionPlan,
     InspectionToolResponse,
@@ -42,6 +46,9 @@ from remediation_agent.domain.models import (
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.ports.models import (
+    ArtifactReadError,
+    ArtifactReadRequest,
+    ArtifactReadResult,
     ArtifactWriteRequest,
     AuditWriteRequest,
     BranchRequest,
@@ -52,6 +59,8 @@ from remediation_agent.ports.models import (
     DiffResult,
     DraftPrRequest,
     FileContent,
+    IncidentMemoryRetrievalRequest,
+    IncidentMemoryStoreRequest,
     ModelGeneration,
     ModelRequest,
     PatchApplyRequest,
@@ -183,6 +192,44 @@ class FakeStructuredModel:
                 tool_calls=[{"name": name, "args": arguments, "id": f"fake-call-{index}", "type": "tool_call"}],
             )
             for index, (name, arguments) in enumerate(calls, start=1)
+        )
+
+
+class FakeIncidentMemory:
+    """Credential-free advisory-memory fake with observable idempotent writes."""
+
+    def __init__(
+        self,
+        retrieval: IncidentMemoryRetrievalV1 | None = None,
+        *,
+        write_status: MemoryWriteStatus = MemoryWriteStatus.STORED,
+    ) -> None:
+        self.retrieval = retrieval
+        self.write_status = write_status
+        self.retrieve_requests: list[IncidentMemoryRetrievalRequest] = []
+        self.store_requests: list[IncidentMemoryStoreRequest] = []
+        self._tokens: set[str] = set()
+
+    async def retrieve(self, request: IncidentMemoryRetrievalRequest) -> IncidentMemoryRetrievalV1:
+        self.retrieve_requests.append(request)
+        return self.retrieval or IncidentMemoryRetrievalV1(
+            status=MemoryRetrievalStatus.NO_MATCH,
+            query_digest=_digest(request.model_dump_json()),
+            duration_ms=1,
+        )
+
+    async def store(self, request: IncidentMemoryStoreRequest) -> IncidentMemoryWriteReceiptV1:
+        self.store_requests.append(request)
+        if request.idempotency_token in self._tokens:
+            status = MemoryWriteStatus.ALREADY_EXISTS
+        else:
+            self._tokens.add(request.idempotency_token)
+            status = self.write_status
+        return IncidentMemoryWriteReceiptV1(
+            status=status,
+            incident_id=request.record.incident_id,
+            duration_ms=1,
+            error_code="FAKE_MEMORY_WRITE_ERROR" if status is MemoryWriteStatus.ERROR else None,
         )
 
 
@@ -589,6 +636,27 @@ class MemoryArtifactStore:
     async def write_bundle(self, request: ArtifactWriteRequest) -> ArtifactManifest:
         self.requests.append(request)
         return ArtifactManifest(run_id=request.run_id, artifacts=[])
+
+
+class MemoryArtifactReader:
+    def __init__(self, contents: Mapping[tuple[str, str], str] | None = None) -> None:
+        self.contents = dict(contents or {})
+        self.requests: list[ArtifactReadRequest] = []
+
+    async def read(self, request: ArtifactReadRequest) -> ArtifactReadResult:
+        self.requests.append(request)
+        content = self.contents.get((request.run_id, request.artifact.name))
+        if content is None:
+            raise ArtifactReadError("ARTIFACT_NOT_FOUND")
+        return ArtifactReadResult(
+            name=request.artifact.name,
+            media_type=request.artifact.media_type,
+            digest=request.artifact.digest,
+            content=content,
+            size_bytes=len(content.encode("utf-8")),
+            truncated=False,
+            digest_verified=True,
+        )
 
 
 class MemoryAuditSink:

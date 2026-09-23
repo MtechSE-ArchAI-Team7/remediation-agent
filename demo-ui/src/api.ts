@@ -1,4 +1,4 @@
-import type { ApprovalStatus, ProbeResponse, RunResponse } from "./types";
+import type { ApprovalStatus, ArtifactPreviewResponse, ProbeResponse, RunResponse } from "./types";
 
 export class GatewayError extends Error {
   constructor(
@@ -58,5 +58,17 @@ export function decideRun(
   return request(`/api/runs/${runId}/approval`, {
     method: "POST",
     body: JSON.stringify({ ...decision, session_id: sessionId }),
+  });
+}
+
+export function getArtifactPreview(
+  taskId: string,
+  sessionId: string,
+  artifactName: string,
+  digest: string,
+): Promise<ArtifactPreviewResponse> {
+  return request(`/api/runs/${taskId}/artifacts/preview`, {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, artifact_name: artifactName, digest }),
   });
 }

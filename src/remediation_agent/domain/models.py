@@ -12,6 +12,9 @@ from remediation_agent.domain.enums import (
     ApprovalStatus,
     FinalStatus,
     InspectionToolStatus,
+    MemoryAdmissionType,
+    MemoryRetrievalStatus,
+    MemoryWriteStatus,
     OperationalToolAvailability,
     OperationalToolCategory,
     OperationalToolEffect,
@@ -357,6 +360,73 @@ class ModelCallRecord(StrictModel):
     reasoning_summary: str | None = Field(default=None, max_length=4_000)
 
 
+class IncidentValidationSummary(StrictModel):
+    task_name: IdentifierStr
+    outcome: ValidationOutcome
+
+
+class IncidentMemoryRecordV1(StrictModel):
+    """Bounded long-term incident summary; never raw source, prompts, or patches."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    incident_id: IdentifierStr
+    repository: IdentifierStr
+    source_commit: str = Field(pattern=r"^[0-9a-fA-F]{7,64}$")
+    incident_signature: str = Field(min_length=1, max_length=1_000)
+    root_cause: str = Field(min_length=1, max_length=2_000)
+    remediation_summary: str = Field(min_length=1, max_length=2_000)
+    changed_paths: list[RepositoryPathStr] = Field(min_length=1, max_length=20)
+    validation: list[IncidentValidationSummary] = Field(min_length=1, max_length=20)
+    rollback_summary: str = Field(min_length=1, max_length=2_000)
+    residual_risks: list[str] = Field(default_factory=list, max_length=20)
+    policy_version: IdentifierStr
+    prompt_version: IdentifierStr
+    model_provider: IdentifierStr
+    model_name: IdentifierStr
+    evidence_ids: list[IdentifierStr] = Field(min_length=1, max_length=100)
+    evidence_digests: list[NonEmptyStr] = Field(min_length=1, max_length=100)
+    admission_type: MemoryAdmissionType
+    created_at: datetime
+
+
+class IncidentMemoryMatchV1(StrictModel):
+    incident_id: IdentifierStr
+    admission_type: MemoryAdmissionType
+    score: float = Field(ge=0.0, le=1.0)
+    age_days: float = Field(ge=0.0, le=30.0)
+    repository: IdentifierStr
+    incident_signature: str = Field(min_length=1, max_length=1_000)
+    root_cause: str = Field(min_length=1, max_length=2_000)
+    remediation_summary: str = Field(min_length=1, max_length=2_000)
+    changed_paths: list[RepositoryPathStr] = Field(default_factory=list, max_length=20)
+    validation: list[IncidentValidationSummary] = Field(default_factory=list, max_length=20)
+    rollback_summary: str = Field(default="Not supplied.", min_length=1, max_length=2_000)
+    residual_risks: list[str] = Field(default_factory=list, max_length=20)
+
+
+class IncidentMemoryRetrievalV1(StrictModel):
+    status: MemoryRetrievalStatus
+    query_digest: NonEmptyStr
+    matches: list[IncidentMemoryMatchV1] = Field(default_factory=list, max_length=3)
+    duration_ms: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def result_shape_matches_status(self) -> IncidentMemoryRetrievalV1:
+        if self.status is MemoryRetrievalStatus.RETRIEVED and not self.matches:
+            raise ValueError("RETRIEVED memory status requires at least one match")
+        if self.status is not MemoryRetrievalStatus.RETRIEVED and self.matches:
+            raise ValueError("only RETRIEVED memory status may contain matches")
+        return self
+
+
+class IncidentMemoryWriteReceiptV1(StrictModel):
+    status: MemoryWriteStatus
+    incident_id: str | None = Field(default=None, max_length=200)
+    duration_ms: int = Field(ge=0)
+    error_code: str | None = Field(default=None, max_length=200)
+
+
 class ErrorRecord(StrictModel):
     code: NonEmptyStr
     stage: NonEmptyStr
@@ -414,6 +484,8 @@ class ExplainabilityTraceV1(StrictModel):
     evidence: list[ExplainabilityEvidenceRef] = Field(default_factory=list, max_length=100)
     model_calls: list[ModelCallRecord] = Field(default_factory=list, max_length=100)
     validation_executions: list[ValidationExecutionRecord] = Field(default_factory=list, max_length=100)
+    memory_retrieval: IncidentMemoryRetrievalV1 | None = None
+    memory_write: IncidentMemoryWriteReceiptV1 | None = None
 
 
 class RemediationHandoffV1(StrictModel):

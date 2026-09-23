@@ -38,7 +38,7 @@ from remediation_agent.domain.models import (
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
-from remediation_agent.ports.protocols import HandoffDeliveryPort, InspectionToolProvider
+from remediation_agent.ports.protocols import HandoffDeliveryPort, IncidentMemoryPort, InspectionToolProvider
 from remediation_agent.service import RemediationService
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
@@ -139,6 +139,8 @@ def build_test_service(
     github_repository: str | None = None,
     invocation_timeout_seconds: float | None = None,
     handoff_delivery: HandoffDeliveryPort | None = None,
+    incident_memory: IncidentMemoryPort | None = None,
+    incident_memory_writes_enabled: bool = False,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -167,6 +169,10 @@ def build_test_service(
         policy_config = policy_config.model_copy(
             update={"github": policy_config.github.model_copy(update={"writes_enabled": True})}
         )
+    if incident_memory_writes_enabled:
+        policy_config = policy_config.model_copy(
+            update={"incident_memory": policy_config.incident_memory.model_copy(update={"writes_enabled": True})}
+        )
     policy = PolicyEngine(policy_config)
     model = FakeStructuredModel(responses, tool_turns=tool_turns or ())
     repository = FakeRepository(files=files or {"src/app.py": "value = int(raw)\n"})
@@ -192,6 +198,8 @@ def build_test_service(
         prompt_version="test-prompt-v1",
         github_writes_enabled=github_writes_enabled,
         github_repository=github_repository,
+        incident_memory=incident_memory,
+        incident_memory_writes_enabled=incident_memory_writes_enabled,
     )
     graph = build_graph(nodes, in_memory_checkpointer())
     return (

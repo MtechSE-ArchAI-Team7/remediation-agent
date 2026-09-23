@@ -19,10 +19,12 @@ def build_graph(
 
     analysis_builder = StateGraph(RemediationState)
     analysis_builder.add_node("create_workspace", nodes.create_workspace)
+    analysis_builder.add_node("retrieve_incident_memory", nodes.retrieve_incident_memory)
     analysis_builder.add_node("inspect_repository", nodes.inspect_repository)
     analysis_builder.add_node("create_plan", nodes.create_plan)
     analysis_builder.add_edge(START, "create_workspace")
-    analysis_builder.add_edge("create_workspace", "inspect_repository")
+    analysis_builder.add_edge("create_workspace", "retrieve_incident_memory")
+    analysis_builder.add_edge("retrieve_incident_memory", "inspect_repository")
     analysis_builder.add_edge("inspect_repository", "create_plan")
     analysis_builder.add_edge("create_plan", END)
     analysis_workflow = analysis_builder.compile()
@@ -79,6 +81,7 @@ def build_graph(
     parent.add_node("build_evidence", nodes.build_evidence)
     parent.add_node("prepare_pr", nodes.prepare_pr)
     parent.add_node("cleanup", nodes.cleanup)
+    parent.add_node("store_incident_memory", nodes.store_incident_memory)
     parent.add_node("finalize", nodes.finalize)
 
     parent.add_edge(START, "validate_intake")
@@ -106,7 +109,8 @@ def build_graph(
         {"pr": "prepare_pr", "cleanup": "cleanup"},
     )
     parent.add_edge("prepare_pr", "cleanup")
-    parent.add_edge("cleanup", "finalize")
+    parent.add_edge("cleanup", "store_incident_memory")
+    parent.add_edge("store_incident_memory", "finalize")
     parent.add_edge("finalize", END)
     return parent.compile(checkpointer=checkpointer)
 
