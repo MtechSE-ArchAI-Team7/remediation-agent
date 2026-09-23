@@ -1,4 +1,5 @@
 import type { ApprovalStatus, ArtifactPreviewResponse, ProbeResponse, RunResponse } from "./types";
+import type { RecentRunV1 } from "./run-history";
 
 export class GatewayError extends Error {
   constructor(
@@ -38,6 +39,10 @@ export function probeModel(): Promise<ProbeResponse> {
 
 export function startRun(runId: string, input: Record<string, unknown>): Promise<RunResponse> {
   return request("/api/runs", { method: "POST", body: JSON.stringify({ run_id: runId, input }) });
+}
+
+export function listRuns(): Promise<{ output: { schema_version: "1.0"; runs: RecentRunV1[] } }> {
+  return request("/api/runs");
 }
 
 export function getRun(taskId: string, sessionId: string): Promise<RunResponse> {

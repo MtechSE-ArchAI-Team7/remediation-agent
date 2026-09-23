@@ -68,6 +68,7 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; ov
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
 .page-header h1 { margin: 0; font-size: 28px; line-height: 1.2; letter-spacing: -.018em; }
 .page-header p { margin: 7px 0 0; color: var(--gray-500); font-size: 13px; }
+.page-header-actions { display: flex; align-items: center; gap: 10px; }
 
 .service-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 18px; background: #fff; border: 1px solid var(--gray-300); border-radius: 3px; }
 .service-summary div { display: grid; gap: 5px; min-width: 0; padding: 13px 16px; border-right: 1px solid var(--gray-200); }

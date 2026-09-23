@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from remediation_agent.domain.enums import FinalStatus
 from remediation_agent.domain.models import NonEmptyStr, StrictModel
 
 DIAGNOSIS_HANDOFF_MEDIA_TYPE = "application/vnd.aios.diagnosis-handoff.v1+json"
@@ -18,6 +20,8 @@ PROVIDER_PROBE_REQUEST_MEDIA_TYPE = "application/vnd.aios.provider-probe-request
 PROVIDER_PROBE_RESULT_MEDIA_TYPE = "application/vnd.aios.provider-probe-result.v1+json"
 ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE = "application/vnd.aios.artifact-preview-request.v1+json"
 ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE = "application/vnd.aios.artifact-preview-result.v1+json"
+RUN_SUMMARY_METADATA_KEY = "aios_run"
+_CANONICAL_UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 class ProviderProbeRequestV1(StrictModel):
@@ -63,6 +67,29 @@ class ArtifactPreviewResultV1(StrictModel):
     size_bytes: int = Field(ge=0)
     truncated: bool
     digest_verified: Literal[True] = True
+
+
+class RemediationRunSummaryV1(StrictModel):
+    """Public-demo run locator and bounded presentation summary."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    task_id: str = Field(pattern=_CANONICAL_UUID)
+    session_id: str = Field(pattern=_CANONICAL_UUID)
+    case_id: str | None = Field(default=None, max_length=200)
+    jira_ticket_id: str | None = Field(default=None, max_length=64)
+    repository: str | None = Field(default=None, max_length=500)
+    status: FinalStatus
+    created_at: datetime
+    updated_at: datetime
+    draft_pr_url: str | None = Field(default=None, max_length=2_048)
+    artifact_count: int = Field(default=0, ge=0)
+    stale: Literal[False] = False
+
+    @model_validator(mode="after")
+    def update_cannot_predate_creation(self) -> RemediationRunSummaryV1:
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot predate created_at")
+        return self
 
 
 SUPPORTED_INPUT_MEDIA_TYPES = frozenset(

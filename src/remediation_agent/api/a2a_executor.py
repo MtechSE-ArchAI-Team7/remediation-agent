@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import cast
+from urllib.parse import urlsplit
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -22,11 +24,13 @@ from remediation_agent.api.a2a_contracts import (
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
+    RUN_SUMMARY_METADATA_KEY,
     ArtifactPreviewRequestV1,
     ArtifactPreviewResultV1,
     ProviderProbeModelResult,
     ProviderProbeRequestV1,
     ProviderProbeResultV1,
+    RemediationRunSummaryV1,
 )
 from remediation_agent.domain.enums import FinalStatus, ModelOperation
 from remediation_agent.domain.models import (
@@ -137,45 +141,93 @@ class RemediationA2AExecutor(AgentExecutor):
             await event_queue.enqueue_event(preview)
             return
 
+        try:
+            if media_type == DIAGNOSIS_HANDOFF_MEDIA_TYPE:
+                handoff = DiagnosisHandoffV1.model_validate(payload)
+                summary = _new_run_summary(context, task_id, handoff)
+            elif media_type == APPROVAL_DECISION_MEDIA_TYPE:
+                decision = ApprovalDecisionV1.model_validate(payload)
+                summary = _resumed_run_summary(context, task_id)
+            else:
+                updater = TaskUpdater(event_queue, task_id, context_id)
+                await event_queue.enqueue_event(
+                    a2a_pb.Task(
+                        id=task_id,
+                        context_id=context_id,
+                        status=a2a_pb.TaskStatus(state=a2a_pb.TaskState.TASK_STATE_SUBMITTED),
+                    )
+                )
+                await updater.reject(_status_message(updater, "UNSUPPORTED_MEDIA_TYPE"))
+                return
+        except ValidationError:
+            await self._reject_transport(task_id, context_id, event_queue, "INVALID_DATA_PART")
+            return
+
         updater = TaskUpdater(event_queue, task_id, context_id)
         await event_queue.enqueue_event(
             a2a_pb.Task(
                 id=task_id,
                 context_id=context_id,
                 status=a2a_pb.TaskStatus(state=a2a_pb.TaskState.TASK_STATE_SUBMITTED),
+                metadata={RUN_SUMMARY_METADATA_KEY: summary.model_dump(mode="json")},
             )
         )
         await updater.start_work()
 
         if self._service is None:
-            await updater.failed(_status_message(updater, "RUNTIME_NOT_CONFIGURED"))
+            await _publish_failure(
+                updater,
+                summary,
+                FinalStatus.INTERNAL_ERROR,
+                "RUNTIME_NOT_CONFIGURED",
+                a2a_pb.TaskState.TASK_STATE_FAILED,
+            )
             return
 
         try:
             if media_type == DIAGNOSIS_HANDOFF_MEDIA_TYPE:
-                handoff = DiagnosisHandoffV1.model_validate(payload)
                 view = await self._service.start(handoff, run_id=task_id)
-            elif media_type == APPROVAL_DECISION_MEDIA_TYPE:
-                decision = ApprovalDecisionV1.model_validate(payload)
-                view = await self._service.approve(task_id, decision)
             else:
-                await updater.reject(_status_message(updater, "UNSUPPORTED_MEDIA_TYPE"))
-                return
+                view = await self._service.approve(task_id, decision)
         except ValidationError:
-            await updater.reject(_status_message(updater, "INVALID_DATA_PART"))
+            await _publish_failure(
+                updater,
+                summary,
+                FinalStatus.INVALID_REQUEST,
+                "INVALID_DATA_PART",
+                a2a_pb.TaskState.TASK_STATE_REJECTED,
+            )
             return
         except ApprovalConflictError:
-            await updater.reject(_status_message(updater, "APPROVAL_CONFLICT"))
+            await _publish_failure(
+                updater,
+                summary,
+                FinalStatus.INVALID_REQUEST,
+                "APPROVAL_CONFLICT",
+                a2a_pb.TaskState.TASK_STATE_REJECTED,
+            )
             return
         except RunNotFoundError:
-            await updater.reject(_status_message(updater, "TASK_NOT_FOUND"))
+            await _publish_failure(
+                updater,
+                summary,
+                FinalStatus.INVALID_REQUEST,
+                "TASK_NOT_FOUND",
+                a2a_pb.TaskState.TASK_STATE_REJECTED,
+            )
             return
         except Exception:  # noqa: BLE001 - external and workflow failures are normalized
             _LOGGER.exception("A2A remediation execution failed")
-            await updater.failed(_status_message(updater, "RUNTIME_INVOCATION_FAILED"))
+            await _publish_failure(
+                updater,
+                summary,
+                FinalStatus.INTERNAL_ERROR,
+                "RUNTIME_INVOCATION_FAILED",
+                a2a_pb.TaskState.TASK_STATE_FAILED,
+            )
             return
 
-        await self._publish_view(updater, view)
+        await self._publish_view(updater, view, summary)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         del context, event_queue
@@ -183,21 +235,40 @@ class RemediationA2AExecutor(AgentExecutor):
 
         raise TaskNotCancelableError
 
-    async def _publish_view(self, updater: TaskUpdater, view: RemediationRunView) -> None:
+    async def _publish_view(
+        self,
+        updater: TaskUpdater,
+        view: RemediationRunView,
+        previous: RemediationRunSummaryV1,
+    ) -> None:
+        summary = _updated_run_summary(previous, view)
+        metadata = {RUN_SUMMARY_METADATA_KEY: summary.model_dump(mode="json")}
         if view.status is FinalStatus.AWAITING_APPROVAL:
             request = view.approval_request
             if request is None:
-                await updater.failed(_status_message(updater, "MISSING_APPROVAL_REQUEST"))
+                await _publish_failure(
+                    updater,
+                    previous,
+                    FinalStatus.INTERNAL_ERROR,
+                    "MISSING_APPROVAL_REQUEST",
+                    a2a_pb.TaskState.TASK_STATE_FAILED,
+                )
                 return
             parts = [_data_part(request.model_dump(mode="json"), APPROVAL_REQUEST_MEDIA_TYPE)]
             if view.explainability is not None:
                 parts.append(_data_part(view.explainability.model_dump(mode="json"), EXPLAINABILITY_TRACE_MEDIA_TYPE))
             message = updater.new_agent_message(parts)
-            await updater.requires_input(message)
+            await updater.update_status(a2a_pb.TaskState.TASK_STATE_INPUT_REQUIRED, message, metadata=metadata)
             return
 
         if view.result is None:
-            await updater.failed(_status_message(updater, "MISSING_REMEDIATION_HANDOFF"))
+            await _publish_failure(
+                updater,
+                previous,
+                FinalStatus.INTERNAL_ERROR,
+                "MISSING_REMEDIATION_HANDOFF",
+                a2a_pb.TaskState.TASK_STATE_FAILED,
+            )
             return
 
         artifact_parts = [_data_part(view.result.model_dump(mode="json"), REMEDIATION_HANDOFF_MEDIA_TYPE)]
@@ -219,14 +290,20 @@ class RemediationA2AExecutor(AgentExecutor):
         )
         message = _status_message(updater, view.status.value)
         task_state = task_state_for_final_status(view.status)
-        if task_state == a2a_pb.TaskState.TASK_STATE_COMPLETED:
-            await updater.complete(message)
-        elif task_state == a2a_pb.TaskState.TASK_STATE_REJECTED:
-            await updater.reject(message)
-        elif task_state == a2a_pb.TaskState.TASK_STATE_FAILED:
-            await updater.failed(message)
-        else:
-            await updater.failed(_status_message(updater, "INVALID_WORKFLOW_STATUS"))
+        if task_state not in {
+            a2a_pb.TaskState.TASK_STATE_COMPLETED,
+            a2a_pb.TaskState.TASK_STATE_REJECTED,
+            a2a_pb.TaskState.TASK_STATE_FAILED,
+        }:
+            await _publish_failure(
+                updater,
+                previous,
+                FinalStatus.INTERNAL_ERROR,
+                "INVALID_WORKFLOW_STATUS",
+                a2a_pb.TaskState.TASK_STATE_FAILED,
+            )
+            return
+        await updater.update_status(cast(a2a_pb.TaskState, task_state), message, metadata=metadata)
 
     async def _provider_probe(
         self,
@@ -371,6 +448,104 @@ def _data_part(payload: dict[str, object], media_type: str) -> a2a_pb.Part:
 
 def _status_message(updater: TaskUpdater, code: str) -> a2a_pb.Message:
     return updater.new_agent_message([a2a_pb.Part(text=code, media_type="text/plain")])
+
+
+async def _publish_failure(
+    updater: TaskUpdater,
+    previous: RemediationRunSummaryV1,
+    status: FinalStatus,
+    code: str,
+    task_state: int,
+) -> None:
+    summary = _replace_run_summary(previous, status=status, updated_at=max(datetime.now(UTC), previous.updated_at))
+    await updater.update_status(
+        cast(a2a_pb.TaskState, task_state),
+        _status_message(updater, code),
+        metadata={RUN_SUMMARY_METADATA_KEY: summary.model_dump(mode="json")},
+    )
+
+
+def _new_run_summary(
+    context: RequestContext,
+    task_id: str,
+    handoff: DiagnosisHandoffV1,
+) -> RemediationRunSummaryV1:
+    now = datetime.now(UTC)
+    session_id = context.call_context.state.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise RuntimeError("A2A_RUNTIME_SESSION_REQUIRED")
+    path = urlsplit(handoff.repository.url).path.strip("/")
+    repository = path.removesuffix(".git") or None
+    return RemediationRunSummaryV1(
+        task_id=task_id,
+        session_id=session_id,
+        case_id=handoff.case_id,
+        jira_ticket_id=handoff.jira_ticket_id,
+        repository=repository,
+        status=FinalStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _resumed_run_summary(context: RequestContext, task_id: str) -> RemediationRunSummaryV1:
+    task = context.current_task
+    if task is not None:
+        raw = json_format.MessageToDict(task.metadata, preserving_proto_field_name=True).get(RUN_SUMMARY_METADATA_KEY)
+        try:
+            previous = RemediationRunSummaryV1.model_validate(raw)
+            return _replace_run_summary(
+                previous,
+                status=FinalStatus.PENDING,
+                updated_at=max(datetime.now(UTC), previous.updated_at),
+            )
+        except ValidationError:
+            pass
+    now = datetime.now(UTC)
+    session_id = context.call_context.state.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise RuntimeError("A2A_RUNTIME_SESSION_REQUIRED")
+    return RemediationRunSummaryV1(
+        task_id=task_id,
+        session_id=session_id,
+        status=FinalStatus.PENDING,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _updated_run_summary(
+    previous: RemediationRunSummaryV1,
+    view: RemediationRunView,
+) -> RemediationRunSummaryV1:
+    result = view.result
+    repository = previous.repository
+    draft_pr_url = previous.draft_pr_url
+    artifact_count = previous.artifact_count
+    case_id = previous.case_id
+    if result is not None:
+        case_id = result.case_id
+        path = urlsplit(result.repository.url).path.strip("/")
+        repository = path.removesuffix(".git") or repository
+        if result.draft_pr is not None:
+            draft_pr_url = result.draft_pr.url
+        if result.artifact_manifest is not None:
+            artifact_count = len(result.artifact_manifest.artifacts)
+    elif view.approval_request is not None:
+        case_id = view.approval_request.case_id
+    return _replace_run_summary(
+        previous,
+        case_id=case_id,
+        repository=repository,
+        status=view.status,
+        updated_at=max(datetime.now(UTC), previous.updated_at),
+        draft_pr_url=draft_pr_url,
+        artifact_count=artifact_count,
+    )
+
+
+def _replace_run_summary(previous: RemediationRunSummaryV1, **updates: object) -> RemediationRunSummaryV1:
+    return RemediationRunSummaryV1.model_validate({**previous.model_dump(), **updates})
 
 
 def task_state_for_final_status(status: FinalStatus) -> int:

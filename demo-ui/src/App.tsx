@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { ArtifactModal } from "./ArtifactModal";
-import { decideRun, GatewayError, getRun, probeModel, startRun } from "./api";
+import { decideRun, GatewayError, getRun, listRuns, probeModel, startRun } from "./api";
 import {
   LEGACY_RUN_STORAGE_KEY,
-  LocalRunHistoryRepository,
-  recentRunFromView,
+  sortRecentRuns,
 } from "./run-history";
 import type { RecentRunV1 } from "./run-history";
 import toolCatalog from "./generated/tool-catalog.json";
@@ -391,7 +390,6 @@ function ExplainabilityPanel({ trace }: { trace: ExplainabilityTrace }) {
 }
 
 export default function App() {
-  const historyRepository = useMemo(() => new LocalRunHistoryRepository(), []);
   const [activeTab, setActiveTab] = useState<ConsoleTab>("run");
   const [handoffText, setHandoffText] = useState(JSON.stringify(divisionByZero, null, 2));
   const [runId, setRunId] = useState(() => localStorage.getItem(RUN_STORAGE_KEY) ?? "");
@@ -409,12 +407,20 @@ export default function App() {
   const tabRefs = useRef<Record<ConsoleTab, HTMLButtonElement | null>>({ run: null, runs: null, agent: null, status: null });
 
   useEffect(() => {
+    if (activeTab !== "runs") return undefined;
     let active = true;
-    void historyRepository.list()
-      .then((items) => { if (active) setRecentRuns(items); })
-      .catch(() => { if (active) setHistoryError("Saved run history could not be loaded."); });
+    setHistoryBusy("__list__");
+    void listRuns()
+      .then((response) => {
+        if (active) {
+          setRecentRuns(sortRecentRuns(response.output.runs));
+          setHistoryError("");
+        }
+      })
+      .catch((caught: unknown) => { if (active) setHistoryError(errorMessage(caught)); })
+      .finally(() => { if (active) setHistoryBusy(null); });
     return () => { active = false; };
-  }, [historyRepository]);
+  }, [activeTab]);
 
   const parsedHandoff = useMemo(() => {
     try {
@@ -424,14 +430,16 @@ export default function App() {
     }
   }, [handoffText]);
 
-  async function persistRecentRun(view: RemediationRunView, input: Record<string, unknown> | null = null) {
+  async function refreshRunHistory() {
+    setHistoryError("");
+    setHistoryBusy("__list__");
     try {
-      const current = await historyRepository.list();
-      const previous = current.find((item) => item.task_id === view.task_id);
-      const items = await historyRepository.upsert(recentRunFromView(view, input, previous));
-      setRecentRuns(items);
-    } catch {
-      setHistoryError("The run succeeded, but its browser-local history could not be saved.");
+      const response = await listRuns();
+      setRecentRuns(sortRecentRuns(response.output.runs));
+    } catch (caught) {
+      setHistoryError(errorMessage(caught));
+    } finally {
+      setHistoryBusy(null);
     }
   }
 
@@ -451,7 +459,7 @@ export default function App() {
       setRunId(response.output.task_id);
       localStorage.setItem(RUN_STORAGE_KEY, response.output.task_id);
       localStorage.setItem(`${RUN_STORAGE_KEY}:session`, response.output.session_id);
-      await persistRecentRun(response.output, parsedHandoff);
+      await refreshRunHistory();
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -471,7 +479,6 @@ export default function App() {
       if (!sessionId) throw new GatewayError("MISSING_RUNTIME_SESSION", 400);
       const response = await getRun(runId, sessionId);
       setRun(response.output);
-      await persistRecentRun(response.output);
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -492,7 +499,7 @@ export default function App() {
         comment,
       });
       setRun(response.output);
-      await persistRecentRun(response.output);
+      await refreshRunHistory();
     } catch (caught) {
       setRunError(errorMessage(caught));
     } finally {
@@ -529,10 +536,14 @@ export default function App() {
     try {
       const response = await getRun(item.task_id, item.session_id);
       setRun(response.output);
-      await persistRecentRun(response.output);
+      setRecentRuns((current) => current.map((runItem) => (
+        runItem.task_id === item.task_id
+          ? { ...runItem, status: response.output.status, updated_at: new Date().toISOString(), stale: false }
+          : runItem
+      )));
     } catch (caught) {
       const stale = { ...item, stale: true };
-      setRecentRuns(await historyRepository.upsert(stale));
+      setRecentRuns((current) => current.map((runItem) => runItem.task_id === item.task_id ? stale : runItem));
       const message = errorMessage(caught);
       if (open) setRunError(message);
       else setHistoryError(message);
@@ -540,11 +551,6 @@ export default function App() {
       setHistoryBusy(null);
       if (open) setBusy(null);
     }
-  }
-
-  async function forgetRecentRun(item: RecentRunV1) {
-    if (!window.confirm(`Forget saved run ${item.task_id}? The runtime run will not be deleted.`)) return;
-    setRecentRuns(await historyRepository.remove(item.task_id));
   }
 
   const result = run?.result;
@@ -826,9 +832,14 @@ export default function App() {
             <section className="page-header">
               <div>
                 <h1>Recent runs</h1>
-                <p>Runs saved in this browser. Opening a run retrieves its latest runtime state.</p>
+                <p>Shared public demo runs from Agent 2 and this console. Opening a run retrieves its latest runtime state.</p>
               </div>
-              <span className="identifier-badge">{recentRuns.length} saved</span>
+              <div className="page-header-actions">
+                <span className="identifier-badge">{recentRuns.length} shared</span>
+                <button className="secondary" type="button" disabled={historyBusy !== null} onClick={() => void refreshRunHistory()}>
+                  {historyBusy === "__list__" ? "Refreshing…" : "Refresh runs"}
+                </button>
+              </div>
             </section>
             {historyError && (
               <div className="alert error" role="alert">
@@ -838,10 +849,10 @@ export default function App() {
             )}
             <section className="content-card recent-runs-card">
               <header className="card-header">
-                <div><span className="section-kicker">Browser-local history</span><h2>Saved remediation runs</h2><p>This list is not shared with other browsers or operators.</p></div>
+                <div><span className="section-kicker">Public demo queue</span><h2>Shared remediation runs</h2><p>Every visitor to this demo can view these runs and submit an approval decision.</p></div>
               </header>
               {recentRuns.length === 0 ? (
-                <div className="card-body"><div className="empty-state">No saved runs. Create a remediation run to add it here.</div></div>
+                <div className="card-body"><div className="empty-state">No shared runs. Create a remediation run or send one from Agent 2.</div></div>
               ) : (
                 <div className="table-scroll">
                   <table className="recent-runs-table">
@@ -859,7 +870,6 @@ export default function App() {
                               <button className="secondary" type="button" disabled={historyBusy !== null} onClick={() => void loadRecentRun(item, false)}>{historyBusy === item.task_id ? "Refreshing…" : "Refresh"}</button>
                               <button className="primary" type="button" disabled={historyBusy !== null} onClick={() => void loadRecentRun(item, true)}>Open</button>
                               {item.draft_pr_url && <a className="table-link" href={item.draft_pr_url} target="_blank" rel="noreferrer">Draft PR ↗</a>}
-                              <button className="link-button danger-link" type="button" disabled={historyBusy !== null} onClick={() => void forgetRecentRun(item)}>Forget</button>
                             </div>
                           </td>
                         </tr>

@@ -136,6 +136,88 @@ def test_get_uses_separate_task_and_session_ids(handler: _HandlerModule) -> None
     assert fake.calls[0]["runtimeSessionId"] == _RUN_ID
 
 
+def test_list_runs_uses_a2a_list_tasks_and_returns_public_summaries(handler: _HandlerModule) -> None:
+    summary = {
+        "schema_version": "1.0",
+        "task_id": _RUN_ID,
+        "session_id": _RUN_ID,
+        "case_id": "CASE-123",
+        "jira_ticket_id": "TICKET-123",
+        "repository": "owner/repository",
+        "status": "AWAITING_APPROVAL",
+        "created_at": "2026-09-23T00:00:00Z",
+        "updated_at": "2026-09-23T00:01:00Z",
+        "draft_pr_url": None,
+        "artifact_count": 0.0,
+        "stale": False,
+    }
+    envelope = {
+        "jsonrpc": "2.0",
+        "id": "response-1",
+        "result": {
+            "tasks": [{"id": _RUN_ID, "metadata": {"aios_run": summary}}],
+            "nextPageToken": "",
+            "pageSize": 1,
+            "totalSize": 1,
+        },
+    }
+    fake = _FakeAgentCore(_upstream(envelope))
+    handler._agentcore_client = fake
+
+    response = handler.lambda_handler(_event("GET", "/api/runs"), None)
+
+    assert response["statusCode"] == 200
+    assert _body(response)["output"] == {
+        "schema_version": "1.0",
+        "runs": [{**summary, "artifact_count": 0}],
+    }
+    payload = json.loads(fake.calls[0]["payload"])
+    assert payload["method"] == "ListTasks"
+    assert payload["params"] == {"pageSize": 20, "includeArtifacts": False}
+
+
+def test_list_runs_rejects_malformed_public_summary(handler: _HandlerModule) -> None:
+    envelope = {
+        "jsonrpc": "2.0",
+        "id": "response-1",
+        "result": {"tasks": [{"id": _RUN_ID, "metadata": {"aios_run": {"session_id": "secret"}}}]},
+    }
+    handler._agentcore_client = _FakeAgentCore(_upstream(envelope))
+
+    response = handler.lambda_handler(_event("GET", "/api/runs"), None)
+
+    assert response["statusCode"] == 502
+    assert _body(response) == {"error": "INVALID_A2A_RESPONSE"}
+
+
+def test_list_runs_rejects_more_than_twenty_or_unknown_status(handler: _HandlerModule) -> None:
+    summary = {
+        "schema_version": "1.0",
+        "task_id": _RUN_ID,
+        "session_id": _RUN_ID,
+        "case_id": None,
+        "jira_ticket_id": None,
+        "repository": None,
+        "status": "SECRET_STATUS",
+        "created_at": "2026-09-23T00:00:00Z",
+        "updated_at": "2026-09-23T00:01:00Z",
+        "draft_pr_url": None,
+        "artifact_count": 0,
+        "stale": False,
+    }
+    invalid_status = {
+        "jsonrpc": "2.0",
+        "id": "response-1",
+        "result": {"tasks": [{"id": _RUN_ID, "metadata": {"aios_run": summary}}]},
+    }
+    handler._agentcore_client = _FakeAgentCore(_upstream(invalid_status))
+    assert handler.lambda_handler(_event("GET", "/api/runs"), None)["statusCode"] == 502
+
+    too_many = {"jsonrpc": "2.0", "id": "response-2", "result": {"tasks": [{}] * 21}}
+    handler._agentcore_client = _FakeAgentCore(_upstream(too_many))
+    assert handler.lambda_handler(_event("GET", "/api/runs"), None)["statusCode"] == 502
+
+
 def test_artifact_preview_relays_typed_manifest_identity_without_object_path(handler: _HandlerModule) -> None:
     preview = {
         "schema_version": "1.0",

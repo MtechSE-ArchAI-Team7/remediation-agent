@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "FinalStatus": {
+      "enum": [
+        "PENDING",
+        "AWAITING_APPROVAL",
+        "INVALID_REQUEST",
+        "UNSUPPORTED_REMEDIATION_TYPE",
+        "NOT_IMPLEMENTED",
+        "HUMAN_ACTION_REQUIRED",
+        "UNSAFE_REMEDIATION",
+        "VALIDATION_FAILED",
+        "DRAFT_PR_PREPARED",
+        "DRAFT_PR_CREATED",
+        "INTERNAL_ERROR",
+        "CLEANUP_FAILED"
+      ],
+      "title": "FinalStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Public-demo run locator and bounded presentation summary.",
+  "properties": {
+    "artifact_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Artifact Count",
+      "type": "integer"
+    },
+    "case_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Case Id"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "draft_pr_url": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Draft Pr Url"
+    },
+    "jira_ticket_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Jira Ticket Id"
+    },
+    "repository": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repository"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "session_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Session Id",
+      "type": "string"
+    },
+    "stale": {
+      "const": false,
+      "default": false,
+      "title": "Stale",
+      "type": "boolean"
+    },
+    "status": {
+      "$ref": "#/$defs/FinalStatus"
+    },
+    "task_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Task Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "session_id",
+    "status",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "RemediationRunSummaryV1",
+  "type": "object"
+}

@@ -24,6 +24,40 @@ _ARTIFACT_PREVIEW_PATH = re.compile(r"^/api/runs/([^/]+)/artifacts/preview$")
 _FAILURE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _ARTIFACT_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _MAX_AGENTCORE_RESPONSE_BYTES = 6_000_000
+_RUN_SUMMARY_FIELDS = {
+    "schema_version",
+    "task_id",
+    "session_id",
+    "case_id",
+    "jira_ticket_id",
+    "repository",
+    "status",
+    "created_at",
+    "updated_at",
+    "draft_pr_url",
+    "artifact_count",
+    "stale",
+}
+_RUN_STATUSES = {
+    "PENDING",
+    "AWAITING_APPROVAL",
+    "INVALID_REQUEST",
+    "UNSUPPORTED_REMEDIATION_TYPE",
+    "NOT_IMPLEMENTED",
+    "HUMAN_ACTION_REQUIRED",
+    "UNSAFE_REMEDIATION",
+    "VALIDATION_FAILED",
+    "DRAFT_PR_PREPARED",
+    "DRAFT_PR_CREATED",
+    "INTERNAL_ERROR",
+    "CLEANUP_FAILED",
+}
+_RUN_NULLABLE_STRING_LIMITS = {
+    "case_id": 200,
+    "jira_ticket_id": 64,
+    "repository": 500,
+    "draft_pr_url": 2_048,
+}
 _DIAGNOSIS_MEDIA_TYPE = "application/vnd.aios.diagnosis-handoff.v1+json"
 _APPROVAL_MEDIA_TYPE = "application/vnd.aios.approval-decision.v1+json"
 _APPROVAL_REQUEST_MEDIA_TYPE = "application/vnd.aios.approval-request.v1+json"
@@ -56,6 +90,17 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 {"schema_version": "1.0", "probe": "openai"},
             ),
             response_kind="probe",
+        )
+    if path == "/api/runs" and method == "GET":
+        return _invoke(
+            str(uuid4()),
+            {
+                "jsonrpc": "2.0",
+                "id": str(uuid4()),
+                "method": "ListTasks",
+                "params": {"pageSize": 20, "includeArtifacts": False},
+            },
+            response_kind="run_list",
         )
     if path == "/api/runs" and method == "POST":
         body = _request_json(event)
@@ -186,6 +231,8 @@ def _invoke(
                 failure_code = _preview_failure_code(parsed)
                 if failure_code is not None:
                     return _json_response(_artifact_failure_status(failure_code), {"error": failure_code})
+        elif response_kind == "run_list":
+            normalized = _normalize_run_list(parsed)
         else:
             normalized = _normalize_run(parsed, session_id)
         if normalized is None:
@@ -435,6 +482,92 @@ def _normalize_run(envelope: dict[str, Any], session_id: str) -> dict[str, Any] 
         "downstream_delivery": delivery,
         "explainability": explainability,
     }
+
+
+def _normalize_run_list(envelope: dict[str, Any]) -> dict[str, Any] | None:
+    result = envelope.get("result")
+    tasks = result.get("tasks") if isinstance(result, dict) else None
+    if not isinstance(tasks, list) or len(tasks) > 20:
+        return None
+    runs: list[dict[str, Any]] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            return None
+        metadata = task.get("metadata")
+        summary = metadata.get("aios_run") if isinstance(metadata, dict) else None
+        if not isinstance(summary, dict) or set(summary) != _RUN_SUMMARY_FIELDS:
+            return None
+        task_id = _canonical_uuid(task.get("id"))
+        summary_task_id = _canonical_uuid(summary.get("task_id"))
+        session_id = _canonical_uuid(summary.get("session_id"))
+        if task_id is None or summary_task_id != task_id or session_id is None:
+            return None
+        if summary.get("schema_version") != "1.0" or summary.get("stale") is not False:
+            return None
+        if any(
+            summary.get(field) is not None
+            and (not isinstance(summary.get(field), str) or len(str(summary[field])) > limit)
+            for field, limit in _RUN_NULLABLE_STRING_LIMITS.items()
+        ):
+            return None
+        status = summary.get("status")
+        if not isinstance(status, str) or status not in _RUN_STATUSES:
+            return None
+        created_at = _normalized_timestamp(summary.get("created_at"))
+        updated_at = _normalized_timestamp(summary.get("updated_at"))
+        artifact_count = summary.get("artifact_count")
+        if (
+            created_at is None
+            or updated_at is None
+            or _timestamp_epoch(updated_at) < _timestamp_epoch(created_at)
+            or not isinstance(artifact_count, (int, float))
+            or isinstance(artifact_count, bool)
+            or int(artifact_count) != artifact_count
+            or artifact_count < 0
+        ):
+            return None
+        runs.append(
+            {
+                "schema_version": "1.0",
+                "task_id": task_id,
+                "session_id": session_id,
+                "case_id": summary.get("case_id"),
+                "jira_ticket_id": summary.get("jira_ticket_id"),
+                "repository": summary.get("repository"),
+                "status": status,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "draft_pr_url": summary.get("draft_pr_url"),
+                "artifact_count": int(artifact_count),
+                "stale": False,
+            }
+        )
+    runs.sort(key=lambda item: (_run_priority(str(item["status"])), -_timestamp_epoch(str(item["updated_at"]))))
+    return {"schema_version": "1.0", "runs": runs}
+
+
+def _normalized_timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _timestamp_epoch(value: str) -> float:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+
+def _run_priority(status: str) -> int:
+    if status == "AWAITING_APPROVAL":
+        return 0
+    if status == "PENDING":
+        return 1
+    return 2
 
 
 def _data_part(parts: object, media_type: str) -> dict[str, Any] | None:

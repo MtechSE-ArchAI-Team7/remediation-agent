@@ -31,6 +31,28 @@ function runView(status: string, extra: Record<string, unknown> = {}) {
   };
 }
 
+function runList(status: string) {
+  return {
+    output: {
+      schema_version: "1.0",
+      runs: [{
+        schema_version: "1.0",
+        task_id: RUN_ID,
+        session_id: RUN_ID,
+        case_id: "CASE-ECOM-AVG-001",
+        jira_ticket_id: "TICKET-111",
+        repository: "MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
+        status,
+        created_at: "2026-09-23T00:00:00Z",
+        updated_at: "2026-09-23T00:01:00Z",
+        draft_pr_url: null,
+        artifact_count: 0,
+        stale: false,
+      }],
+    },
+  };
+}
+
 describe("AIOS remediation console", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
@@ -47,7 +69,9 @@ describe("AIOS remediation console", () => {
   });
 
   it("starts the preloaded handoff and persists the run id", async () => {
-    fetchMock.mockResolvedValue(response(runView("DRAFT_PR_CREATED")));
+    fetchMock
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response(runList("DRAFT_PR_CREATED")));
     render(<App />);
 
     expect(screen.getByRole("tab", { name: "Run Console" })).toHaveAttribute("aria-selected", "true");
@@ -136,15 +160,17 @@ describe("AIOS remediation console", () => {
           }),
         ),
       )
-      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")));
+      .mockResolvedValueOnce(response(runList("AWAITING_APPROVAL")))
+      .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response(runList("DRAFT_PR_CREATED")));
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
     expect(await screen.findAllByText("Review the patch scope")).toHaveLength(1);
     expect(screen.getAllByText("AWAITING APPROVAL").some((item) => item.classList.contains("warning"))).toBe(true);
     fireEvent.click(await screen.findByRole("button", { name: "Approve and continue" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const approvalCall = fetchMock.mock.calls[1];
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
+    const approvalCall = fetchMock.mock.calls[2];
     expect(approvalCall[0]).toBe(`/api/runs/${RUN_ID}/approval`);
     expect(String(approvalCall[1]?.body)).toContain('"reviewer_id":"Arabasta"');
     expect(String(approvalCall[1]?.body)).toContain('"scope_digest":"sha256:abc"');
@@ -432,12 +458,13 @@ describe("AIOS remediation console", () => {
     expect(screen.getByText("Memory cannot authorize paths or tools, replace repository inspection, reuse a patch, or bypass policy and validation.")).toBeInTheDocument();
   });
 
-  it("lists, refreshes, opens, and forgets browser-local recent runs", async () => {
+  it("lists, refreshes, and opens shared public runs", async () => {
     fetchMock
       .mockResolvedValueOnce(response(runView("AWAITING_APPROVAL")))
+      .mockResolvedValueOnce(response(runList("AWAITING_APPROVAL")))
+      .mockResolvedValueOnce(response(runList("AWAITING_APPROVAL")))
       .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
       .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")));
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
@@ -445,27 +472,26 @@ describe("AIOS remediation console", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
 
     expect((await screen.findAllByText("CASE-ECOM-AVG-001")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Runs saved in this browser. Opening a run retrieves its latest runtime state.")).toBeInTheDocument();
+    expect(screen.getByText(/Shared public demo runs from Agent 2/)).toBeInTheDocument();
+    expect(screen.getByText(/Every visitor to this demo can view these runs/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect((await screen.findAllByText("DRAFT PR CREATED")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Run Console" })).toHaveAttribute("aria-selected", "true"));
-    fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Forget" }));
-
-    expect(await screen.findByText("No saved runs. Create a remediation run to add it here.")).toBeInTheDocument();
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("runtime run will not be deleted"));
+    expect(screen.queryByRole("button", { name: "Forget" })).not.toBeInTheDocument();
   });
 
   it("retains the last known run summary when a refresh fails", async () => {
     fetchMock
       .mockResolvedValueOnce(response(runView("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response(runList("DRAFT_PR_CREATED")))
+      .mockResolvedValueOnce(response(runList("DRAFT_PR_CREATED")))
       .mockResolvedValueOnce(response({ error: "AGENTCORE_TIMEOUT" }, 504));
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Create remediation run" }));
     await screen.findAllByText("DRAFT PR CREATED");
     fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
     expect(await screen.findByText("agentcore timeout")).toBeInTheDocument();
     expect(screen.getByText("Last known state")).toBeInTheDocument();
@@ -490,6 +516,7 @@ describe("AIOS remediation console", () => {
           audit_bundle_ref: null,
         },
       })))
+      .mockResolvedValueOnce(response(runList("DRAFT_PR_CREATED")))
       .mockResolvedValueOnce(response({
         output: {
           schema_version: "1.0",

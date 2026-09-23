@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from remediation_agent.api.a2a_contracts import ProviderProbeRequestV1, ProviderProbeResultV1
+from remediation_agent.api.a2a_contracts import (
+    ProviderProbeRequestV1,
+    ProviderProbeResultV1,
+    RemediationRunSummaryV1,
+)
 from remediation_agent.config import Settings
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
@@ -98,6 +102,7 @@ def test_committed_json_schemas_match_models() -> None:
         "explainability-trace-v1.schema.json": ExplainabilityTraceV1.model_json_schema(),
         "provider-probe-request-v1.schema.json": ProviderProbeRequestV1.model_json_schema(),
         "provider-probe-result-v1.schema.json": ProviderProbeResultV1.model_json_schema(),
+        "remediation-run-summary-v1.schema.json": RemediationRunSummaryV1.model_json_schema(),
         "remediation-handoff-v1.schema.json": RemediationHandoffV1.model_json_schema(),
         "remediation-policy.schema.json": PolicyConfig.model_json_schema(),
         "evaluation-suite-v2.schema.json": EvaluationSuiteManifestV2.model_json_schema(),

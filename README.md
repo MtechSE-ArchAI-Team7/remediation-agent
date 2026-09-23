@@ -523,6 +523,12 @@ AgentCore's runtime session ID and A2A context ID remain transport scope; the se
 to the LangGraph `run_id`. Diagnosis, approval, handoff, delivery receipt, provider-probe, and artifact-preview data
 parts use versioned `application/vnd.aios.*.v1+json` media types. Hosted task projections exclude inbound history, are
 redacted and bounded, and are scoped by caller/session beneath `AIOS_A2A_TASK_STORE_PREFIX` in the artifact bucket.
+Valid remediation tasks also update a compact global index beneath the same prefix. A2A `ListTasks` exposes at most
+the requested page of typed `RemediationRunSummaryV1` metadata across sessions, prioritizing approval and active work;
+provider probes, artifact previews, raw history, prompts, source content, and secrets are excluded. The public demo
+gateway uses this index for its shared 20-run queue and deliberately exposes the run/session locators. This is a
+demo-only authorization posture and must not be reused for production. Existing task projections are not backfilled;
+only remediation runs created or updated by the new runtime appear.
 Artifact preview is outside the workflow: it first resolves the completed source task through that scoped store, then
 reads only the matching manifest reference from `runs/*`, verifies its digest, reapplies redaction, and returns bounded
 UTF-8 content without invoking the model or altering checkpoint state.
@@ -647,5 +653,6 @@ a suitable policy before using another repository. API caller authentication and
 implemented. The public demo can display all redacted artifacts—including patches, audit records, and model-call
 metadata—to a holder of the high-entropy run/session locator; redaction is defense in depth rather than authorization.
 Docker daemon trust, mutable image provenance, local artifact durability, locator disclosure, and live-provider behavior
-remain residual risks that deployments must address. Shared cross-user run history requires authenticated server-side
-ownership and is not provided by the browser-local recent-run list.
+remain residual risks that deployments must address. The shared public run index intentionally has no per-user
+ownership or reviewer authorization for the demo. A production queue requires authenticated server-side ownership,
+authorization, and audit-grade reviewer identity.

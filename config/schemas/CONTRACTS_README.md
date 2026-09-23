@@ -20,6 +20,7 @@ The machine-readable JSON Schemas are authoritative:
 - `config/schemas/delivery-receipt-v1.schema.json` — supplementary direct-delivery evidence.
 - `config/schemas/explainability-trace-v1.schema.json` — supplementary bounded decision and tool-call trace.
 - `config/schemas/provider-probe-request-v1.schema.json` and `config/schemas/provider-probe-result-v1.schema.json` — bounded A2A readiness probe.
+- `config/schemas/remediation-run-summary-v1.schema.json` — compact public-demo run locator and presentation summary.
 
 The source models are `DiagnosisHandoffV1` and `RemediationHandoffV1` in
 `src/remediation_agent/domain/models.py`. Agent 3 validates all contract objects with Pydantic and rejects unknown

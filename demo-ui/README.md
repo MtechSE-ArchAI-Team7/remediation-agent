@@ -5,8 +5,9 @@ serves the compiled application and signs calls to the existing AgentCore runtim
 Cognito, API Gateway, database, or user-management layer.
 
 The console is organized into four top-level views. **Run Console** contains the diagnosis handoff, workflow,
-approval, explainability, and results. **Runs** keeps a versioned, browser-local list of at most 20 known runs and
-refreshes only when the operator requests it; it is not shared history. **Agent** contains the deployed
+approval, explainability, and results. **Runs** displays a shared, S3-backed list of at most 20 remediation runs from
+Agent 2 and this console. The queue is intentionally public for the low-cost demo: every visitor can view runs and
+submit approval decisions. It is unsuitable for production. **Agent** contains the deployed
 region/runtime/model configuration and generated capability catalogue. **System Status** distinguishes page-serving
 and configured dependencies from the only live dependency check: the operator-triggered OpenAI provider probe.
 Switching views never starts a run or a connectivity check.
@@ -17,6 +18,7 @@ Switching views never starts a run or a connectivity check.
 |---|---|
 | `GET /api/health` | Check only the Lambda gateway |
 | `POST /api/probe` | Run one explicit OpenAI provider probe |
+| `GET /api/runs` | List the latest 20 shared `RemediationRunSummaryV1` records through A2A `ListTasks` |
 | `POST /api/runs` | Start with `{"run_id":"<uuid>","input":<DiagnosisHandoffV1>}` |
 | `GET /api/runs/<task-uuid>?session_id=<session-uuid>` | Poll the A2A task with `GetTask` |
 | `POST /api/runs/<task-uuid>/approval` | Submit a digest-bound approval with the stored `session_id` |
@@ -24,8 +26,10 @@ Switching views never starts a run or a connectivity check.
 
 The `POST /api/runs` route is also the minimal Agent 2 integration point. A caller generates a canonical UUID for the
 AgentCore session/A2A context and submits its existing `DiagnosisHandoffV1` as a structured A2A data part. The response
-contains separate `session_id` and server-generated `task_id` values. The browser persists both, sends approvals with
-A2A `SendMessage`, and polls with `GetTask`. The gateway translates task states/artifacts back into the existing
+contains separate `session_id` and server-generated `task_id` values. The runtime publishes a compact redacted summary
+to a global demo index while retaining the complete task projection under its session scope. The browser keeps only
+the last-opened locator for convenience, sends approvals with A2A `SendMessage`, and polls with `GetTask`. The gateway
+translates task states/artifacts back into the existing
 `{"output":<RemediationRunView>}` UI shape. Rejected and failed tasks may include a bounded `failure_code` copied from
 the runtime's typed `text/plain` status part; malformed or free-form status text is not exposed.
 
@@ -39,10 +43,11 @@ caller/tenant/session-scoped task store, rejects browser-supplied object paths, 
 reapplies redaction, limits objects to 1 MiB, and returns at most 256 KiB of UTF-8 content. Older runtimes without a
 trace remain compatible and simply omit the explainability section.
 
-The recent-run repository is asynchronous and source-agnostic even though the initial adapter uses versioned
-`localStorage`. A future authenticated shared-history API can replace that adapter; the current public demo must not
-present its browser-local entries as global history. Artifact bodies are fetched only while the viewer is open and are
-never persisted by the browser.
+The run index stores only the task/session locator, case and ticket identifiers, repository label, status, timestamps,
+draft-PR URL, and artifact count. It excludes inbound history, prompts, repository content, provider probes, artifact
+preview tasks, and secrets. Artifact bodies are fetched only while the viewer is open and are never persisted by the
+browser. Existing tasks are not backfilled, so the demo must create a fresh run after the runtime release. A production
+deployment must replace this intentionally public queue with authenticated, authorized access.
 
 The four-lane tool boundary is generated from the Python operational catalogue and separates the configured model,
 four model-callable inspection/control tools, deterministic policy/approval boundary, and thirteen workflow-only

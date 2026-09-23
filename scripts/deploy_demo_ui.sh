@@ -89,7 +89,7 @@ rollback() {
 }
 
 smoke_checks() {
-  local function_url base_url health_file index_file asset_path probe_file
+  local function_url base_url health_file index_file asset_path runs_file probe_file
   function_url="$(
     aws lambda get-function-url-config \
       --function-name "$function_name" \
@@ -100,6 +100,7 @@ smoke_checks() {
   base_url="${function_url%/}"
   health_file="${work_dir}/health.json"
   index_file="${work_dir}/index.html"
+  runs_file="${work_dir}/runs.json"
   probe_file="${work_dir}/probe.json"
 
   curl --fail-with-body --silent --show-error "${base_url}/api/health" --output "$health_file" || return 1
@@ -113,6 +114,9 @@ smoke_checks() {
     return 1
   fi
   curl --fail --silent --show-error --head "${base_url}${asset_path}" >/dev/null || return 1
+
+  curl --fail-with-body --silent --show-error "${base_url}/api/runs" --output "$runs_file" || return 1
+  "$python_executable" -c 'import json,sys; data=json.load(open(sys.argv[1])); output=data["output"]; assert output["schema_version"] == "1.0"; assert isinstance(output["runs"], list); assert len(output["runs"]) <= 20' "$runs_file" || return 1
 
   curl --fail-with-body --silent --show-error \
     --max-time 890 \

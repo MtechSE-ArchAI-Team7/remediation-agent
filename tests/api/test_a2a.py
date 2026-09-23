@@ -257,6 +257,20 @@ async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> No
             assert started_task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
             assert started_task["status"]["message"]["parts"][0]["mediaType"] == APPROVAL_REQUEST_MEDIA_TYPE
             assert started_task["status"]["message"]["parts"][1]["mediaType"] == EXPLAINABILITY_TRACE_MEDIA_TYPE
+            assert started_task["metadata"]["aios_run"] == {
+                "schema_version": "1.0",
+                "task_id": task_id,
+                "session_id": _SESSION_ID,
+                "case_id": diagnosis_handoff().case_id,
+                "jira_ticket_id": diagnosis_handoff().jira_ticket_id,
+                "repository": "MtechSE-ArchAI-Team7/example-service",
+                "status": "AWAITING_APPROVAL",
+                "created_at": started_task["metadata"]["aios_run"]["created_at"],
+                "updated_at": started_task["metadata"]["aios_run"]["updated_at"],
+                "draft_pr_url": None,
+                "artifact_count": 0.0,
+                "stale": False,
+            }
 
             approved = await client.post(
                 "/",
@@ -273,6 +287,9 @@ async def test_diagnosis_and_approval_share_task_but_not_runtime_session() -> No
     assert service.starts == [(diagnosis_handoff(), task_id)]
     assert service.approvals == [(task_id, _decision())]
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert completed["metadata"]["aios_run"]["status"] == "DRAFT_PR_PREPARED"
+    assert completed["metadata"]["aios_run"]["artifact_count"] == 1.0
+    assert completed["metadata"]["aios_run"]["created_at"] == started_task["metadata"]["aios_run"]["created_at"]
     assert completed["artifacts"][0]["parts"][0]["mediaType"] == REMEDIATION_HANDOFF_MEDIA_TYPE
     assert completed["artifacts"][0]["parts"][1]["mediaType"] == EXPLAINABILITY_TRACE_MEDIA_TYPE
     assert fetched.json()["result"]["id"] == task_id
