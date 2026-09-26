@@ -13,7 +13,7 @@ from remediation_agent.ports.protocols import (
 )
 from remediation_agent.tools.catalog import OPERATIONAL_TOOL_CATALOG, operational_tool_counts
 from remediation_agent.tools.inspection import FINISH_INSPECTION_TOOL_NAME
-from scripts.export_tool_catalog import render_tool_catalog_json, render_tool_catalog_markdown
+from scripts.export_tool_catalog import render_tool_catalog_markdown
 
 _WORKFLOW_BOUNDARIES: dict[str, type[object]] = {
     "RepositoryWorkspacePort": RepositoryWorkspacePort,
@@ -61,8 +61,3 @@ def test_catalog_contains_seventeen_unique_real_operations() -> None:
 def test_committed_tool_catalog_document_matches_typed_catalogue() -> None:
     document = Path(__file__).parents[2] / "docs" / "TOOL_CATALOG.md"
     assert document.read_text(encoding="utf-8") == render_tool_catalog_markdown()
-
-
-def test_committed_tool_catalog_json_matches_typed_catalogue() -> None:
-    document = Path(__file__).parents[2] / "demo-ui" / "src" / "generated" / "tool-catalog.json"
-    assert document.read_text(encoding="utf-8") == render_tool_catalog_json()

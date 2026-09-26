@@ -40,10 +40,3 @@ pip-audit.json
 
 # Docker
 *.tar
-
-# Presentation UI and Lambda package output
-demo-ui/node_modules/
-demo-ui/backend/site/
-demo-ui/*.tsbuildinfo
-demo-ui/.lambda-build/
-demo-ui/*.zip

@@ -3,7 +3,7 @@
   "evaluation_id": "division-by-zero-ecommerce-v1",
   "scenario_id": "CASE-ECOM-AVG-001",
   "title": "Division-by-zero e-commerce remediation",
-  "handoff_path": "demo-ui/src/scenarios/division-by-zero.json",
+  "handoff_path": "config/evaluation/handoffs/division-by-zero-demo.json",
   "policy_path": "config/policies/agentcore-demo.json",
   "expected_terminal_status": "DRAFT_PR_PREPARED",
   "required_validation_tasks": ["javascript_syntax", "average_regression"],

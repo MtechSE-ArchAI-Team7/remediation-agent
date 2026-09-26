@@ -63,7 +63,7 @@ def test_diagnosis_handoff_rejects_invalid_jira_ticket_id(jira_ticket_id: str) -
 
 
 def test_ecommerce_demo_handoff_is_pinned_to_the_deployed_commit() -> None:
-    path = Path(__file__).parents[2] / "demo-ui" / "src" / "scenarios" / "division-by-zero.json"
+    path = Path(__file__).parents[2] / "config" / "evaluation" / "handoffs" / "division-by-zero-demo.json"
 
     handoff = DiagnosisHandoffV1.model_validate_json(path.read_text(encoding="utf-8"))
 

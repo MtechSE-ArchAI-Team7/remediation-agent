@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted evaluate-judge evaluate-memory evaluate-memory-hosted evaluate-memory-judge memory-seed assessment-report build docker-build agentcore-docker-build sandbox-build demo-ui-test demo-ui-build demo-ui-deploy db-up db-init db-down
+.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted evaluate-judge evaluate-memory evaluate-memory-hosted evaluate-memory-judge memory-seed assessment-report build docker-build agentcore-docker-build sandbox-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -88,15 +88,6 @@ agentcore-docker-build:
 
 sandbox-build:
 	docker build -f docker/sandbox.Dockerfile -t aios-remediation-sandbox:local .
-
-demo-ui-test:
-	cd demo-ui && npm ci && npm run typecheck && npm test
-
-demo-ui-build:
-	cd demo-ui && npm ci && npm run build
-
-demo-ui-deploy: demo-ui-test demo-ui-build
-	bash scripts/deploy_demo_ui.sh
 
 db-up:
 	docker compose up -d postgres

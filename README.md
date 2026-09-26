@@ -5,9 +5,10 @@ This service implements the **Resolution/Remediation Agent**, for **AIOS: Agenti
 The implementation changes only disposable repository workspaces. It cannot merge a pull request, deploy, mutate production, or perform identity and
 privileged-access operations. The HTTP API does not implement caller authentication; deployment and network controls must restrict access to authorized operators.
 
-The presentation-only [`demo-ui`](demo-ui/README.md) provides a React dashboard and public Lambda Function URL gateway
-for manually submitting the Agent 2 handoff to the hosted AgentCore runtime. It intentionally has no end-user
-authentication and must not be treated as a production interface.
+The presentation-only Agent 3 dashboard and public Lambda Function URL gateway live in the
+[`frontend`](https://github.com/MtechSE-ArchAI-Team7/frontend) repository. They manually submit the Agent 2 handoff to
+the hosted AgentCore runtime, intentionally have no end-user authentication, and must not be treated as a production
+interface.
 
 Assessment-ready results and reproduction commands are collected in
 [`docs/ASSESSMENT_EVIDENCE.md`](docs/ASSESSMENT_EVIDENCE.md). The report keeps deterministic evidence separate from
@@ -89,9 +90,8 @@ The versioned operational catalogue contains **17 implemented tools**: four mode
 and thirteen deterministic workflow-only tools. `GET /v1/tools` exposes the same strict metadata used to generate
 [`docs/TOOL_CATALOG.md`](docs/TOOL_CATALOG.md), including each tool's typed boundary, authority, availability gate,
 description, model-visible argument names, and safety controls. Catalogue entries are operations of this one agent, not
-agents or subagents. The hosted-tool migration advances the catalogue response to version `1.1`.
-The same exporter also generates `demo-ui/src/generated/tool-catalog.json`; the React boundary panel therefore uses
-the identical identifiers, modes, effects, availability gates, and controls rather than a separately maintained list.
+agents or subagents. The hosted-tool migration advances the catalogue response to version `1.1`. The Agent 3 frontend
+keeps a versioned presentation snapshot of this response and updates it alongside catalogue changes.
 
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
@@ -194,7 +194,6 @@ remediation-agent/
 ├── Dockerfile                      # API service image
 ├── docker/
 │   └── sandbox.Dockerfile          # Separate restricted validation image
-├── demo-ui/                         # React presentation UI and standalone Lambda gateway
 ├── docs/
 │   └── TOOL_CATALOG.md             # Generated 17-tool catalogue and authority boundary
 ├── config/

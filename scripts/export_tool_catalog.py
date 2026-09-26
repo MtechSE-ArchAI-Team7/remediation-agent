@@ -84,7 +84,7 @@ def render_tool_catalog_markdown() -> str:
 
 
 def render_tool_catalog_json() -> str:
-    """Render the same typed catalogue for the presentation UI."""
+    """Render the typed catalogue as the JSON API representation."""
 
     model_count, workflow_count = operational_tool_counts()
     payload = {
@@ -104,11 +104,8 @@ def _escape(value: str) -> str:
 def main() -> None:
     root = Path(__file__).parents[1]
     markdown_output = root / "docs" / "TOOL_CATALOG.md"
-    json_output = root / "demo-ui" / "src" / "generated" / "tool-catalog.json"
     markdown_output.parent.mkdir(parents=True, exist_ok=True)
-    json_output.parent.mkdir(parents=True, exist_ok=True)
     markdown_output.write_text(render_tool_catalog_markdown(), encoding="utf-8")
-    json_output.write_text(render_tool_catalog_json(), encoding="utf-8")
 
 
 if __name__ == "__main__":
