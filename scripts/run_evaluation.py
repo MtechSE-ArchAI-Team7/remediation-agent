@@ -34,6 +34,7 @@ from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, 
 from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
+from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import MemoryRetrievalStatus, ModelOperation
@@ -165,6 +166,7 @@ async def _run_deterministic_case(
         pr_provider=FakePullRequestProvider(),
         artifact_store=MemoryArtifactStore(),
         audit_sink=MemoryAuditSink(),
+        release_provenance=LocalReleaseProvenance(),
         prompt_version="assessment-deterministic-v2",
         github_writes_enabled=False,
         github_repository=None,
@@ -232,6 +234,7 @@ async def run_hosted(suite_path: Path, output: Path, trials_per_case: int | None
             pr_provider=DraftPullRequestProvider(token=None, writes_enabled=False),
             artifact_store=LocalArtifactStore(run_root / "evidence"),
             audit_sink=JsonlAuditSink(run_root / "evidence"),
+            release_provenance=LocalReleaseProvenance(),
             prompt_version=settings.prompt_version,
             github_writes_enabled=False,
             github_repository=None,
@@ -340,6 +343,7 @@ async def _run_memory_deterministic_trial(
         pr_provider=FakePullRequestProvider(),
         artifact_store=MemoryArtifactStore(),
         audit_sink=MemoryAuditSink(),
+        release_provenance=LocalReleaseProvenance(),
         prompt_version="assessment-memory-deterministic-v1",
         github_writes_enabled=False,
         github_repository=None,
@@ -427,6 +431,7 @@ async def run_memory_hosted(benchmark_path: Path, output: Path) -> bool:
                         pr_provider=DraftPullRequestProvider(token=None, writes_enabled=False),
                         artifact_store=LocalArtifactStore(run_root / "evidence"),
                         audit_sink=JsonlAuditSink(run_root / "evidence"),
+                        release_provenance=LocalReleaseProvenance(),
                         prompt_version=settings.prompt_version,
                         github_writes_enabled=False,
                         github_repository=None,

@@ -19,6 +19,7 @@ from remediation_agent.adapters.fakes import (
     MemoryArtifactStore,
     MemoryAuditSink,
 )
+from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.config import CheckpointSettings
 from remediation_agent.domain.enums import ApprovalStatus, FinalStatus, PolicyDecision, RiskLevel
 from remediation_agent.domain.models import ApprovalDecisionV1
@@ -44,6 +45,7 @@ def _nodes() -> WorkflowNodes:
         pr_provider=FakePullRequestProvider(),
         artifact_store=MemoryArtifactStore(),
         audit_sink=MemoryAuditSink(),
+        release_provenance=LocalReleaseProvenance(),
         prompt_version="postgres-test-v1",
     )
 

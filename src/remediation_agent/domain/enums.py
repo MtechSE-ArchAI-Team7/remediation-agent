@@ -88,6 +88,18 @@ class ModelOperation(StrEnum):
     EVALUATION_JUDGE = "EVALUATION_JUDGE"
 
 
+class ModelCallOutcome(StrEnum):
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class ReleaseProvenanceStatus(StrEnum):
+    LOCAL = "LOCAL"
+    VERIFIED = "VERIFIED"
+    UNAVAILABLE = "UNAVAILABLE"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
 class InspectionToolStatus(StrEnum):
     SUCCEEDED = "SUCCEEDED"
     DENIED = "DENIED"

@@ -32,7 +32,7 @@ from remediation_agent.api.a2a_contracts import (
 from remediation_agent.api.a2a_executor import RemediationA2AExecutor
 from remediation_agent.api.agentcore import create_agentcore_app
 from remediation_agent.config import Settings
-from remediation_agent.ports.protocols import ArtifactReader, StructuredModel
+from remediation_agent.ports.protocols import ArtifactReader, ReleaseProvenancePort, StructuredModel
 from remediation_agent.service import RemediationService
 
 
@@ -130,6 +130,7 @@ def create_a2a_app(
     probe_provider: str | None = None,
     task_store: TaskStore | None = None,
     artifact_reader: ArtifactReader | None = None,
+    release_provenance: ReleaseProvenancePort | None = None,
     runtime_url: str | None = None,
 ) -> Starlette:
     """Compose the hosted A2A application with injectable offline boundaries."""
@@ -140,6 +141,7 @@ def create_a2a_app(
         model=model,
         probe_provider=probe_provider,
         artifact_reader=artifact_reader,
+        release_provenance=release_provenance,
         task_store=store,
     )
     context_builder = _AgentCoreV1CallContextBuilder()
@@ -161,6 +163,7 @@ def create_a2a_app(
         service,
         probe_provider=cast(Any, probe_provider),
         artifact_reader=artifact_reader,
+        release_provenance=release_provenance,
     )
     dependency_lifespan = dependencies.router.lifespan_context
 
@@ -172,11 +175,16 @@ def create_a2a_app(
             configured_model = cast(StructuredModel | None, getattr(dependencies.state, "structured_model", None))
             configured_provider = cast(str | None, getattr(dependencies.state, "probe_provider", None))
             configured_reader = cast(ArtifactReader | None, getattr(dependencies.state, "artifact_reader", None))
+            configured_provenance = cast(
+                ReleaseProvenancePort | None,
+                getattr(dependencies.state, "release_provenance", None),
+            )
             executor.configure(
                 runtime,
                 model=configured_model,
                 probe_provider=configured_provider,
                 artifact_reader=configured_reader,
+                release_provenance=configured_provenance,
             )
             if task_store is None and service is None:
                 settings = Settings()  # type: ignore[call-arg]

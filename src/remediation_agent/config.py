@@ -99,6 +99,22 @@ class Settings(BaseSettings):
     agent4_region: str | None = None
     agent4_qualifier: str = "DEFAULT"
     agent4_timeout_seconds: float = Field(default=30.0, gt=0, le=120.0)
+    release_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    release_source_sha: str | None = None
+    release_image_digest: str | None = None
+    agentcore_runtime_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    release_expected_account_id: str = Field(default="734849394833", pattern=r"^[0-9]{12}$")
+    release_max_runtime_versions: int = Field(default=100, ge=1, le=500)
 
     @field_validator(
         "llm_model",
@@ -122,6 +138,10 @@ class Settings(BaseSettings):
         "artifact_bucket",
         "agent4_runtime_arn",
         "agent4_region",
+        "release_id",
+        "release_source_sha",
+        "release_image_digest",
+        "agentcore_runtime_id",
         mode="before",
     )
     @classmethod
@@ -136,6 +156,20 @@ class Settings(BaseSettings):
     def sandbox_image_is_a_single_reference(cls, value: str) -> str:
         if not value or value.startswith("-") or any(character.isspace() for character in value):
             raise ValueError("AIOS_SANDBOX_IMAGE must be one container image reference")
+        return value
+
+    @field_validator("release_source_sha")
+    @classmethod
+    def release_source_sha_is_canonical(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("AIOS_RELEASE_SOURCE_SHA must be a lowercase 40-character Git SHA")
+        return value
+
+    @field_validator("release_image_digest")
+    @classmethod
+    def release_image_digest_is_canonical(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+            raise ValueError("AIOS_RELEASE_IMAGE_DIGEST must be a canonical sha256 digest")
         return value
 
     @field_validator("github_repository")
@@ -174,6 +208,14 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_OPENAI_GATEWAY_ARN requires AIOS_LLM_PROVIDER=openai")
         if self.llm_provider == "deepseek" and self.deepseek_api_key is None:
             raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek")
+        release_values = (
+            self.release_id,
+            self.release_source_sha,
+            self.release_image_digest,
+            self.agentcore_runtime_id,
+        )
+        if any(value is not None for value in release_values) and any(value is None for value in release_values):
+            raise ValueError("all AgentCore release provenance settings must be configured together")
         if self.github_writes_enabled and self.github_token is None and self.runtime_secret_arn is None:
             raise ValueError("AIOS_GITHUB_TOKEN is required when GitHub writes are enabled")
         if self.github_writes_enabled and self.github_repository is None:
@@ -285,3 +327,18 @@ class Settings(BaseSettings):
             cast(str, self.runtime_secret_arn),
             cast(str, self.artifact_bucket),
         )
+
+    def require_agentcore_release_configuration(self) -> tuple[str, str, str, str, str]:
+        """Return immutable release identity required by hosted provenance checks."""
+
+        values = (
+            ("AIOS_RELEASE_ID", self.release_id),
+            ("AIOS_RELEASE_SOURCE_SHA", self.release_source_sha),
+            ("AIOS_RELEASE_IMAGE_DIGEST", self.release_image_digest),
+            ("AIOS_AGENTCORE_RUNTIME_ID", self.agentcore_runtime_id),
+            ("AIOS_AWS_REGION", self.aws_region),
+        )
+        missing = [name for name, value in values if value is None]
+        if missing:
+            raise ValueError(f"AgentCore release provenance is incomplete: {', '.join(missing)}")
+        return cast(tuple[str, str, str, str, str], tuple(value for _, value in values))

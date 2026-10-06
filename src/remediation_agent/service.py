@@ -91,6 +91,8 @@ class RemediationService:
         self._validate_run_id(run_id)
         snapshot = await self._snapshot(run_id)
         state = cast(RemediationState, snapshot.values)
+        if "release_provenance" not in state:
+            raise ApprovalConflictError("REVALIDATION_REQUIRED")
         redacted_decision = ApprovalDecisionV1.model_validate(self._redact_data(decision.model_dump(mode="python")))
         request = self._pending_approval(state, snapshot)
         if request is None:

@@ -14,12 +14,15 @@ from remediation_agent.api.a2a_contracts import (
     RemediationRunSummaryV1,
 )
 from remediation_agent.config import Settings
+from remediation_agent.domain.enums import ModelCallOutcome
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
     ExplainabilityTraceV1,
+    ModelCallRecord,
+    ReleaseProvenanceV1,
     RemediationHandoffV1,
 )
 from remediation_agent.evaluation import (
@@ -106,9 +109,28 @@ def test_handoff_json_schemas_expose_fixed_version() -> None:
     assert remediation_schema["properties"]["schema_version"]["const"] == "1.0"
 
 
+def test_legacy_successful_model_call_record_remains_readable() -> None:
+    record = ModelCallRecord.model_validate(
+        {
+            "operation": "PLANNING",
+            "provider": "openai",
+            "model": "gateway/model",
+            "prompt_version": "remediation-v1",
+            "duration_ms": 12,
+            "input_digest": "sha256:input",
+            "output_digest": "sha256:output",
+        }
+    )
+
+    assert record.outcome is ModelCallOutcome.SUCCEEDED
+    assert record.error_code is None
+    assert record.retryable is False
+
+
 def test_committed_json_schemas_match_models() -> None:
     schema_root = Path(__file__).parents[2] / "config" / "schemas"
     expected = {
+        "release-provenance-v1.schema.json": ReleaseProvenanceV1.model_json_schema(),
         "diagnosis-handoff-v1.schema.json": DiagnosisHandoffV1.model_json_schema(),
         "approval-decision-v1.schema.json": ApprovalDecisionV1.model_json_schema(),
         "approval-request-v1.schema.json": ApprovalRequest.model_json_schema(),
@@ -154,6 +176,35 @@ def test_settings_treat_blank_optional_values_as_unset(tmp_path: Path) -> None:
     assert settings.github_repository is None
     assert settings.openai_api_key is None
     assert settings.postgres_dsn is None
+
+
+def test_release_provenance_settings_are_all_or_none(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="all AgentCore release provenance settings"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="fake",
+            release_id="release-1",
+            _env_file=None,
+        )  # type: ignore[call-arg]
+
+    settings = Settings(
+        policy_file=tmp_path / "policy.json",
+        llm_provider="fake",
+        aws_region="ap-southeast-1",
+        release_id="release-1",
+        release_source_sha="a" * 40,
+        release_image_digest="sha256:" + "b" * 64,
+        agentcore_runtime_id="remediation_agent-2425SXH9D3",
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    assert settings.require_agentcore_release_configuration() == (
+        "release-1",
+        "a" * 40,
+        "sha256:" + "b" * 64,
+        "remediation_agent-2425SXH9D3",
+        "ap-southeast-1",
+    )
 
 
 def test_incident_memory_enablement_requires_complete_dedicated_configuration(tmp_path: Path) -> None:

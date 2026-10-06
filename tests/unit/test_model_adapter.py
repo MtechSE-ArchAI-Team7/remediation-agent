@@ -14,10 +14,11 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, SecretStr
 
 from remediation_agent.adapters.models import ProviderStructuredModel, build_structured_model
+from remediation_agent.api.a2a_contracts import ProviderProbeModelResult
 from remediation_agent.config import Settings
-from remediation_agent.domain.enums import ModelOperation
-from remediation_agent.domain.models import InspectionPlan, PatchCandidate
-from remediation_agent.ports.models import ModelRequest
+from remediation_agent.domain.enums import ModelOperation, PolicyDecision, RiskLevel
+from remediation_agent.domain.models import InspectionPlan, PatchCandidate, RemediationPlan, RiskAssessment
+from remediation_agent.ports.models import ModelRequest, StructuredModelFailure
 from remediation_agent.tools import finish_inspection
 
 _OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
@@ -42,9 +43,13 @@ class _ChatModel:
     def __init__(self, responses: list[object]) -> None:
         self.responses = deque(responses)
         self.inputs: list[object] = []
+        self.methods: list[str | None] = []
 
-    def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
+    def with_structured_output(
+        self, schema: type[BaseModel], *, include_raw: bool, method: str | None = None
+    ) -> _Runnable:
         _ = schema
+        self.methods.append(method)
         assert include_raw
         return _Runnable(self.responses, self.inputs)
 
@@ -78,6 +83,166 @@ async def test_schema_failure_receives_one_bounded_retry() -> None:
     assert generation.value.paths_to_read == ["src/app.py"]
     assert generation.record.provider == "fake-chat"
     assert generation.record.input_digest.startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    ("operation", "output_schema", "response"),
+    [
+        (
+            ModelOperation.PLANNING,
+            RemediationPlan,
+            {
+                "summary": "Bounded plan.",
+                "steps": ["Patch the diagnosed behavior."],
+                "target_paths": ["src/app.py"],
+                "proposed_validation_tasks": ["unit_tests"],
+                "rollback_strategy": "Revert the patch.",
+                "evidence_ids": ["evidence-1"],
+            },
+        ),
+        (
+            ModelOperation.RISK,
+            RiskAssessment,
+            {
+                "level": RiskLevel.LOW,
+                "decision": PolicyDecision.ALLOW,
+                "rationale": "Bounded change.",
+            },
+        ),
+        (
+            ModelOperation.PATCH,
+            PatchCandidate,
+            {
+                "unified_diff": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n",
+                "rationale": "Bounded patch.",
+            },
+        ),
+        (
+            ModelOperation.REVISION,
+            PatchCandidate,
+            {
+                "unified_diff": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+revised\n",
+                "rationale": "Bounded revision.",
+            },
+        ),
+        (ModelOperation.AGENTCORE_SMOKE, ProviderProbeModelResult, {"status": "ok"}),
+    ],
+)
+async def test_openai_structured_stages_use_function_calling_without_fallback(
+    operation: ModelOperation,
+    output_schema: type[BaseModel],
+    response: object,
+) -> None:
+    chat_model = _ChatModel([response])
+    model = ProviderStructuredModel(
+        chat_model,
+        provider="openai",
+        model="gateway/model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    await model.generate(
+        ModelRequest(
+            operation=operation,
+            prompt_version="test-v1",
+            system_instruction="Return the requested schema.",
+            payload={},
+        ),
+        output_schema,
+    )
+
+    assert chat_model.methods == ["function_calling"]
+
+
+async def test_transient_provider_connection_failure_receives_bounded_retry() -> None:
+    class APIConnectionError(Exception):
+        pass
+
+    chat_model = _ChatModel(
+        [
+            APIConnectionError("temporary connection failure"),
+            {"paths_to_read": ["src/app.py"], "search_queries": [], "rationale": "Bounded read."},
+        ]
+    )
+    model = ProviderStructuredModel(
+        chat_model,
+        provider="openai",
+        model="gateway/model",
+        timeout_seconds=1,
+        retries=1,
+    )
+
+    generation = await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PLANNING,
+            prompt_version="test-v1",
+            system_instruction="Return a plan.",
+            payload={},
+        ),
+        InspectionPlan,
+    )
+
+    assert generation.value.paths_to_read == ["src/app.py"]
+    assert chat_model.methods == ["function_calling", "function_calling"]
+
+
+@pytest.mark.parametrize("provider", ["bedrock", "deepseek"])
+async def test_non_openai_structured_output_keeps_provider_default(provider: str) -> None:
+    chat_model = _ChatModel([{"paths_to_read": ["src/app.py"], "search_queries": [], "rationale": "Bounded read."}])
+    model = ProviderStructuredModel(
+        chat_model,
+        provider=provider,
+        model="fixture-model",
+        timeout_seconds=1,
+        retries=0,
+    )
+
+    await model.generate(
+        ModelRequest(
+            operation=ModelOperation.PLANNING,
+            prompt_version="test-v1",
+            system_instruction="Return a plan.",
+            payload={},
+        ),
+        InspectionPlan,
+    )
+
+    assert chat_model.methods == [None]
+
+
+async def test_invalid_json_schema_failure_is_redacted_recorded_and_non_retryable() -> None:
+    class BadRequestError(Exception):
+        code = "invalid_json_schema"
+        status_code = 400
+        param = "text.format.schema"
+
+    model = ProviderStructuredModel(
+        _ChatModel([BadRequestError("secret provider body")]),
+        provider="openai",
+        model="gateway/model",
+        timeout_seconds=1,
+        retries=2,
+    )
+
+    with pytest.raises(StructuredModelFailure) as failure:
+        await model.generate(
+            ModelRequest(
+                operation=ModelOperation.PLANNING,
+                prompt_version="test-v1",
+                system_instruction="Return a plan.",
+                payload={},
+            ),
+            InspectionPlan,
+        )
+
+    record = failure.value.record
+    assert record.outcome.value == "FAILED"
+    assert record.error_code == "INVALID_JSON_SCHEMA"
+    assert record.http_status == 400
+    assert record.error_parameter == "text.format.schema"
+    assert record.retryable is False
+    assert "secret provider body" not in str(failure.value)
 
 
 async def test_provider_reasoning_summary_is_redacted_and_recorded() -> None:
@@ -493,8 +658,10 @@ def test_bedrock_converse_adapter_uses_current_constructor(
         def __init__(self, **kwargs: object) -> None:
             captured.update(kwargs)
 
-        def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
-            _ = schema, include_raw
+        def with_structured_output(
+            self, schema: type[BaseModel], *, include_raw: bool, method: str | None = None
+        ) -> _Runnable:
+            _ = schema, include_raw, method
             return _Runnable(deque())
 
     monkeypatch.setattr(langchain_aws, "ChatBedrockConverse", FakeBedrock)
@@ -521,8 +688,10 @@ def test_gpt_5_6_terra_uses_private_responses_configuration(
         def __init__(self, **kwargs: object) -> None:
             captured.update(kwargs)
 
-        def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
-            _ = schema, include_raw
+        def with_structured_output(
+            self, schema: type[BaseModel], *, include_raw: bool, method: str | None = None
+        ) -> _Runnable:
+            _ = schema, include_raw, method
             return _Runnable(deque())
 
     monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeOpenAI)
@@ -563,8 +732,10 @@ async def test_qualified_gpt_5_6_gateway_model_retains_responses_capabilities(
         def __init__(self, **kwargs: object) -> None:
             captured.update(kwargs)
 
-        def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable:
-            _ = schema, include_raw
+        def with_structured_output(
+            self, schema: type[BaseModel], *, include_raw: bool, method: str | None = None
+        ) -> _Runnable:
+            _ = schema, include_raw, method
             return _Runnable(deque())
 
     monkeypatch.setattr(langchain_openai, "ChatOpenAI", FakeOpenAI)

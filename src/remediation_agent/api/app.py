@@ -16,6 +16,7 @@ from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, 
 from remediation_agent.adapters.mcp import AgentCoreGatewayInspectionTools, GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
+from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
 from remediation_agent.api.models import (
@@ -110,6 +111,7 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
                     pr_provider=pr_provider,
                     artifact_store=artifact_store,
                     audit_sink=audit_sink,
+                    release_provenance=LocalReleaseProvenance(),
                     prompt_version=settings.prompt_version,
                     github_writes_enabled=settings.github_writes_enabled,
                     github_repository=settings.github_repository,

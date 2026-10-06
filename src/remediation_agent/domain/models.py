@@ -15,11 +15,13 @@ from remediation_agent.domain.enums import (
     MemoryAdmissionType,
     MemoryRetrievalStatus,
     MemoryWriteStatus,
+    ModelCallOutcome,
     OperationalToolAvailability,
     OperationalToolCategory,
     OperationalToolEffect,
     OperationalToolExecutionMode,
     PolicyDecision,
+    ReleaseProvenanceStatus,
     RemediationType,
     RepositoryProvider,
     RiskLevel,
@@ -436,6 +438,63 @@ class ModelCallRecord(StrictModel):
     output_tokens: int | None = Field(default=None, ge=0)
     refused: bool = False
     reasoning_summary: str | None = Field(default=None, max_length=4_000)
+    outcome: ModelCallOutcome = ModelCallOutcome.SUCCEEDED
+    error_code: str | None = Field(default=None, max_length=200)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    error_parameter: str | None = Field(default=None, max_length=200)
+    retryable: bool = False
+
+    @model_validator(mode="after")
+    def failure_metadata_matches_outcome(self) -> ModelCallRecord:
+        failure_fields = (self.error_code, self.http_status, self.error_parameter)
+        if self.outcome is ModelCallOutcome.FAILED and self.error_code is None:
+            raise ValueError("failed model calls require an error code")
+        if self.outcome is ModelCallOutcome.SUCCEEDED and (
+            any(value is not None for value in failure_fields) or self.retryable
+        ):
+            raise ValueError("successful model calls cannot contain failure metadata")
+        return self
+
+
+class ReleaseProvenanceV1(StrictModel):
+    """Bounded release identity resolved by the operator-owned runtime adapter."""
+
+    schema_version: Literal["1.0"] = "1.0"
+    status: ReleaseProvenanceStatus
+    release_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    source_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    image_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    runtime_arn: str | None = Field(default=None, min_length=1, max_length=2_048)
+    runtime_id: str | None = Field(default=None, min_length=1, max_length=200)
+    runtime_version: str | None = Field(default=None, pattern=r"^[1-9][0-9]{0,4}$")
+    region: str | None = Field(default=None, pattern=r"^[a-z]{2}(?:-gov)?-[a-z]+-[0-9]$")
+    verified_at: datetime
+    verification_method: Literal["LOCAL", "AGENTCORE_CONTROL_PLANE"]
+    error_code: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def verified_agentcore_release_is_complete(self) -> ReleaseProvenanceV1:
+        agentcore_fields = (
+            self.release_id,
+            self.source_revision,
+            self.image_digest,
+            self.runtime_arn,
+            self.runtime_id,
+            self.runtime_version,
+            self.region,
+        )
+        if self.status is ReleaseProvenanceStatus.VERIFIED and any(value is None for value in agentcore_fields):
+            raise ValueError("verified AgentCore release provenance requires every identity field")
+        if self.status is ReleaseProvenanceStatus.LOCAL and self.verification_method != "LOCAL":
+            raise ValueError("local provenance must use the LOCAL verification method")
+        if self.status not in {ReleaseProvenanceStatus.LOCAL, ReleaseProvenanceStatus.VERIFIED} and not self.error_code:
+            raise ValueError("unverified release provenance requires an error code")
+        return self
 
 
 class IncidentValidationSummary(StrictModel):

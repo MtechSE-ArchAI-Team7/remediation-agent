@@ -1213,6 +1213,12 @@ components:
       - ALREADY_EXISTS
       - ERROR
       title: MemoryWriteStatus
+    ModelCallOutcome:
+      type: string
+      enum:
+      - SUCCEEDED
+      - FAILED
+      title: ModelCallOutcome
     ModelCallRecord:
       properties:
         operation:
@@ -1265,6 +1271,32 @@ components:
             maxLength: 4000
           - type: 'null'
           title: Reasoning Summary
+        outcome:
+          $ref: '#/components/schemas/ModelCallOutcome'
+          default: SUCCEEDED
+        error_code:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Error Code
+        http_status:
+          anyOf:
+          - type: integer
+            maximum: 599.0
+            minimum: 100.0
+          - type: 'null'
+          title: Http Status
+        error_parameter:
+          anyOf:
+          - type: string
+            maxLength: 200
+          - type: 'null'
+          title: Error Parameter
+        retryable:
+          type: boolean
+          title: Retryable
+          default: false
       additionalProperties: false
       type: object
       required:

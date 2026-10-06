@@ -17,6 +17,7 @@ from remediation_agent.domain.models import (
     IncidentMemoryRetrievalV1,
     IncidentMemoryWriteReceiptV1,
     ModelCallRecord,
+    ReleaseProvenanceV1,
     RepositoryRef,
     WorkspaceRef,
 )
@@ -122,6 +123,10 @@ class StructuredModel(Protocol):
         messages: Sequence[BaseMessage],
         tools: Sequence[BaseTool],
     ) -> tuple[AIMessage, ModelCallRecord]: ...
+
+
+class ReleaseProvenancePort(Protocol):
+    async def resolve(self) -> ReleaseProvenanceV1: ...
 
 
 class PullRequestProvider(Protocol):

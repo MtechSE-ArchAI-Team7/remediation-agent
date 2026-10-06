@@ -29,9 +29,10 @@ from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, 
 from remediation_agent.adapters.mcp import AgentCoreGatewayInspectionTools, GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
+from remediation_agent.adapters.provenance import AgentCoreReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.config import Settings
-from remediation_agent.domain.enums import ModelOperation
+from remediation_agent.domain.enums import ModelOperation, ReleaseProvenanceStatus
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     DiagnosisHandoffV1,
@@ -42,7 +43,12 @@ from remediation_agent.domain.models import (
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.models import ModelRequest
-from remediation_agent.ports.protocols import ArtifactReader, IncidentMemoryPort, StructuredModel
+from remediation_agent.ports.protocols import (
+    ArtifactReader,
+    IncidentMemoryPort,
+    ReleaseProvenancePort,
+    StructuredModel,
+)
 from remediation_agent.service import (
     ApprovalConflictError,
     InvocationDeadlineError,
@@ -91,6 +97,7 @@ AgentCoreInvocationRequest = Annotated[
 
 class AgentCoreProbeResult(StrictModel):
     status: Literal["ok"]
+    schema_features: dict[str, str] = Field(default_factory=dict, max_length=1)
 
 
 class AgentCoreProbeOutput(StrictModel):
@@ -121,6 +128,7 @@ def create_agentcore_app(
     *,
     probe_provider: Literal["bedrock", "openai"] | None = None,
     artifact_reader: ArtifactReader | None = None,
+    release_provenance: ReleaseProvenancePort | None = None,
 ) -> FastAPI:
     """Create the AgentCore application with injectable boundaries for offline tests."""
 
@@ -134,6 +142,8 @@ def create_agentcore_app(
             application.state.remediation_service = service
         if artifact_reader is not None:
             application.state.artifact_reader = artifact_reader
+        if release_provenance is not None:
+            application.state.release_provenance = release_provenance
         if model is not None or service is not None:
             yield
             return
@@ -143,6 +153,9 @@ def create_agentcore_app(
         _validate_workspace_root(settings.workspace_root)
         region_name = cast(str, settings.aws_region)
         memory_id, secret_arn, artifact_bucket = settings.require_agentcore_configuration()
+        release_id, source_revision, image_digest, runtime_id, release_region = (
+            settings.require_agentcore_release_configuration()
+        )
         policy_config = load_policy(settings.policy_file)
         policy = PolicyEngine(policy_config)
         incident_memory: IncidentMemoryPort
@@ -167,6 +180,15 @@ def create_agentcore_app(
             policy_config.limits.max_model_output_tokens,
             policy_config.limits.max_model_format_retries,
             openai_api_key=openai_api_key,
+        )
+        provenance = AgentCoreReleaseProvenance(
+            runtime_id=runtime_id,
+            release_id=release_id,
+            source_revision=source_revision,
+            image_digest=image_digest,
+            region_name=release_region,
+            expected_account_id=settings.release_expected_account_id,
+            max_versions=settings.release_max_runtime_versions,
         )
         try:
             credential_provider = GitHubAskpassCredentialProvider(github_token)
@@ -199,6 +221,7 @@ def create_agentcore_app(
                 ),
                 artifact_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
                 audit_sink=S3AuditSink(artifact_bucket, region_name=region_name),
+                release_provenance=provenance,
                 prompt_version=settings.prompt_version,
                 github_writes_enabled=settings.github_writes_enabled,
                 github_repository=settings.github_repository,
@@ -213,6 +236,7 @@ def create_agentcore_app(
             application.state.structured_model = structured_model
             application.state.probe_provider = settings.llm_provider
             application.state.artifact_reader = S3ArtifactReader(artifact_bucket, region_name=region_name)
+            application.state.release_provenance = provenance
             application.state.remediation_service = RemediationService(
                 build_graph(nodes, checkpointer),
                 max_active_runs=policy_config.limits.max_active_runs,
@@ -291,6 +315,11 @@ async def _invoke_probe(invocation: AgentCoreProbeInvocation, request: Request) 
     structured_model = getattr(request.app.state, "structured_model", None)
     if structured_model is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MODEL_PROBE_NOT_CONFIGURED")
+    provenance = cast(ReleaseProvenancePort | None, getattr(request.app.state, "release_provenance", None))
+    if provenance is not None:
+        release = await provenance.resolve()
+        if release.status not in {ReleaseProvenanceStatus.LOCAL, ReleaseProvenanceStatus.VERIFIED}:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="PROVENANCE_PROBE_FAILED")
     try:
         generation = await structured_model.generate(
             ModelRequest(

@@ -33,6 +33,7 @@ class ProviderProbeRequestV1(StrictModel):
 
 class ProviderProbeModelResult(StrictModel):
     status: Literal["ok"]
+    schema_features: dict[str, str] = Field(default_factory=dict, max_length=1)
 
 
 class ProviderProbeResultV1(StrictModel):

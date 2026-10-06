@@ -10,7 +10,7 @@ import pytest
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import ModelOperation
-from remediation_agent.domain.models import StrictModel
+from remediation_agent.domain.models import PatchCandidate, RemediationPlan, RiskAssessment, StrictModel
 from remediation_agent.ports.models import ModelRequest
 
 _GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
@@ -38,7 +38,7 @@ async def test_authenticated_gateway_returns_one_bounded_structured_response() -
             "model_transport_retries": 0,
         }
     )
-    model = build_structured_model(settings, max_output_tokens=128, max_format_retries=0)
+    model = build_structured_model(settings, max_output_tokens=2_048, max_format_retries=0)
     try:
         generation = await model.generate(
             ModelRequest(
@@ -49,9 +49,44 @@ async def test_authenticated_gateway_returns_one_bounded_structured_response() -
             ),
             _GatewayContractResult,
         )
+        plan = await model.generate(
+            ModelRequest(
+                operation=ModelOperation.PLANNING,
+                prompt_version="gateway-live-v1",
+                system_instruction=(
+                    "Return a minimal remediation plan for evidence e1 and src/app.py. Use validation task unit_tests."
+                ),
+                payload={"evidence_id": "e1", "path": "src/app.py", "validation_task": "unit_tests"},
+            ),
+            RemediationPlan,
+        )
+        risk = await model.generate(
+            ModelRequest(
+                operation=ModelOperation.RISK,
+                prompt_version="gateway-live-v1",
+                system_instruction="Return a LOW risk ALLOW assessment with a concise rationale.",
+                payload={"change": "add an input guard"},
+            ),
+            RiskAssessment,
+        )
+        patch = await model.generate(
+            ModelRequest(
+                operation=ModelOperation.PATCH,
+                prompt_version="gateway-live-v1",
+                system_instruction=(
+                    "Return a syntactically valid one-line unified diff changing const value = 1; to const value = 2; "
+                    "in src/app.js."
+                ),
+                payload={"path": "src/app.js"},
+            ),
+            PatchCandidate,
+        )
     finally:
         await model.aclose()
 
     assert generation.value.status == "ok"
     assert generation.record.provider == "openai"
     assert generation.record.model == "kei-openai-target/gpt-5.6-terra"
+    assert plan.value.evidence_ids == ["e1"]
+    assert risk.value.rationale
+    assert patch.value.unified_diff.startswith("--- a/src/app.js")

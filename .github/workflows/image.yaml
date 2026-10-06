@@ -32,6 +32,8 @@ jobs:
       github-repository: MtechSE-ArchAI-Team7/buggy-ecommerce-demo
       image-uri: ${{ needs.image.outputs.image-uri }}
       image-digest: ${{ needs.image.outputs.image-digest }}
+      source-revision: ${{ github.sha }}
+      release-id: ${{ github.run_id }}-${{ github.run_attempt }}
       server-protocol: A2A
       smoke-test-json: '{"jsonrpc":"2.0","id":"release-probe","method":"SendMessage","params":{"message":{"messageId":"00000000-0000-4000-8000-000000000001","role":"ROLE_USER","parts":[{"data":{"schema_version":"1.0","probe":"openai"},"mediaType":"application/vnd.aios.provider-probe-request.v1+json"}]}}}'
     secrets:

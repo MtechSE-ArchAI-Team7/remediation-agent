@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ReleaseProvenanceStatus": {
+      "enum": [
+        "LOCAL",
+        "VERIFIED",
+        "UNAVAILABLE",
+        "AMBIGUOUS"
+      ],
+      "title": "ReleaseProvenanceStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Bounded release identity resolved by the operator-owned runtime adapter.",
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "image_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Image Digest"
+    },
+    "region": {
+      "anyOf": [
+        {
+          "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-[0-9]$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Region"
+    },
+    "release_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Release Id"
+    },
+    "runtime_arn": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Arn"
+    },
+    "runtime_id": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Id"
+    },
+    "runtime_version": {
+      "anyOf": [
+        {
+          "pattern": "^[1-9][0-9]{0,4}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Version"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_revision": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Revision"
+    },
+    "status": {
+      "$ref": "#/$defs/ReleaseProvenanceStatus"
+    },
+    "verification_method": {
+      "enum": [
+        "LOCAL",
+        "AGENTCORE_CONTROL_PLANE"
+      ],
+      "title": "Verification Method",
+      "type": "string"
+    },
+    "verified_at": {
+      "format": "date-time",
+      "title": "Verified At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "verified_at",
+    "verification_method"
+  ],
+  "title": "ReleaseProvenanceV1",
+  "type": "object"
+}

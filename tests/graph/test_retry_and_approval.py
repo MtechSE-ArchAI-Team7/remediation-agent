@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -129,6 +130,32 @@ async def test_plan_approval_interrupt_can_resume_same_run() -> None:
     assert completed.result is not None
     assert completed.result.approvals == [decision]
     assert sandbox.applied_patches
+
+
+async def test_pre_provenance_checkpoint_requires_a_new_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = scripted_responses(risk_level=RiskLevel.MEDIUM, risk_decision=PolicyDecision.ALLOW)
+    service, _, _, _, _, _, _ = build_test_service(responses)
+    waiting = await service.start(diagnosis_handoff())
+    request = waiting.approval_request
+    assert request is not None
+    snapshot = await service.graph.aget_state(service._config(waiting.run_id))
+    old_state = dict(snapshot.values)
+    old_state.pop("release_provenance")
+
+    async def old_snapshot(_: str) -> SimpleNamespace:
+        return SimpleNamespace(values=old_state)
+
+    monkeypatch.setattr(service, "_snapshot", old_snapshot)
+    decision = ApprovalDecisionV1(
+        approval_id=request.approval_id,
+        scope_digest=request.scope_digest,
+        status=ApprovalStatus.APPROVED,
+        reviewer_id="reviewer",
+        decided_at=datetime.now(UTC),
+    )
+
+    with pytest.raises(ApprovalConflictError, match="REVALIDATION_REQUIRED"):
+        await service.approve(waiting.run_id, decision)
 
 
 async def test_identical_approval_retry_resumes_failed_in_progress_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:

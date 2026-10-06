@@ -32,7 +32,7 @@ from remediation_agent.api.a2a_contracts import (
     ProviderProbeResultV1,
     RemediationRunSummaryV1,
 )
-from remediation_agent.domain.enums import FinalStatus, ModelOperation
+from remediation_agent.domain.enums import FinalStatus, ModelOperation, ReleaseProvenanceStatus
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     DiagnosisHandoffV1,
@@ -40,7 +40,7 @@ from remediation_agent.domain.models import (
     RemediationRunView,
 )
 from remediation_agent.ports.models import ArtifactReadError, ArtifactReadRequest, ModelRequest
-from remediation_agent.ports.protocols import ArtifactReader, StructuredModel
+from remediation_agent.ports.protocols import ArtifactReader, ReleaseProvenancePort, StructuredModel
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,12 +69,14 @@ class RemediationA2AExecutor(AgentExecutor):
         model: StructuredModel | None = None,
         probe_provider: str | None = None,
         artifact_reader: ArtifactReader | None = None,
+        release_provenance: ReleaseProvenancePort | None = None,
         task_store: TaskStore | None = None,
     ) -> None:
         self._service = service
         self._model = model
         self._probe_provider = probe_provider
         self._artifact_reader = artifact_reader
+        self._release_provenance = release_provenance
         self._task_store = task_store
 
     def configure(
@@ -84,6 +86,7 @@ class RemediationA2AExecutor(AgentExecutor):
         model: StructuredModel | None,
         probe_provider: str | None,
         artifact_reader: ArtifactReader | None,
+        release_provenance: ReleaseProvenancePort | None,
     ) -> None:
         """Bind dependencies constructed by the hosted application lifespan."""
 
@@ -91,6 +94,7 @@ class RemediationA2AExecutor(AgentExecutor):
         self._model = model
         self._probe_provider = probe_provider
         self._artifact_reader = artifact_reader
+        self._release_provenance = release_provenance
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
@@ -316,6 +320,10 @@ class RemediationA2AExecutor(AgentExecutor):
             raise RuntimeError("provider probe is not configured")
         if request.probe != self._probe_provider:
             raise ValueError("provider probe does not match the configured provider")
+        if self._release_provenance is not None:
+            provenance = await self._release_provenance.resolve()
+            if provenance.status not in {ReleaseProvenanceStatus.LOCAL, ReleaseProvenanceStatus.VERIFIED}:
+                raise RuntimeError("release provenance is unavailable")
         generation = await self._model.generate(
             ModelRequest(
                 operation=ModelOperation.AGENTCORE_SMOKE,

@@ -72,6 +72,8 @@ def test_main_release_runs_ci_then_image_then_agentcore_deploy() -> None:
     assert deploy_with["github-repository"] == "MtechSE-ArchAI-Team7/buggy-ecommerce-demo"
     assert deploy_with["image-uri"] == "${{ needs.image.outputs.image-uri }}"
     assert deploy_with["image-digest"] == "${{ needs.image.outputs.image-digest }}"
+    assert deploy_with["source-revision"] == "${{ github.sha }}"
+    assert deploy_with["release-id"] == "${{ github.run_id }}-${{ github.run_attempt }}"
     assert deploy_with["server-protocol"] == "A2A"
     smoke = json.loads(cast(str, deploy_with["smoke-test-json"]))
     assert smoke["method"] == "SendMessage"
@@ -107,6 +109,8 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     assert deploy_with["server-protocol"] == "A2A"
     assert deploy_with["github-repository"] == "MtechSE-ArchAI-Team7/buggy-ecommerce-demo"
+    assert deploy_with["source-revision"] == "${{ github.sha }}"
+    assert deploy_with["release-id"] == "${{ github.run_id }}-${{ github.run_attempt }}"
     assert json.loads(cast(str, deploy_with["smoke-test-json"]))["method"] == "SendMessage"
     assert not _contains_key(workflow, "environment")
 
@@ -120,6 +124,8 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     script = "\n".join(value for step in steps if isinstance((value := step.get("run")), str))
 
     assert "server-protocol" in inputs
+    assert cast(dict[str, object], inputs["source-revision"])["required"] is True
+    assert cast(dict[str, object], inputs["release-id"])["required"] is True
     assert cast(dict[str, object], inputs["github-repository"])["required"] is True
     assert "AGENTCORE_CURRENT_CONFIGURATION_FILE" in script
     assert ".metadataConfiguration.requireMMDSV2 == true" in script
@@ -130,6 +136,14 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert "invoke-agent-runtime" in script
     assert "AGENTCORE_PREVIOUS_PROTOCOL" in script
     assert "AIOS_GITHUB_REPOSITORY: $repository" in script
+    for variable in (
+        "AIOS_RELEASE_ID",
+        "AIOS_RELEASE_SOURCE_SHA",
+        "AIOS_RELEASE_IMAGE_DIGEST",
+        "AIOS_AGENTCORE_RUNTIME_ID",
+    ):
+        assert variable in script
+    assert 'endswith("@" + $image_digest)' in script
     assert 'current_repository="$(jq -r' in script
     assert '"$current_repository" == "$TARGET_GITHUB_REPOSITORY"' in script
     assert '"$account_id" != "$EXPECTED_AWS_ACCOUNT_ID"' in script
@@ -139,7 +153,9 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert "Verify deployed runtime invariants" in {cast(str, step.get("name")) for step in steps}
     assert script.count('filesystemConfigurations == [{"sessionStorage":{"mountPath":"/mnt/workspace"}}]') >= 3
     assert script.count('.environmentVariables.AIOS_WORKSPACE_ROOT == "/mnt/workspace/runs"') >= 3
-    assert "The AgentCore rollback version is missing the required workspace mount." in script
+    assert "The AgentCore rollback version failed its release or workspace invariant check." in script
+    assert "The bounded rollback provider probe failed after three attempts." in script
+    assert "rollback-${RELEASE_ID}" in script
     assert script.count("--arg repository") == 1
     target_bindings = 0
     account_bindings = 0
@@ -152,7 +168,7 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
             account_bindings += 1
         if environment.get("TARGET_GITHUB_REPOSITORY") == "${{ inputs.github-repository }}":
             target_bindings += 1
-    assert account_bindings == 2
+    assert account_bindings == 3
     assert target_bindings == 2
     assert "create-agent-runtime" not in script
     assert "delete-agent-runtime" not in script

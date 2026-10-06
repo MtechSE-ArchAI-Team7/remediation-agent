@@ -18,6 +18,7 @@ from remediation_agent.adapters.fakes import (
     MemoryArtifactStore,
     MemoryAuditSink,
 )
+from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.domain.enums import (
     ModelOperation,
     PolicyDecision,
@@ -39,7 +40,12 @@ from remediation_agent.domain.models import (
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
-from remediation_agent.ports.protocols import HandoffDeliveryPort, IncidentMemoryPort, InspectionToolProvider
+from remediation_agent.ports.protocols import (
+    HandoffDeliveryPort,
+    IncidentMemoryPort,
+    InspectionToolProvider,
+    ReleaseProvenancePort,
+)
 from remediation_agent.service import RemediationService
 from remediation_agent.verification import acceptance_ids
 from remediation_agent.workflow.graph import build_graph
@@ -151,6 +157,7 @@ def build_test_service(
     handoff_delivery: HandoffDeliveryPort | None = None,
     incident_memory: IncidentMemoryPort | None = None,
     incident_memory_writes_enabled: bool = False,
+    release_provenance: ReleaseProvenancePort | None = None,
 ) -> tuple[
     RemediationService,
     FakeStructuredModel,
@@ -206,6 +213,7 @@ def build_test_service(
         pr_provider=pr_provider,
         artifact_store=artifacts,
         audit_sink=audit,
+        release_provenance=release_provenance or LocalReleaseProvenance(),
         prompt_version="test-prompt-v1",
         github_writes_enabled=github_writes_enabled,
         github_repository=github_repository,

@@ -1,5 +1,9 @@
 # AIOS Resolution/Remediation Agent
 
+Architecture and release details are maintained in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_RUNBOOK.md), and
+[docs/SECURITY_EVIDENCE.md](docs/SECURITY_EVIDENCE.md).
+
 This service implements the **Resolution/Remediation Agent**, for **AIOS: Agentic AI for IT Operations Support**. It turns a diagnosis into a policy-checked code or configuration change, validation evidence, rollback instructions, and a draft pull-request payload.
 
 The implementation changes only disposable repository workspaces. It cannot merge a pull request, deploy, mutate production, or perform identity and
@@ -124,6 +128,12 @@ that it is unrelated. Risk approval is recorded separately and never erases find
 do not expand the patch; mandatory operator security tasks still apply. Agent 4 remains independent. Both v1 handoff
 wire formats are unchanged.
 
+Every run also emits `release-provenance.json` as `ReleaseProvenanceV1`. Local execution is labelled explicitly. Hosted
+execution must resolve exactly one immutable AgentCore version whose release ID, source SHA, image digest, image URI,
+account and Region match the running container before a workspace is created. Missing or ambiguous provenance returns
+`HUMAN_ACTION_REQUIRED`; it cannot prepare a PR or admit incident memory. Pre-provenance interrupted checkpoints require
+a new run rather than resuming through the gate.
+
 ### Offline purchase profile and qualification
 
 The purchase profile runs the repository's `server.js` and `lib/` with its actual Express middleware, initialization SQL
@@ -185,7 +195,8 @@ keeps a versioned presentation snapshot of this response and updates it alongsid
 | Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects directly by default; `AgentCoreGatewayInspectionTools` optionally signs the exact derived `/mcp` Gateway endpoint with fresh SigV4 credentials. Both expose only the same three native names and preserve repository identity, immutable SHA, path, search, schema, redaction, output, and call-budget controls. |
 | Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
 | Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` is used locally; `AgentCoreCodeInterpreterSandbox` retains the patch boundary and validates a sanitized copy in an isolated managed session. |
-| Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
+| Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. OpenAI structured stages always use function calling; there is no runtime downgrade to JSON-schema or free-form output. |
+| Release provenance | `ReleaseProvenancePort` | Local runs are labelled; hosted runs use bounded read-only AgentCore control-plane calls to match the executing release before repository access. |
 | Pull-request handling | `PullRequestProvider` | A deterministic draft payload is prepared only after qualifying behavioral evidence; authenticated GitHub draft creation is separately gated and merge is unavailable. |
 | Evidence and audit | `ArtifactStore`, `ArtifactReader`, `AuditSink` | Local files or immutable digest-addressed S3 objects hold redacted artifacts and hash-chained audit events. Preview reads are manifest-selected, session-scoped, bounded, and digest-verified. |
 | Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL or AgentCore Memory persistence. |
@@ -263,7 +274,8 @@ selected provider/model combination must support both structured output and tool
 | `fake` | `FakeStructuredModel` | Unit, graph, security, and demonstration tests | Injection-only; rejected by the production dependency builder |
 
 All live adapters record provider/model, prompt version, latency, token usage when available, refusal state, response
-digests, and an optional bounded provider reasoning summary. OpenAI does not expose raw reasoning tokens; the UI labels
+digests, and an optional bounded provider reasoning summary. Failed structured calls record only a normalized error code,
+HTTP status, parameter name, retryability and digests; provider bodies, headers and request IDs are excluded. OpenAI does not expose raw reasoning tokens; the UI labels
 summaries separately from schema-validated decision rationales. Credentials, prompts, repository contents, and raw
 provider responses are not recorded.
 
@@ -647,6 +659,11 @@ The runtime execution role must also grant `s3:ListBucket` for the configured `A
 bucket condition and object ARN to `a2a/tasks/*`; the existing `runs/*` artifact permissions do not cover A2A task
 projections.
 
+Hosted release attestation additionally requires `bedrock-agentcore:GetAgentRuntime` on the exact remediation runtime
+ARN and `bedrock-agentcore:ListAgentRuntimeVersions` on `*`. AWS does not support resource scoping for the list action;
+the adapter accepts only the fixed configured runtime ID, scans at most `AIOS_RELEASE_MAX_RUNTIME_VERSIONS`, and performs
+no control-plane writes. This permission does not grant deployment authority.
+
 Create the initial AgentCore Runtime manually with A2A protocol, IAM/SigV4 inbound authentication, public networking,
 and an immutable image URI. The release workflow never creates IAM, Memory, secrets, runtimes, or endpoints; it does
 enforce and preserve the runtime's managed session-storage mount.
@@ -672,6 +689,10 @@ AIOS_WORKSPACE_ROOT=/mnt/workspace/runs
 AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 ```
 
+The guarded workflow injects `AIOS_RELEASE_ID`, `AIOS_RELEASE_SOURCE_SHA`, `AIOS_RELEASE_IMAGE_DIGEST`, and
+`AIOS_AGENTCORE_RUNTIME_ID`; operators must not hand-edit them. The workflow verifies them against the exact new version
+and immutable ECR URI. Rollback creates a fresh release ID while preserving the previous source and image identity.
+
 Configure managed session storage exactly as
 `[{"sessionStorage":{"mountPath":"/mnt/workspace"}}]`. The hosted process performs a bounded create/remove probe below
 `/mnt/workspace/runs` during startup and fails with `WORKSPACE_ROOT_UNAVAILABLE` before model work when the mount is not
@@ -679,7 +700,9 @@ writable. `UpdateAgentRuntime` replaces omitted optional configuration, so direc
 `filesystemConfigurations` remove the mount even when the runtime remains control-plane `READY`. Use the guarded
 release workflow rather than a raw update command. It pins the deployment account, rejects AWS clients that cannot
 represent filesystem configuration, adds the mount to older runtimes, preserves it on deployment and rollback, and
-verifies the exact new version's account and workspace invariants before probing it. Store a two-field runtime JSON
+verifies the exact new version's account, release provenance and workspace invariants before running a structured-output
+canary. The canary deliberately includes defaulted/map schema features so an accidental return to strict provider JSON
+schema fails the deployment. Store a two-field runtime JSON
 secret containing `github_token` and
 an exact 32-byte UTF-8 `checkpoint_encryption_key`. In IAM-gateway mode, do not set `OPENAI_API_KEY`,
 `AIOS_OPENAI_SECRET_ARN`, or `AIOS_OPENAI_BASE_URL`. Grant the runtime execution role

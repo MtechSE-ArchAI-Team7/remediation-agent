@@ -16,6 +16,7 @@ from remediation_agent.adapters.checkpoint import in_memory_checkpointer
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
 from remediation_agent.adapters.fakes import FakeInspectionToolProvider, FakeStructuredModel
 from remediation_agent.adapters.pr import DraftPullRequestProvider
+from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
 from remediation_agent.domain.enums import FinalStatus, RepositoryProvider, ValidationOutcome
@@ -335,6 +336,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         pr_provider=DraftPullRequestProvider(writes_enabled=False),
         artifact_store=LocalArtifactStore(artifact_root),
         audit_sink=JsonlAuditSink(artifact_root),
+        release_provenance=LocalReleaseProvenance(),
         prompt_version="docker-integration-v1",
         github_writes_enabled=False,
     )
@@ -372,6 +374,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         "explainability.json",
         "model-calls.json",
         "patch.diff",
+        "release-provenance.json",
         "result.json",
         "rollback.json",
         "validation.json",

@@ -28,6 +28,7 @@ from remediation_agent.domain.enums import (
     MemoryWriteStatus,
     ModelOperation,
     PolicyDecision,
+    ReleaseProvenanceStatus,
     RemediationType,
     RepositoryProvider,
     RiskLevel,
@@ -54,6 +55,7 @@ from remediation_agent.domain.models import (
     InspectionToolCallRecord,
     InspectionToolResponse,
     PatchCandidate,
+    ReleaseProvenanceV1,
     RemediationHandoffV1,
     RemediationPlan,
     RiskAssessment,
@@ -77,6 +79,7 @@ from remediation_agent.ports.models import (
     ModelRequest,
     PatchApplyRequest,
     PushRequest,
+    StructuredModelFailure,
     ValidationTaskRequest,
 )
 from remediation_agent.ports.protocols import (
@@ -85,6 +88,7 @@ from remediation_agent.ports.protocols import (
     IncidentMemoryPort,
     InspectionToolProvider,
     PullRequestProvider,
+    ReleaseProvenancePort,
     RepositoryWorkspacePort,
     SandboxExecutor,
     StructuredModel,
@@ -124,6 +128,7 @@ class WorkflowNodes:
         pr_provider: PullRequestProvider,
         artifact_store: ArtifactStore,
         audit_sink: AuditSink,
+        release_provenance: ReleaseProvenancePort,
         prompt_version: str,
         github_writes_enabled: bool = False,
         github_repository: str | None = None,
@@ -138,6 +143,7 @@ class WorkflowNodes:
         self.pr_provider = pr_provider
         self.artifact_store = artifact_store
         self.audit_sink = audit_sink
+        self.release_provenance = release_provenance
         self.prompt_version = prompt_version
         self.github_writes_enabled = github_writes_enabled and policy.config.github.writes_enabled
         self.github_repository = github_repository
@@ -209,6 +215,57 @@ class WorkflowNodes:
         return {
             "final_status": status,
             "audit_events": self._event(state, "SCOPE_CLASSIFIED", status, detail),
+        }
+
+    async def verify_release_provenance(self, state: RemediationState) -> dict[str, object]:
+        """Resolve immutable release identity before creating a disposable workspace."""
+
+        previous_status = state["final_status"]
+        try:
+            provenance = await self.release_provenance.resolve()
+        except Exception as exc:  # noqa: BLE001 - normalize an operator-owned adapter boundary
+            message = f"Release provenance adapter failed: {type(exc).__name__}"
+            provenance = ReleaseProvenanceV1(
+                status=ReleaseProvenanceStatus.UNAVAILABLE,
+                verified_at=datetime.now(UTC),
+                verification_method="AGENTCORE_CONTROL_PLANE",
+                error_code="RELEASE_PROVENANCE_FAILED",
+            )
+            return {
+                "release_provenance": provenance,
+                "final_status": (
+                    FinalStatus.HUMAN_ACTION_REQUIRED if previous_status is FinalStatus.PENDING else previous_status
+                ),
+                "errors": [
+                    *state.get("errors", []),
+                    ErrorRecord(code="RELEASE_PROVENANCE_FAILED", stage="release_provenance", message=message),
+                ],
+                "residual_risks": [*state.get("residual_risks", []), message],
+                "audit_events": self._event(state, "RELEASE_PROVENANCE_FAILED", "HUMAN_ACTION_REQUIRED", message),
+            }
+        if provenance.status not in {ReleaseProvenanceStatus.LOCAL, ReleaseProvenanceStatus.VERIFIED}:
+            code = provenance.error_code or "RELEASE_PROVENANCE_UNAVAILABLE"
+            message = f"Hosted release provenance could not be verified ({code})."
+            return {
+                "release_provenance": provenance,
+                "final_status": (
+                    FinalStatus.HUMAN_ACTION_REQUIRED if previous_status is FinalStatus.PENDING else previous_status
+                ),
+                "errors": [
+                    *state.get("errors", []),
+                    ErrorRecord(code=code, stage="release_provenance", message=message),
+                ],
+                "residual_risks": [*state.get("residual_risks", []), message],
+                "audit_events": self._event(state, "RELEASE_PROVENANCE_UNVERIFIED", provenance.status, message),
+            }
+        detail = (
+            f"Release provenance verified for runtime version {provenance.runtime_version}."
+            if provenance.status is ReleaseProvenanceStatus.VERIFIED
+            else "Local execution provenance recorded."
+        )
+        return {
+            "release_provenance": provenance,
+            "audit_events": self._event(state, "RELEASE_PROVENANCE_VERIFIED", provenance.status, detail),
         }
 
     async def create_workspace(self, state: RemediationState) -> dict[str, object]:
@@ -553,6 +610,8 @@ class WorkflowNodes:
             available_evidence = {item.evidence_id for item in state["handoff"].supporting_evidence}
             if not set(generated.value.evidence_ids).issubset(available_evidence):
                 raise ValueError("model plan references evidence IDs not present in the diagnosis handoff")
+        except StructuredModelFailure as exc:
+            return self._model_failure(state, "PLAN_FAILED", "create_plan", exc)
         except (RuntimeError, ValueError) as exc:
             return self._failure(state, "PLAN_FAILED", "create_plan", str(exc))
         return {
@@ -586,6 +645,8 @@ class WorkflowNodes:
                 RiskAssessment,
             )
             assessment = self.policy.assess_plan(state["handoff"], state["remediation_plan"], generated.value)
+        except StructuredModelFailure as exc:
+            return self._model_failure(state, "RISK_FAILED", "assess_risk", exc)
         except (RuntimeError, ValueError) as exc:
             return self._failure(state, "RISK_FAILED", "assess_risk", str(exc))
 
@@ -651,6 +712,8 @@ class WorkflowNodes:
                 ),
                 PatchCandidate,
             )
+        except StructuredModelFailure as exc:
+            return self._model_failure(state, "PATCH_GENERATION_FAILED", "generate_patch", exc)
         except (RuntimeError, ValueError) as exc:
             return self._failure(state, "PATCH_GENERATION_FAILED", "generate_patch", str(exc))
         return {
@@ -1395,6 +1458,32 @@ class WorkflowNodes:
             "audit_events": self._event(state, code, "ERROR", redacted_message),
         }
 
+    def _model_failure(
+        self,
+        state: RemediationState,
+        code: str,
+        stage: str,
+        failure: StructuredModelFailure,
+    ) -> dict[str, object]:
+        record = failure.record
+        message = f"Structured model call failed with {record.error_code or 'PROVIDER_ERROR'}."
+        return {
+            "final_status": FinalStatus.INTERNAL_ERROR,
+            "model_calls": [*state.get("model_calls", []), record],
+            "errors": [
+                *state.get("errors", []),
+                ErrorRecord(code=code, stage=stage, message=message, retryable=record.retryable),
+            ],
+            "audit_events": self._event(
+                state,
+                code,
+                record.error_code or "PROVIDER_ERROR",
+                message,
+                input_value=record.input_digest,
+                output_value=record.output_digest,
+            ),
+        }
+
     def _inspection_response(self, output: object) -> InspectionToolResponse:
         if not isinstance(output, Mapping):
             raise ValueError("inspection tool node returned a malformed result")
@@ -1577,6 +1666,15 @@ class WorkflowNodes:
                 redactor=self.audit.redactor,
             ).model_dump_json(indent=2),
         }
+        provenance = state.get("release_provenance")
+        if provenance is None:
+            provenance = ReleaseProvenanceV1(
+                status=ReleaseProvenanceStatus.UNAVAILABLE,
+                verified_at=datetime.now(UTC),
+                verification_method="AGENTCORE_CONTROL_PLANE",
+                error_code="RELEASE_PROVENANCE_MISSING",
+            )
+        files["release-provenance.json"] = provenance.model_dump_json(indent=2)
         files["verification-brief.json"] = self._verification_brief_json(state)
         if state.get("current_diff"):
             files["patch.diff"] = state["current_diff"]

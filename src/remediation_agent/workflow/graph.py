@@ -75,6 +75,7 @@ def build_graph(
 
     parent = StateGraph(RemediationState)
     parent.add_node("validate_intake", nodes.validate_intake)
+    parent.add_node("verify_release_provenance", nodes.verify_release_provenance)
     parent.add_node("classify_scope", nodes.classify_scope)
     parent.add_node("analysis_workflow", analysis_workflow)
     parent.add_node("assess_risk", nodes.assess_risk)
@@ -87,7 +88,12 @@ def build_graph(
     parent.add_node("finalize", nodes.finalize)
 
     parent.add_edge(START, "validate_intake")
-    parent.add_edge("validate_intake", "classify_scope")
+    parent.add_edge("validate_intake", "verify_release_provenance")
+    parent.add_conditional_edges(
+        "verify_release_provenance",
+        _after_release_provenance,
+        {"classify": "classify_scope", "finalize": "finalize"},
+    )
     parent.add_conditional_edges(
         "classify_scope",
         _after_scope,
@@ -119,6 +125,10 @@ def build_graph(
 
 def _after_scope(state: RemediationState) -> str:
     return "analysis" if state["final_status"] is FinalStatus.PENDING else "finalize"
+
+
+def _after_release_provenance(state: RemediationState) -> str:
+    return "classify" if state["final_status"] is FinalStatus.PENDING else "finalize"
 
 
 def _after_risk(state: RemediationState) -> str:

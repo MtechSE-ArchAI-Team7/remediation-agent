@@ -20,8 +20,9 @@ from unidiff.errors import UnidiffParseError
 from remediation_agent.adapters.agentcore_gateway import AgentCoreGatewaySigV4Auth
 from remediation_agent.adapters.evidence import SecretRedactor
 from remediation_agent.config import Settings
+from remediation_agent.domain.enums import ModelCallOutcome
 from remediation_agent.domain.models import ModelCallRecord, PatchCandidate
-from remediation_agent.ports.models import ModelGeneration, ModelRequest, TModel
+from remediation_agent.ports.models import ModelGeneration, ModelRequest, StructuredModelFailure, TModel
 
 
 class _PatchFormatError(ValueError):
@@ -33,7 +34,13 @@ class _PatchFormatError(ValueError):
 
 
 class _ChatModel(Protocol):
-    def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool) -> _Runnable: ...
+    def with_structured_output(
+        self,
+        schema: type[BaseModel],
+        *,
+        include_raw: bool,
+        method: str | None = None,
+    ) -> _Runnable: ...
 
     def bind_tools(self, tools: Sequence[BaseTool]) -> _Runnable: ...
 
@@ -90,7 +97,14 @@ class ProviderStructuredModel:
         for attempt in range(self.retries + 1):
             started = time.monotonic()
             try:
-                runnable = self.chat_model.with_structured_output(output_schema, include_raw=True)
+                if self.provider == "openai":
+                    runnable = self.chat_model.with_structured_output(
+                        output_schema,
+                        include_raw=True,
+                        method="function_calling",
+                    )
+                else:
+                    runnable = self.chat_model.with_structured_output(output_schema, include_raw=True)
                 raw = await asyncio.wait_for(runnable.ainvoke(messages), timeout=self.timeout_seconds)
                 response_message: object | None = None
                 parsed: object = raw
@@ -134,8 +148,22 @@ class ProviderStructuredModel:
                 if isinstance(exc, _PatchFormatError):
                     messages.append(("system", _patch_format_retry_instruction(exc.code, attempt + 1)))
             except Exception as exc:  # noqa: BLE001 - normalize an untrusted provider boundary
-                raise RuntimeError(f"structured model provider failed: {type(exc).__name__}") from exc
-        raise RuntimeError(f"structured model generation failed after bounded retries: {last_error}") from last_error
+                last_error = exc
+                if not _provider_error_details(exc)[3] or attempt >= self.retries:
+                    break
+        if last_error is None:  # pragma: no cover - the bounded loop always executes at least once
+            last_error = RuntimeError("structured model retry loop ended without an outcome")
+        record = _failed_model_call_record(
+            request,
+            provider=self.provider,
+            model=self.model,
+            duration_ms=int((time.monotonic() - started) * 1_000),
+            exc=last_error,
+        )
+        raise StructuredModelFailure(
+            f"structured model provider failed: {record.error_code}",
+            record=record,
+        ) from last_error
 
     async def generate_tool_turn(
         self,
@@ -328,6 +356,81 @@ def build_structured_model(
 
 def _digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _failed_model_call_record(
+    request: ModelRequest,
+    *,
+    provider: str,
+    model: str,
+    duration_ms: int,
+    exc: Exception,
+) -> ModelCallRecord:
+    error_code, http_status, error_parameter, retryable = _provider_error_details(exc)
+    normalized = json.dumps(
+        {
+            "error_code": error_code,
+            "http_status": http_status,
+            "error_parameter": error_parameter,
+            "retryable": retryable,
+        },
+        sort_keys=True,
+    )
+    return ModelCallRecord(
+        operation=request.operation,
+        provider=provider,
+        model=model,
+        prompt_version=request.prompt_version,
+        duration_ms=max(0, duration_ms),
+        input_digest=_digest(request.model_dump_json()),
+        output_digest=_digest(normalized),
+        outcome=ModelCallOutcome.FAILED,
+        error_code=error_code,
+        http_status=http_status,
+        error_parameter=error_parameter,
+        retryable=retryable,
+    )
+
+
+def _provider_error_details(exc: Exception) -> tuple[str, int | None, str | None, bool]:
+    raw_code = getattr(exc, "code", None)
+    code_source = raw_code if isinstance(raw_code, str) and raw_code else type(exc).__name__
+    error_code = re.sub(r"[^A-Za-z0-9_.-]", "_", code_source).upper()[:200]
+    raw_status = getattr(exc, "status_code", None)
+    http_status = raw_status if isinstance(raw_status, int) and 100 <= raw_status <= 599 else None
+    raw_parameter = getattr(exc, "param", None)
+    error_parameter = (
+        re.sub(r"[^A-Za-z0-9_.-]", "_", raw_parameter)[:200]
+        if isinstance(raw_parameter, str) and raw_parameter
+        else None
+    )
+    non_retryable_codes = {
+        "INVALID_JSON_SCHEMA",
+        "INVALID_REQUEST_ERROR",
+        "BADREQUESTERROR",
+        "VALIDATIONERROR",
+        "VALUEERROR",
+        "_PATCHFORMATERROR",
+    }
+    retryable_codes = {
+        "APICONNECTIONERROR",
+        "APITIMEOUTERROR",
+        "CONNECTIONERROR",
+        "INTERNALSERVERERROR",
+        "RATE_LIMIT_EXCEEDED",
+        "RATELIMITERROR",
+        "SERVER_ERROR",
+        "SERVICEUNAVAILABLEERROR",
+        "TIMEOUT",
+        "TIMEOUTERROR",
+    }
+    retryable = (
+        isinstance(exc, (TimeoutError, ConnectionError, OSError))
+        or http_status == 429
+        or (http_status is not None and http_status >= 500)
+        or error_code in retryable_codes
+    ) and error_code not in non_retryable_codes
+    return error_code, http_status, error_parameter, retryable
 
 
 def _validate_provider_value(value: BaseModel) -> None:

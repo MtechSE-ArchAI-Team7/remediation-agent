@@ -409,6 +409,14 @@
       "title": "MemoryWriteStatus",
       "type": "string"
     },
+    "ModelCallOutcome": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "title": "ModelCallOutcome",
+      "type": "string"
+    },
     "ModelCallRecord": {
       "additionalProperties": false,
       "properties": {
@@ -416,6 +424,46 @@
           "minimum": 0,
           "title": "Duration Ms",
           "type": "integer"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "error_parameter": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Parameter"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
         },
         "input_digest": {
           "minLength": 1,
@@ -444,6 +492,10 @@
           "minLength": 1,
           "title": "Operation",
           "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ModelCallOutcome",
+          "default": "SUCCEEDED"
         },
         "output_digest": {
           "minLength": 1,
@@ -489,6 +541,11 @@
         "refused": {
           "default": false,
           "title": "Refused",
+          "type": "boolean"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
           "type": "boolean"
         }
       },

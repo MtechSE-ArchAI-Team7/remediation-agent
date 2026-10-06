@@ -46,6 +46,14 @@ class ArtifactReadError(RuntimeError):
         self.code = code
 
 
+class StructuredModelFailure(RuntimeError):
+    """Safe structured-provider failure carrying one bounded audit record."""
+
+    def __init__(self, message: str, *, record: ModelCallRecord) -> None:
+        super().__init__(message)
+        self.record = record
+
+
 class TreeRequest(StrictModel):
     workspace: WorkspaceRef
     relative_path: str = "."

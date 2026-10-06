@@ -247,6 +247,10 @@ Each `validation_attempts[]` object contains:
 Agent 4 should verify that the latest relevant attempt passed and should not treat the presence of a draft PR as proof
 of production deployment. Agent 3 does not deploy, merge, or execute a production rollback.
 
+`release-provenance-v1.schema.json` is an operator evidence contract, not an inter-agent handoff. Hosted runs include
+`release-provenance.json` in the existing artifact manifest only after bounded control-plane matching of the release ID,
+source SHA, image digest and exact runtime version. `DiagnosisHandoffV1` and `RemediationHandoffV1` remain unchanged.
+
 ### Final statuses
 
 | Status | Meaning for Agent 4 |

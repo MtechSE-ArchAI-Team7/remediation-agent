@@ -5,6 +5,7 @@ from remediation_agent.ports.protocols import (
     AuditSink,
     InspectionToolProvider,
     PullRequestProvider,
+    ReleaseProvenancePort,
     RepositoryInspectionPort,
     RepositoryPort,
     RepositoryWorkspacePort,
@@ -20,6 +21,7 @@ __all__ = [
     "RepositoryInspectionPort",
     "RepositoryPort",
     "RepositoryWorkspacePort",
+    "ReleaseProvenancePort",
     "SandboxExecutor",
     "StructuredModel",
 ]

@@ -24,6 +24,7 @@ from remediation_agent.domain.models import (
     ModelCallRecord,
     PatchCandidate,
     PatchPolicyResult,
+    ReleaseProvenanceV1,
     RemediationHandoffV1,
     RemediationPlan,
     RiskAssessment,
@@ -43,6 +44,7 @@ class RemediationState(TypedDict, total=False):
     prompt_version: str
     policy_version: str
     handoff: DiagnosisHandoffV1
+    release_provenance: ReleaseProvenanceV1
 
     workspace: WorkspaceRef
     workspace_status: WorkspaceStatus
