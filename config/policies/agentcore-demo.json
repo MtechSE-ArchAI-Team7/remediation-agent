@@ -144,10 +144,43 @@
       "output_limit_bytes": 262144,
       "retryable": false,
       "kind": "BEHAVIORAL",
-      "profile": "node_test",
-      "test_paths": [
-        "tests/checkout.test.js"
-      ]
+      "profile": "ecommerce_checkout",
+      "test_paths": [],
+      "required_test_ids": [
+        "checkout_persists_before_success",
+        "checkout_write_failure_no_success"
+      ],
+      "required_evidence_paths": [
+        "server.js",
+        "schema.sql",
+        "public/app.js",
+        "package.json"
+      ],
+      "request_contract": {
+        "method": "POST",
+        "path": "/checkout",
+        "content_type": "application/json",
+        "field_types": {
+          "cart": "array-with-safe-integer-product-id"
+        },
+        "example_body": "{\"cart\":[{\"id\":1,\"price\":0}]}",
+        "expected_responses": [
+          "200: {message: \"Order placed\", itemCount: 1} only after the order insert succeeds",
+          "non-200 JSON error without an order-placed message when the order insert fails"
+        ],
+        "state_changes": [
+          "Persist one orders row using the server-side product price before returning success; persist no row on write failure."
+        ],
+        "prerequisites": [
+          "Disposable ecommerce.db initialized from schema.sql and seed.sql with at least one product."
+        ],
+        "evidence_paths": [
+          "server.js",
+          "schema.sql",
+          "public/app.js",
+          "package.json"
+        ]
+      }
     },
     "shipping_regression": {
       "argv": [

@@ -53,7 +53,7 @@ class Limits(StrictModel):
 
 class ValidationTaskConfig(StrictModel):
     kind: Literal["STATIC", "BEHAVIORAL"] = "STATIC"
-    profile: Literal["pytest", "node_test", "ecommerce_purchase"] | None = None
+    profile: Literal["pytest", "node_test", "ecommerce_checkout", "ecommerce_purchase"] | None = None
     test_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)
     required_test_ids: list[NonEmptyStr] = Field(default_factory=list, max_length=40)
     required_evidence_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)

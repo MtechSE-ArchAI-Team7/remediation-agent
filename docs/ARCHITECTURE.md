@@ -49,3 +49,11 @@ behavioral tasks, request contracts, required source evidence, test IDs, or runt
 PR. Other unresolved plan details deterministically raise plan risk and require approval; after approval they remain
 in the verification brief and PR, while the mapped local assertions must still reproduce the base defect and pass on
 the candidate. Explicit post-deployment criteria remain pending for Agent 4 and never count as a local pass.
+
+Application-level Node tests use an e-commerce profile. The host verifies and mounts the same sealed Express/sqlite3
+dependency bundle used by the operator-owned purchase profile and selects the bundled Node executable.
+`ecommerce_checkout` launches each snapshot over loopback and applies operator-owned durable-insert and rejected-write
+assertions without relying on candidate-only exports. Generic `node_test` remains for dependency-free modules. The Node
+reporter retains a bounded `test:stderr` diagnostic for setup failures, while pass/fail still comes only from structured
+test events. This prevents a missing application dependency from being mistaken for a reproduced defect and leaves a
+useful capability-gap explanation in validation evidence.

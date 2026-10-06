@@ -404,6 +404,7 @@
               "enum": [
                 "pytest",
                 "node_test",
+                "ecommerce_checkout",
                 "ecommerce_purchase"
               ],
               "type": "string"

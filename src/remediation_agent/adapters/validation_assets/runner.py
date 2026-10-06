@@ -108,6 +108,11 @@ def main() -> int:
         env["AIOS_REPORT_PATH"] = str(report_path)
     elif profile == "node_test":
         argv = ["node", "--test", f"--test-reporter={assets / 'node_reporter.cjs'}", *cfg["test_paths"]]
+    elif profile == "ecommerce_checkout":
+        node = verify_bundle(assets / "bundle")
+        verify_dependencies(assets / "bundle", Path.cwd())
+        env["NODE_PATH"] = str(assets / "bundle" / "node_modules")
+        argv = [node, str(assets / "checkout.cjs")]
     elif profile == "ecommerce_purchase":
         node = verify_bundle(assets / "bundle")
         verify_dependencies(assets / "bundle", Path.cwd())

@@ -87,6 +87,26 @@ def test_node_reporter_distinguishes_assertions_from_setup(tmp_path: Path, body:
     assert len(report.cases) == 1 and report.cases[0].outcome == expected
 
 
+def test_node_reporter_preserves_nested_setup_diagnostic(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node is required for reporter contract test")
+    test_file = tmp_path / "case.test.js"
+    test_file.write_text("require('./dependency-that-does-not-exist');")
+    result = subprocess.run(  # noqa: S603 - fixed node:test runner on disposable fixture
+        [node, "--test", f"--test-reporter={_ASSETS / 'node_reporter.cjs'}", str(test_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    report = BehavioralReport.model_validate_json(result.stdout)
+    assert len(report.cases) == 1
+    assert report.cases[0].outcome == "SETUP_ERROR"
+    assert "dependency-that-does-not-exist" in report.cases[0].detail
+    assert len(report.cases[0].detail) <= 1_000
+
+
 def test_unsupported_dependencies_or_conflicting_lockfile_cannot_pass(tmp_path: Path) -> None:
     from remediation_agent.adapters.validation_assets.runner import verify_dependencies
 

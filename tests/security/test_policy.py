@@ -100,6 +100,13 @@ def test_live_demo_validation_catalog_covers_the_agent2_benchmark() -> None:
     assert set(benchmark.validation_tasks).issubset(live.validation_tasks)
     assert set(benchmark.validation_tasks).issubset(local.validation_tasks)
     assert "purchase_regression" in live.validation_tasks
+    assert live.validation_tasks["checkout_regression"].profile == "ecommerce_checkout"
+    assert local.validation_tasks["checkout_regression"].profile == "ecommerce_checkout"
+    assert benchmark.validation_tasks["checkout_regression"].profile == "ecommerce_checkout"
+    assert live.validation_tasks["checkout_regression"].required_test_ids == [
+        "checkout_persists_before_success",
+        "checkout_write_failure_no_success",
+    ]
     assert "public/app.js" in live.paths.autonomous
 
 

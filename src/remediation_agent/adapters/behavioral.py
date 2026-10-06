@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 _MAX_BYTES = 64 * 1024 * 1024
 _ASSETS = Path(__file__).with_name("validation_assets")
+_ECOMMERCE_PROFILES = {"ecommerce_checkout", "ecommerce_purchase"}
 
 
 def _allowed(path: str) -> bool:
@@ -160,7 +161,7 @@ async def run_behavioral_pair(
             ).hexdigest()
         )
         dependency_digest = assets_digest
-        if request.task.profile == "ecommerce_purchase":
+        if request.task.profile in _ECOMMERCE_PROFILES:
             manifest = sandbox.behavioral_bundle / "manifest.json"
             if not manifest.is_file():
                 raise ValueError("UNSUPPORTED_VALIDATION_ENVIRONMENT: offline e-commerce bundle is absent")
@@ -170,7 +171,7 @@ async def run_behavioral_pair(
             if reserved.exists():
                 raise ValueError("Repository attempts to replace trusted validation assets")
             shutil.copytree(_ASSETS, reserved, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            if request.task.profile == "ecommerce_purchase":
+            if request.task.profile in _ECOMMERCE_PROFILES:
                 shutil.copytree(sandbox.behavioral_bundle, reserved / "bundle", symlinks=False)
             (reserved / "task.json").write_text(
                 json.dumps(
@@ -221,7 +222,7 @@ async def run_behavioral_pair(
             reports.append(report)
         if reports[0].runtime_digest != reports[1].runtime_digest:
             raise ValueError("Base/candidate runtime dependency fingerprints differ")
-        if request.task.profile != "ecommerce_purchase" and reports[0].runtime_digest:
+        if request.task.profile not in _ECOMMERCE_PROFILES and reports[0].runtime_digest:
             dependency_digest = reports[0].runtime_digest
         return BehavioralTaskExecution(
             evidence=BehavioralEvidence(

@@ -110,7 +110,8 @@ of inventing an endpoint or narrowing scope. Other missing or contradictory plan
 remain visible in the verification brief and PR as unresolved risk; approval does not satisfy any local criterion.
 
 Operator task metadata distinguishes `STATIC` from `BEHAVIORAL`. Behavioral tasks use a fixed `pytest`, `node_test`,
-or `ecommerce_purchase` profile, explicit test paths/IDs, and any required inspection paths/request contract. The host
+`ecommerce_checkout`, or `ecommerce_purchase` profile, explicit test paths/IDs, and any required inspection paths/request
+contract. The host
 constructs the runner arguments; model-visible capabilities omit executable argv and environment values. The contract,
 pinned source evidence, base SHA and capabilities reach planning, risk, patch and revision. Tests changed by a patch
 still require the existing exact-diff approval. Regression assertion digests cannot change during a repair loop.
@@ -136,10 +137,12 @@ account and Region match the running container before a workspace is created. Mi
 `HUMAN_ACTION_REQUIRED`; it cannot prepare a PR or admit incident memory. Pre-provenance interrupted checkpoints require
 a new run rather than resuming through the gate.
 
-### Offline purchase profile and qualification
+### Offline e-commerce profiles and qualification
 
-The purchase profile runs the repository's `server.js` and `lib/` with its actual Express middleware, initialization SQL
-and native sqlite3 driver over loopback, with a fresh disposable `ecommerce.db` per case. It requires inspection of
+The e-commerce profiles run the repository's real application with its Express middleware, initialization SQL and native
+sqlite3 driver over loopback. `ecommerce_checkout` runs fixed operator-owned persistence and write-failure checks without
+depending on candidate-only exports or test hooks. `ecommerce_purchase` runs the fixed operator-owned purchase suite,
+with a fresh disposable `ecommerce.db` per case. The purchase profile requires inspection of
 `server.js`, `schema.sql`, `seed.sql`, `public/app.js`, and `package.json`. Its published contract is **POST `/purchase`**,
 `application/json`, numeric safe-integer `productId` and positive safe-integer `quantity`; it rejects string fields and
 form encoding. `/checkout` is a different route. If Agent 2 requires a different contract, this profile is incompatible:
@@ -158,14 +161,15 @@ verify platform and all file digests before execution. A mismatched ABI/library,
 failure becomes a capability gap. There is no package installation or syntax fallback during a remediation run.
 
 ```bash
-make test-sandbox-integration  # builds image and clean offline bundle; runs Docker + purchase qualification
+make test-sandbox-integration  # builds image/bundle; qualifies checkout and purchase through real Express/SQLite
 # Explicitly opt-in, with operator credentials and an already-built compatible Linux bundle:
 AIOS_AWS_REGION=ap-southeast-1 AIOS_BEHAVIORAL_BUNDLE=/path/to/qualified/bundle make test-code-interpreter-live
 ```
 
 The hosted image packages a separate Linux/arm64 dependency bundle for Code Interpreter, independently of AgentCore
 Runtime's architecture. That default matches the managed `aws.codeinterpreter.v1` environment qualified in
-`ap-southeast-1` on 2026-10-06. `CODE_INTERPRETER_PLATFORM` can be overridden at image build time only after qualification
+`ap-southeast-1` on 2026-10-07 for both checkout and purchase profiles. `CODE_INTERPRETER_PLATFORM` can be overridden at
+image build time only after qualification
 in the target environment. Runtime platform and file-digest checks fail closed on drift. The live qualification is excluded
 from default tests and must pass in the actual configured environment before release.
 [AWS's preinstalled libraries](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-preinstalled-libraries.html)
