@@ -1732,8 +1732,9 @@ class WorkflowNodes:
             else [],
             limitations=[
                 *state.get("verification_gaps", [])[:49],
+                *((f"Unresolved plan requirement: {item}" for item in plan.unresolved_requirements) if plan else ()),
                 "Local tests do not establish deployed health or the absence of pre-existing product security issues.",
-            ],
+            ][:50],
             unresolved_risks=state.get("residual_risks", []),
         )
 

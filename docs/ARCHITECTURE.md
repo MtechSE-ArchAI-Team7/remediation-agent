@@ -43,3 +43,9 @@ Inspection guardrails return typed `DENIED` tool results so the model can correc
 denied selector upstream. A denial remains in the audit trail, while `REPOSITORY_INSPECTED` is the terminal success
 event and records how many denied calls were recovered. Without that event, an inspection error or exhausted budget
 remains a stage failure and routes through cleanup.
+
+Verification separates executable coverage gaps from reviewed plan limitations. Missing criterion mappings, trusted
+behavioral tasks, request contracts, required source evidence, test IDs, or runtime capabilities fail closed before a
+PR. Other unresolved plan details deterministically raise plan risk and require approval; after approval they remain
+in the verification brief and PR, while the mapped local assertions must still reproduce the base defect and pass on
+the candidate. Explicit post-deployment criteria remain pending for Agent 4 and never count as a local pass.

@@ -105,7 +105,9 @@ Agent 2's `DiagnosisHandoffV1` supplies the diagnosis, evidence and acceptance c
 content to define its tests. Criterion IDs combine their position and content digest (`AC-01-…`); every criterion is
 mapped exactly once in the structured plan. `LOCAL` is the default. `POST_DEPLOYMENT` requires an explicit reason and
 plan approval, remains pending in the brief, and never counts as a local pass. At least one local reproduction is
-required. Missing or contradictory requirements block the run instead of inventing an endpoint or narrowing scope.
+required. Missing task mappings, request contracts, inspected paths, or executable capabilities block the run instead
+of inventing an endpoint or narrowing scope. Other missing or contradictory plan details force exact-plan approval and
+remain visible in the verification brief and PR as unresolved risk; approval does not satisfy any local criterion.
 
 Operator task metadata distinguishes `STATIC` from `BEHAVIORAL`. Behavioral tasks use a fixed `pytest`, `node_test`,
 or `ecommerce_purchase` profile, explicit test paths/IDs, and any required inspection paths/request contract. The host

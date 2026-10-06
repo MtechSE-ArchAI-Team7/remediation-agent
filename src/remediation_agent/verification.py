@@ -26,7 +26,7 @@ def coverage_gaps(
     policy: PolicyConfig,
     inspected_paths: set[str],
 ) -> list[str]:
-    gaps: list[str] = [f"Unresolved requirement: {item}" for item in plan.unresolved_requirements]
+    gaps: list[str] = []
     expected = set(acceptance_ids(handoff))
     actual = [item.criterion_id for item in plan.verification]
     if set(actual) != expected or len(actual) != len(expected):

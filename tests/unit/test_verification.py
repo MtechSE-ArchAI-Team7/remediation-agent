@@ -52,7 +52,7 @@ def test_test_overlay_cannot_replace_application_code(path: str) -> None:
         )
 
 
-@pytest.mark.parametrize("change", ["absent_contract", "wrong_route", "missing_caller", "unresolved"])
+@pytest.mark.parametrize("change", ["absent_contract", "wrong_route", "missing_caller"])
 def test_purchase_requires_matching_contract_and_complete_inspection(change: str) -> None:
     from pathlib import Path
 
@@ -86,9 +86,35 @@ def test_purchase_requires_matching_contract_and_complete_inspection(change: str
         plan = plan.model_copy(update={"request_contracts": [contract.model_copy(update={"path": "/checkout"})]})
     elif change == "missing_caller":
         paths.remove("public/app.js")
-    else:
-        plan = plan.model_copy(update={"unresolved_requirements": ["Request format contradicts upstream evidence."]})
     assert coverage_gaps(diagnosis_handoff(), plan, policy, paths)
+
+
+def test_approved_plan_limitations_do_not_replace_or_invalidate_complete_coverage() -> None:
+    from remediation_agent.domain.enums import ModelOperation
+    from remediation_agent.domain.models import RemediationPlan
+    from remediation_agent.policy.loader import load_policy
+    from remediation_agent.verification import coverage_gaps
+    from tests.conftest import scripted_responses
+
+    policy = load_policy(Path(__file__).parents[2] / "config/policies/demo.json")
+    task = policy.validation_tasks["purchase_regression"]
+    contract = task.request_contract
+    assert contract is not None
+    plan = scripted_responses()[ModelOperation.PLANNING][0]
+    assert isinstance(plan, RemediationPlan)
+    plan = plan.model_copy(
+        update={
+            "verification": [
+                plan.verification[0].model_copy(
+                    update={"task_name": "purchase_regression", "test_ids": task.required_test_ids}
+                )
+            ],
+            "request_contracts": [contract],
+            "unresolved_requirements": ["The order confirmation presentation is outside the supplied criterion."],
+        }
+    )
+
+    assert not coverage_gaps(diagnosis_handoff(), plan, policy, set(task.required_evidence_paths))
 
 
 async def test_verification_artifact_is_redacted_digest_bound_and_immutable(tmp_path: Path) -> None:

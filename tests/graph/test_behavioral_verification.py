@@ -166,6 +166,36 @@ async def test_risk_and_approved_deferred_checks_survive_into_pr() -> None:
     assert "verification" not in result_payload and result_payload["schema_version"] == "1.0"
 
 
+async def test_approved_plan_limitation_is_retained_without_blocking_behavioral_execution() -> None:
+    limitation = "Order-line detail is unspecified and remains outside this bounded persistence fix."
+    responses = scripted_responses()
+    plan = responses[ModelOperation.PLANNING][0]
+    assert isinstance(plan, RemediationPlan)
+    responses[ModelOperation.PLANNING] = [plan.model_copy(update={"unresolved_requirements": [limitation]})]
+    service, _, _, sandbox, pr, artifacts, _ = build_test_service(responses)
+
+    waiting = await service.start(diagnosis_handoff())
+    assert waiting.status is FinalStatus.AWAITING_APPROVAL and waiting.approval_request
+    assert any("Unresolved plan requirement" in reason for reason in waiting.approval_request.reasons)
+    completed = await service.approve(
+        waiting.run_id,
+        ApprovalDecisionV1(
+            approval_id=waiting.approval_request.approval_id,
+            scope_digest=waiting.approval_request.scope_digest,
+            status=ApprovalStatus.APPROVED,
+            reviewer_id="operator",
+            decided_at=datetime.now(UTC),
+        ),
+    )
+
+    assert completed.status is FinalStatus.DRAFT_PR_PREPARED
+    assert sandbox.tasks_run and pr.requests
+    assert limitation in pr.requests[0].payload.body
+    brief = VerificationBriefV1.model_validate_json(artifacts.requests[-1].files["verification-brief.json"])
+    assert f"Unresolved plan requirement: {limitation}" in brief.limitations
+    assert f"Unresolved plan requirement: {limitation}" in brief.unresolved_risks
+
+
 async def test_missing_behavior_cannot_enter_incident_memory() -> None:
     from remediation_agent.adapters.fakes import FakeIncidentMemory
 

@@ -151,6 +151,19 @@ class PolicyEngine:
             if decision is not PolicyDecision.DENY:
                 decision = PolicyDecision.REQUIRE_APPROVAL
 
+        for requirement in plan.unresolved_requirements:
+            findings.append(
+                RiskFinding(
+                    code="UNRESOLVED_PLAN_REQUIREMENT",
+                    level=RiskLevel.HIGH,
+                    summary=f"Unresolved plan requirement: {requirement}",
+                    evidence_ids=plan.evidence_ids,
+                )
+            )
+            level = self._higher_level(level, RiskLevel.HIGH)
+            if decision is not PolicyDecision.DENY:
+                decision = PolicyDecision.REQUIRE_APPROVAL
+
         if any(item.scope == "POST_DEPLOYMENT" for item in plan.verification):
             findings.append(
                 RiskFinding(
