@@ -313,7 +313,10 @@ class GitHubRemoteMcpInspectionTools:
             StructuredTool.from_function(
                 coroutine=get_file_contents,
                 name="get_file_contents",
-                description="Get bounded file or directory contents at the authorized immutable GitHub commit.",
+                description=(
+                    "Get bounded file or directory contents at the authorized immutable GitHub commit. "
+                    "Omit ref and supply the exact host-authorized commit in sha."
+                ),
                 args_schema=GetFileContentsArgs,
                 response_format="content_and_artifact",
             ),

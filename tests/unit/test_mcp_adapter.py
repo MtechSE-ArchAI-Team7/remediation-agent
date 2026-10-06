@@ -77,6 +77,13 @@ def test_registration_rejects_missing_extra_duplicate_and_changed_schemas() -> N
         GitHubRemoteMcpInspectionTools._validate_tools([tree, read, wrong_schema])
 
 
+def test_file_tool_schema_tells_model_to_omit_ref_and_use_sha() -> None:
+    schema = GetFileContentsArgs.model_json_schema()
+
+    assert schema["properties"]["ref"]["description"].startswith("Must be omitted")
+    assert "operator-authorized immutable commit SHA" in schema["properties"]["sha"]["description"]
+
+
 def test_agentcore_registration_requires_exact_namespaced_read_tools() -> None:
     tree = _fixture_tool("GitHubInspection___get_repository_tree", GetRepositoryTreeArgs)
     read = _fixture_tool("GitHubInspection___get_file_contents", GetFileContentsArgs)

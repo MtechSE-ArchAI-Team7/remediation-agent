@@ -192,7 +192,7 @@ keeps a versioned presentation snapshot of this response and updates it alongsid
 
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
-| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects directly by default; `AgentCoreGatewayInspectionTools` optionally signs the exact derived `/mcp` Gateway endpoint with fresh SigV4 credentials. Both expose only the same three native names and preserve repository identity, immutable SHA, path, search, schema, redaction, output, and call-budget controls. |
+| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects directly by default; `AgentCoreGatewayInspectionTools` optionally signs the exact derived `/mcp` Gateway endpoint with fresh SigV4 credentials. Both expose only the same three native names and preserve repository identity, immutable SHA, path, search, schema, redaction, output, and call-budget controls. `get_file_contents` requires the assigned commit in `sha` and requires `ref` to be absent. |
 | Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
 | Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` is used locally; `AgentCoreCodeInterpreterSandbox` retains the patch boundary and validates a sanitized copy in an isolated managed session. |
 | Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. OpenAI structured stages always use function calling; there is no runtime downgrade to JSON-schema or free-form output. |
@@ -755,6 +755,12 @@ It contains redacted audit decisions, policy controls, bounded MCP call records,
 contents, model metrics, and optional reasoning summaries. The primary diagnosis, approval, remediation handoff, and
 delivery schemas retain version `1.0`. A terminal `explainability.json` copy is included in the immutable evidence
 bundle.
+
+An inspection tool result of `DENIED` records successful guardrail enforcement, not by itself a failed inspection.
+The model receives the typed denial and may retry within the existing round and call limits. A recovered inspection
+ends with `REPOSITORY_INSPECTED`; a transport, schema, exhaustion, or unrecovered tool error ends without that terminal
+success event. New traces summarize recovered denials, while clients can apply the same terminal-event rule to older
+immutable traces.
 
 ## Sandbox and policy boundary
 

@@ -166,8 +166,18 @@ class GetFileContentsArgs(StrictModel):
     owner: str = Field(min_length=1, max_length=100)
     repo: str = Field(min_length=1, max_length=100)
     path: RepositoryPathStr | None = None
-    ref: str | None = Field(default=None, min_length=1, max_length=300)
-    sha: str | None = Field(default=None, min_length=7, max_length=64)
+    ref: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=300,
+        description="Must be omitted. Any supplied Git ref is denied by the host guardrail.",
+    )
+    sha: str | None = Field(
+        default=None,
+        min_length=7,
+        max_length=64,
+        description="Required operator-authorized immutable commit SHA.",
+    )
     fields: list[str] | None = Field(default=None, max_length=20)
 
 

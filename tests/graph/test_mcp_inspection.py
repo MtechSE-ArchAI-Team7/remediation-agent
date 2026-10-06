@@ -187,6 +187,44 @@ async def test_model_adapts_across_tool_results_and_plan_is_reconstructed_from_h
     assert not any(key in snapshot.values for key in ("messages", "provider_messages", "mcp_session"))
     inspection_events = [item for item in snapshot.values["audit_events"] if item.event_type == "INSPECTION_TOOL_CALL"]
     assert len(inspection_events) == len(turns)
+    repository_event = next(
+        item for item in snapshot.values["audit_events"] if item.event_type == "REPOSITORY_INSPECTED"
+    )
+    assert "2 denied model calls were safely rejected before inspection completed" in repository_event.detail
+
+
+async def test_mutable_ref_denial_is_explained_as_recovered_guardrail() -> None:
+    denied_arguments = _file_args("src/app.py")
+    denied_arguments["ref"] = _COMMIT
+    turns = [
+        _turn(1, "get_file_contents", denied_arguments),
+        _turn(2, "get_file_contents", _file_args("src/app.py")),
+        _turn(3, "finish_inspection", {"rationale": "Pinned source is sufficient."}),
+    ]
+    service, _, _, _, _, _, _ = build_test_service(
+        scripted_responses(),
+        files={"src/app.py": "value = int(raw)\n"},
+        tool_turns=turns,
+    )
+
+    result = await service.start(diagnosis_handoff())
+    snapshot = await service.graph.aget_state({"configurable": {"thread_id": result.run_id}})
+    calls = [InspectionToolCallRecord.model_validate(item) for item in snapshot.values["inspection_tool_calls"]]
+    inspection_events = [item for item in snapshot.values["audit_events"] if item.event_type == "INSPECTION_TOOL_CALL"]
+
+    assert result.status is FinalStatus.DRAFT_PR_PREPARED
+    assert [item.status for item in calls] == [
+        InspectionToolStatus.DENIED,
+        InspectionToolStatus.SUCCEEDED,
+        InspectionToolStatus.SUCCEEDED,
+    ]
+    assert inspection_events[0].detail == (
+        "Guardrail enforcement: rejected model-supplied ref; operator-bound SHA remains authoritative."
+    )
+    repository_event = next(
+        item for item in snapshot.values["audit_events"] if item.event_type == "REPOSITORY_INSPECTED"
+    )
+    assert "1 denied model call was safely rejected before inspection completed" in repository_event.detail
 
 
 async def test_finish_without_success_cannot_bypass_inspection_and_round_limit_cleans_workspace() -> None:

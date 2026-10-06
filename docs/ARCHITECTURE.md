@@ -37,3 +37,9 @@ operator starts a new run through the full gate.
 
 The control-plane adapter is not model-callable. It receives a fixed runtime ID from trusted deployment configuration,
 has no write method and performs no repository, patch, validation, PR or deployment operation.
+
+Inspection guardrails return typed `DENIED` tool results so the model can correct a bounded call. In particular,
+`get_file_contents` requires `ref` to be absent and the operator-assigned commit in `sha`; the host never forwards a
+denied selector upstream. A denial remains in the audit trail, while `REPOSITORY_INSPECTED` is the terminal success
+event and records how many denied calls were recovered. Without that event, an inspection error or exhausted budget
+remains a stage failure and routes through cleanup.
