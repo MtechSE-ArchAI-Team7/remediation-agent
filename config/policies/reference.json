@@ -77,14 +77,15 @@
     "max_file_bytes": 65536,
     "max_search_results": 50,
     "max_context_bytes": 262144,
-    "max_inspection_rounds": 8,
-    "max_inspection_tool_calls": 12,
+    "max_inspection_rounds": 14,
+    "max_inspection_tool_calls": 16,
     "max_mcp_tool_timeout_seconds": 30,
     "max_task_timeout_seconds": 300,
     "max_task_output_bytes": 1048576,
     "max_validation_tasks_per_attempt": 6,
     "max_model_output_tokens": 8192,
-    "max_active_runs": 4
+    "max_active_runs": 4,
+    "max_edit_proposals": 3
   },
   "default_validation_tasks": [
     "unit_tests"

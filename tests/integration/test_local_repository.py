@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,9 @@ from remediation_agent.ports.models import (
     BranchRequest,
     CommitRequest,
     PatchApplyRequest,
+    PublicationCheckRequest,
+    PublicationError,
+    PushRequest,
     ReadFileRequest,
     SearchRequest,
 )
@@ -112,3 +116,55 @@ async def test_repository_rejects_traversal_and_symlink_reads(tmp_path: Path) ->
     sandbox = DockerSandboxExecutor(tmp_path / "workspaces", "unused-for-patch-test")
     with pytest.raises(SandboxError, match="symlink"):
         await sandbox.apply_patch(PatchApplyRequest(workspace=workspace, unified_diff=patch_for("link.py")))
+
+
+async def test_real_git_recovers_lost_push_response_and_rejects_changed_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, base = _fixture_repository(tmp_path)
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "clone", "--bare", str(source), str(remote))
+    ref = RepositoryRef(provider=RepositoryProvider.LOCAL, url=str(remote), base_branch="main", commit_sha=base)
+    repository = LocalGitRepository(tmp_path / "workspaces")
+    workspace = await repository.create_workspace(ref)
+    sandbox = DockerSandboxExecutor(tmp_path / "workspaces", "unused-for-git-proof")
+    try:
+        await sandbox.apply_patch(PatchApplyRequest(workspace=workspace, unified_diff=patch_for()))
+        tree = await repository.publication_check(PublicationCheckRequest(workspace=workspace, repository=ref))
+        branch = "aios/remediation/recovery"
+        await repository.create_branch(BranchRequest(workspace=workspace, branch_name=branch))
+        commit_request = CommitRequest(
+            workspace=workspace,
+            message="fix: reproducible",
+            expected_tree=tree,
+            authored_at=datetime(2026, 10, 1, tzinfo=UTC),
+        )
+        commit = await repository.commit(commit_request)
+        assert await repository.commit(commit_request) == commit
+        original = repository._run
+        lost = False
+
+        async def lose_response(argv: list[str], **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal lost
+            result = await original(argv, **kwargs)
+            if "push" in argv and not lost:
+                lost = True
+                raise RepositoryError("simulated lost push acknowledgement")
+            return result
+
+        monkeypatch.setattr(repository, "_run", lose_response)
+        push = PushRequest(workspace=workspace, branch_name=branch, expected_commit=commit.commit_sha)
+        with pytest.raises(RepositoryError, match="lost push"):
+            await repository.push(push)
+        assert (await repository.push(push)).pushed
+        assert _git(remote, "rev-parse", "refs/heads/" + branch) == commit.commit_sha
+        (source / "README.md").write_text("upstream advanced\n")
+        _git(source, "add", "README.md")
+        _git(source, "commit", "-m", "new upstream base")
+        _git(source, "push", str(remote), "main")
+        with pytest.raises(PublicationError, match="BASE_CHANGED"):
+            await repository.publication_check(
+                PublicationCheckRequest(workspace=workspace, repository=ref, expected_tree=tree)
+            )
+    finally:
+        assert (await sandbox.destroy(workspace)).succeeded

@@ -29,10 +29,11 @@ async def test_ten_case_evaluation_exercises_routes_and_controls(tmp_path: Path)
     assert trials["EVAL-09"].actual_route is ExpectedRoute.FAIL_SAFE
     assert trials["EVAL-08"].patch_applied is False
     assert trials["EVAL-08"].validation_executions == []
-    assert {trial.case_id for trial in result.trials if trial.actual_route is ExpectedRoute.APPROVAL} == {
+    assert {trial.case_id for trial in result.trials if trial.actual_route is ExpectedRoute.FAIL_SAFE} == {
         "EVAL-02",
         "EVAL-05",
         "EVAL-10",
+        "EVAL-09",
     }
     assert all(record["backend"] == "FAKE" for trial in result.trials for record in trial.validation_executions)
 

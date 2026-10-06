@@ -154,6 +154,7 @@ async def test_native_tools_are_scoped_normalized_redacted_and_bounded(tmp_path:
             "search_code": _json_result(search),
         }
     )
+    (workspace_path / "src/app.py").write_text("api_key=visible-test-value\n" + "x" * 70_000)
     provider = _provider()
     workspace = _workspace(workspace_path)
     tools = provider._bounded_tools(client, provider._target(_repository(), workspace), workspace)  # type: ignore[arg-type]  # noqa: SLF001
@@ -177,7 +178,7 @@ async def test_native_tools_are_scoped_normalized_redacted_and_bounded(tmp_path:
     assert file_response.status is InspectionToolStatus.SUCCEEDED
     assert file_response.artifact is not None
     assert "visible-test-value" not in file_response.artifact.content
-    assert "[REDACTED]" in file_response.artifact.content
+    assert "[PROTECTED SOURCE]" in file_response.artifact.content
     assert file_response.artifact.truncated
     assert len(file_response.artifact.content.encode("utf-8")) <= 65_536
 

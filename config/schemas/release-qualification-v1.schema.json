@@ -1,0 +1,167 @@
+{
+  "$defs": {
+    "QualificationTrialV1": {
+      "additionalProperties": false,
+      "properties": {
+        "assertions_digests": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Assertions Digests",
+          "type": "array"
+        },
+        "candidate_digest": {
+          "title": "Candidate Digest",
+          "type": "string"
+        },
+        "cleanup_verified": {
+          "title": "Cleanup Verified",
+          "type": "boolean"
+        },
+        "commit_sha": {
+          "title": "Commit Sha",
+          "type": "string"
+        },
+        "evidence_persisted": {
+          "title": "Evidence Persisted",
+          "type": "boolean"
+        },
+        "locally_verified": {
+          "title": "Locally Verified",
+          "type": "boolean"
+        },
+        "publication_verified": {
+          "title": "Publication Verified",
+          "type": "boolean"
+        },
+        "run_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "locally_verified",
+        "evidence_persisted",
+        "cleanup_verified",
+        "publication_verified",
+        "candidate_digest",
+        "commit_sha",
+        "assertions_digests"
+      ],
+      "title": "QualificationTrialV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approvals": {
+      "const": "isolated-test-only",
+      "default": "isolated-test-only",
+      "title": "Approvals",
+      "type": "string"
+    },
+    "assets_digest": {
+      "title": "Assets Digest",
+      "type": "string"
+    },
+    "backend": {
+      "enum": [
+        "docker",
+        "code-interpreter"
+      ],
+      "title": "Backend",
+      "type": "string"
+    },
+    "case": {
+      "enum": [
+        "ah54",
+        "ah56"
+      ],
+      "title": "Case",
+      "type": "string"
+    },
+    "image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Image Digest",
+      "type": "string"
+    },
+    "model_configuration_digest": {
+      "title": "Model Configuration Digest",
+      "type": "string"
+    },
+    "policy_digest": {
+      "title": "Policy Digest",
+      "type": "string"
+    },
+    "prompt_version": {
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "qualified_at": {
+      "format": "date-time",
+      "title": "Qualified At",
+      "type": "string"
+    },
+    "remote_writes": {
+      "const": "simulated",
+      "default": "simulated",
+      "title": "Remote Writes",
+      "type": "string"
+    },
+    "runtime_configuration_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Runtime Configuration Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_digest": {
+      "title": "Snapshot Digest",
+      "type": "string"
+    },
+    "source_revision": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "trials": {
+      "items": {
+        "$ref": "#/$defs/QualificationTrialV1"
+      },
+      "maxItems": 3,
+      "minItems": 1,
+      "title": "Trials",
+      "type": "array"
+    }
+  },
+  "required": [
+    "case",
+    "backend",
+    "source_revision",
+    "image_digest",
+    "runtime_configuration_digest",
+    "policy_digest",
+    "assets_digest",
+    "model_configuration_digest",
+    "prompt_version",
+    "snapshot_digest",
+    "qualified_at",
+    "trials"
+  ],
+  "title": "ReleaseQualificationV1",
+  "type": "object"
+}

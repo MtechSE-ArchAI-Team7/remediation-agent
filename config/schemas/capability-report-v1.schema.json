@@ -1,0 +1,97 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "assertions_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Assertions Digest"
+    },
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "base_commit": {
+      "minLength": 1,
+      "title": "Base Commit",
+      "type": "string"
+    },
+    "cleanup_verified": {
+      "default": false,
+      "title": "Cleanup Verified",
+      "type": "boolean"
+    },
+    "dependency_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Dependency Digest"
+    },
+    "detail": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Detail",
+      "type": "string"
+    },
+    "failure_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Code"
+    },
+    "runtime_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Runtime Digest"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "startup_verified": {
+      "default": false,
+      "title": "Startup Verified",
+      "type": "boolean"
+    },
+    "task_name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Task Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_name",
+    "available",
+    "base_commit"
+  ],
+  "title": "CapabilityReportV1",
+  "type": "object"
+}

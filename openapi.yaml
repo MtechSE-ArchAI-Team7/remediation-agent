@@ -295,6 +295,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /v1/remediations/{run_id}/publication-retry:
+    post:
+      tags:
+      - Remediations
+      summary: Retry Publication
+      operationId: retry_publication
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicationRetryRequestV1'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RemediationRunView'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /v1/remediations/{run_id}:
     get:
       tags:
@@ -1399,6 +1431,33 @@ components:
       - MODEL_CONTROL
       - DETERMINISTIC_WORKFLOW
       title: OperationalToolExecutionMode
+    PublicationRetryRequestV1:
+      properties:
+        schema_version:
+          type: string
+          const: '1.0'
+          title: Schema Version
+          default: '1.0'
+        operation:
+          type: string
+          const: retry_publication
+          title: Operation
+          default: retry_publication
+        run_id:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Run Id
+        candidate_digest:
+          type: string
+          minLength: 1
+          title: Candidate Digest
+      additionalProperties: false
+      type: object
+      required:
+      - run_id
+      - candidate_digest
+      title: PublicationRetryRequestV1
     ReadinessResponse:
       properties:
         status:

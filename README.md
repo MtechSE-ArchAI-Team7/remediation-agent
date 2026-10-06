@@ -99,6 +99,38 @@ The lifecycle is:
 Model output never decides whether validation passed, lowers policy severity, supplies executable command strings, or
 calls workspace mutation, sandbox, Git, GitHub, artifact, approval, checkpoint, credential, or cleanup operations.
 
+## Executable diagnosis and durable delivery
+
+The operator registry in `adapters/validation_assets/profiles.json` defines supported behaviors by repository and
+profile, independently of Jira IDs. Before plan approval, the host compiles canonical assertion IDs/request contracts,
+checks complete source evidence, and executes base startup/fixture/cleanup capability checks. Natural-language
+paraphrases and JSON formatting are not identities. One bounded planning correction can repair mappings; an unresolved
+implementation requirement returns `HUMAN_ACTION_REQUIRED` before patch generation.
+
+Source views preserve expressions such as `token: userToken`; actual secret values have protected source locations.
+Models return `EditProposal` with inspected-file digest, exact line range, expected visible bytes and replacement.
+The host rejects stale/uninspected/overlapping/protected edits, constructs the diff and checks applicability before
+approval. There are three edit proposals per candidate and three executed candidate attempts. Infrastructure failures
+require recovery and never consume a code-repair attempt or trigger speculative changes. The overall invocation deadline
+still bounds the workflow. Inspection has a 14-round/16-call cap to accommodate the complete affected path.
+
+Approvals bind workflow version, immutable base, contract, policy, assertions/assets and candidate scope. Unfinished
+checkpoints without compatible evidence require a new run and revalidation. The accepted redacted Agent 2 handoff is
+retained as `diagnosis-handoff.json`; operator replay must use that exact artifact or Agent 2's native delivery, never
+synthesized criteria from a diagnosis summary.
+
+Validated evidence is persisted before checkpointed branch, commit, push, draft and verification stages. Every stage
+checks the candidate tree and unchanged target base; remote writes never force-push or silently rebase. A lost GitHub
+response is reconciled against the exact repository, branch, commit and open draft. Three bounded attempts precede a
+concrete publication failure. `DRAFT_PR_PREPARED` is success only in explicitly configured no-write qualification;
+configured remote delivery requires a confirmed draft. Successful memory admission requires durable evidence and cleanup;
+Agent 4 delivery additionally requires the verified draft references.
+
+An operator can retry an unchanged validated publication through
+`POST /v1/remediations/{run_id}/publication-retry` with `PublicationRetryRequestV1`, or the additive A2A
+`application/vnd.aios.publication-retry.v1+json` message on the same task. Stale candidate digests or execution inputs are
+rejected. See [workflow qualification and recovery](docs/WORKFLOW_QUALIFICATION.md).
+
 ## Behavioral verification and Agent 4 handoff
 
 Agent 2's `DiagnosisHandoffV1` supplies the diagnosis, evidence and acceptance criteria. Agent 3 never retrieves Jira
@@ -140,8 +172,10 @@ a new run rather than resuming through the gate.
 ### Offline e-commerce profiles and qualification
 
 The e-commerce profiles run the repository's real application with its Express middleware, initialization SQL and native
-sqlite3 driver over loopback. `ecommerce_checkout` runs fixed operator-owned persistence and write-failure checks without
-depending on candidate-only exports or test hooks. `ecommerce_purchase` runs the fixed operator-owned purchase suite,
+sqlite3 driver over loopback. `ecommerce_checkout` runs nine fixed server and actual-storefront browser checks: durable
+insertion, server-priced multi-product totals, invalid carts, rejected writes, restart persistence, confirmed browser
+success, HTTP/network failures, and catalog regression. It uses offline Playwright/Chromium without candidate-only exports
+or test hooks, and never imposes an order-status literal. `ecommerce_purchase` runs the fixed operator-owned purchase suite,
 with a fresh disposable `ecommerce.db` per case. The purchase profile requires inspection of
 `server.js`, `schema.sql`, `seed.sql`, `public/app.js`, and `package.json`. Its published contract is **POST `/purchase`**,
 `application/json`, numeric safe-integer `productId` and positive safe-integer `quantity`; it rejects string fields and
@@ -167,8 +201,8 @@ AIOS_AWS_REGION=ap-southeast-1 AIOS_BEHAVIORAL_BUNDLE=/path/to/qualified/bundle 
 ```
 
 The hosted image packages a separate Linux/arm64 dependency bundle for Code Interpreter, independently of AgentCore
-Runtime's architecture. That default matches the managed `aws.codeinterpreter.v1` environment qualified in
-`ap-southeast-1` on 2026-10-07 for both checkout and purchase profiles. `CODE_INTERPRETER_PLATFORM` can be overridden at
+Runtime's architecture. Every release must qualify the exact bundle, including its browser, in the managed `aws.codeinterpreter.v1` environment
+in `ap-southeast-1`; older server-only qualification does not qualify the browser profile. `CODE_INTERPRETER_PLATFORM` can be overridden at
 image build time only after qualification
 in the target environment. Runtime platform and file-digest checks fail closed on drift. The live qualification is excluded
 from default tests and must pass in the actual configured environment before release.
@@ -181,8 +215,7 @@ Generated tests remain reviewable, untrusted code. Structured reporting proves e
 correctness of arbitrary generated assertions. The purchase suite's operator-owned assertions supply independent coverage.
 The legacy application dependency versions are pinned for compatibility and are not a recommendation for production use;
 updating application dependencies or repairing unrelated security findings is a separately scoped change. Native/runtime
-compatibility, bundle provenance and provider isolation require operator qualification. No Agent 4, UI or deployment changes
-are needed to consume the supplemental brief.
+compatibility, bundle provenance and provider isolation require operator qualification. Agent 4 consumes the supplemental brief without a handoff schema change.
 
 ## Capabilities and tool boundary
 
@@ -643,22 +676,24 @@ reads only the matching manifest reference from `runs/*`, verifies its digest, r
 UTF-8 content without invoking the model or altering checkpoint state.
 
 After CI succeeds on a push to `main`, the release workflow publishes a `linux/arm64` commit-SHA tag to
-`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent` and updates the existing AgentCore Runtime
-with the immutable image digest. Pull requests run CI without publishing, tags publish without deploying, and a manual
+`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent` then requires three consecutive hosted full-workflow trials per immutable AH-54/AH-56 snapshot before updating the
+existing AgentCore Runtime with that image digest. Pull requests run CI without publishing, tags publish without deploying, and a manual
 dispatch may publish and deploy. Configure these GitHub repository values before enabling the release:
 
 | Kind | Name | Purpose |
 |---|---|---|
 | Variable | `AGENTCORE_RUNTIME_ID` | Existing AgentCore Runtime identifier |
 | Secret | `AWS_ROLE_ARN` | OIDC role used only to publish the image to ECR |
-| Secret | `AWS_AGENTCORE_DEPLOY_ROLE_ARN` | OIDC role used only to update and probe the existing runtime |
+| Secret | `AWS_AGENTCORE_DEPLOY_ROLE_ARN` | OIDC role for isolated qualification, guarded update and readiness probe |
 
 The image-publishing role currently documented for the initial test deployment has account-wide ECR PowerUser access
 and is therefore test-only; replace it with a repository-scoped role before a non-test deployment. Keep the AgentCore
 deployment role separate. It needs `GetAgentRuntime`, `UpdateAgentRuntime`, and `InvokeAgentRuntime` only on the exact
 runtime plus `iam:PassRole` only on the existing runtime execution role, conditioned on
 `iam:PassedToService=bedrock-agentcore.amazonaws.com`. Its OIDC trust must be restricted to this repository and
-`refs/heads/main`.
+`refs/heads/main`. The separate operator qualification policy in
+`config/operator/release-qualification-policy.json` adds only ECR reads/login, the configured model gateway and system
+Code Interpreter sessions. The runtime execution role receives no new authority from this release gate.
 
 The runtime execution role must also grant `s3:ListBucket` for the configured `AIOS_A2A_TASK_STORE_PREFIX` and
 `s3:GetObject`, `s3:PutObject`, and `s3:DeleteObject` only beneath that prefix. For the documented default, scope the
@@ -794,7 +829,8 @@ authorization, and audit-grade reviewer identity.
 
 
 Validation record for behavioral hardening (2026-10-06): local format/lint/strict typing, default tests, package build,
-Bandit and real Docker integration passed. Live Code Interpreter qualification is implemented but was not run; it is a
-release prerequisite for this new profile. The first `make security` run found 18 advisories in the service lock. The
+Bandit and real Docker integration passed. At that earlier checkpoint, hosted qualification had not run. On 2026-10-07 the real immutable AH-54/AH-56
+before/after integrations passed in both Docker and Code Interpreter, including the actual checkout browser. Six complete
+model-generated hosted trials against the final image remain a mandatory executable release gate. The first `make security` run found 18 advisories in the service lock. The
 release follow-up upgraded `langgraph-sdk` to 0.4.5, `PyJWT` to 2.15.1, and `urllib3` to 2.8.0; the subsequent Bandit and
 pip-audit checks passed.

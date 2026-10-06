@@ -10,10 +10,8 @@ import pytest
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import ModelOperation
-from remediation_agent.domain.models import PatchCandidate, RemediationPlan, RiskAssessment, StrictModel
+from remediation_agent.domain.models import EditProposal, RemediationPlan, RiskAssessment, StrictModel
 from remediation_agent.ports.models import ModelRequest
-
-_GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
 
 
 class _GatewayContractResult(StrictModel):
@@ -25,19 +23,9 @@ async def test_authenticated_gateway_returns_one_bounded_structured_response() -
     if os.environ.get("AIOS_RUN_AGENTCORE_GATEWAY_LIVE") != "1":
         pytest.skip("set AIOS_RUN_AGENTCORE_GATEWAY_LIVE=1 to call the authenticated gateway")
     settings = Settings.model_validate(
-        {
-            "policy_file": Path("config/policies/reference.json"),
-            "llm_provider": "openai",
-            "llm_model": "kei-openai-target/gpt-5.6-terra",
-            "aws_region": "ap-southeast-1",
-            "openai_auth_mode": "aws_iam_gateway",
-            "openai_gateway_arn": _GATEWAY_ARN,
-            "OPENAI_API_KEY": None,
-            "openai_secret_arn": None,
-            "openai_base_url": None,
-            "model_transport_retries": 0,
-        }
+        {"policy_file": Path("config/policies/reference.json"), "OPENAI_API_KEY": None, "openai_secret_arn": None}
     )
+    assert settings.llm_provider == "openai" and settings.openai_auth_mode == "aws_iam_gateway"
     model = build_structured_model(settings, max_output_tokens=2_048, max_format_retries=0)
     try:
         generation = await model.generate(
@@ -74,19 +62,33 @@ async def test_authenticated_gateway_returns_one_bounded_structured_response() -
                 operation=ModelOperation.PATCH,
                 prompt_version="gateway-live-v1",
                 system_instruction=(
-                    "Return a syntactically valid one-line unified diff changing const value = 1; to const value = 2; "
-                    "in src/app.js."
+                    "Return one exact source edit changing const value = 1; to const value = 2; in src/app.js. "
+                    "Use range [1,2), the supplied base digest, and exact expected content including its newline."
                 ),
-                payload={"path": "src/app.js"},
+                payload={
+                    "path": "src/app.js",
+                    "base_content_digest": "sha256:" + "a" * 64,
+                    "expected_content": "const value = 1;\n",
+                },
             ),
-            PatchCandidate,
+            EditProposal,
+        )
+        revision = await model.generate(
+            ModelRequest(
+                operation=ModelOperation.REVISION,
+                prompt_version="gateway-live-v1",
+                system_instruction="Return the same typed source edit proposal.",
+                payload={"proposal": patch.value.model_dump(mode="json")},
+            ),
+            EditProposal,
         )
     finally:
         await model.aclose()
 
     assert generation.value.status == "ok"
     assert generation.record.provider == "openai"
-    assert generation.record.model == "kei-openai-target/gpt-5.6-terra"
+    assert generation.record.model == settings.llm_model
     assert plan.value.evidence_ids == ["e1"]
     assert risk.value.rationale
-    assert patch.value.unified_diff.startswith("--- a/src/app.js")
+    assert patch.value.edits[0].expected_content == "const value = 1;\n"
+    assert revision.value.edits[0].path == "src/app.js"

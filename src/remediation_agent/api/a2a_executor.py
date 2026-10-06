@@ -23,6 +23,7 @@ from remediation_agent.api.a2a_contracts import (
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
+    PUBLICATION_RETRY_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
     RUN_SUMMARY_METADATA_KEY,
     ArtifactPreviewRequestV1,
@@ -36,6 +37,7 @@ from remediation_agent.domain.enums import FinalStatus, ModelOperation, ReleaseP
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     DiagnosisHandoffV1,
+    PublicationRetryRequestV1,
     RemediationHandoffV1,
     RemediationRunView,
 )
@@ -149,6 +151,12 @@ class RemediationA2AExecutor(AgentExecutor):
             if media_type == DIAGNOSIS_HANDOFF_MEDIA_TYPE:
                 handoff = DiagnosisHandoffV1.model_validate(payload)
                 summary = _new_run_summary(context, task_id, handoff)
+            elif media_type == PUBLICATION_RETRY_MEDIA_TYPE:
+                retry = PublicationRetryRequestV1.model_validate(payload)
+                if retry.run_id != task_id:
+                    await self._reject_transport(task_id, context_id, event_queue, "PUBLICATION_RUN_MISMATCH")
+                    return
+                summary = _resumed_run_summary(context, task_id)
             elif media_type == APPROVAL_DECISION_MEDIA_TYPE:
                 decision = ApprovalDecisionV1.model_validate(payload)
                 summary = _resumed_run_summary(context, task_id)
@@ -191,6 +199,8 @@ class RemediationA2AExecutor(AgentExecutor):
         try:
             if media_type == DIAGNOSIS_HANDOFF_MEDIA_TYPE:
                 view = await self._service.start(handoff, run_id=task_id)
+            elif media_type == PUBLICATION_RETRY_MEDIA_TYPE:
+                view = await self._service.retry_publication(task_id, retry.candidate_digest)
             else:
                 view = await self._service.approve(task_id, decision)
         except ValidationError:

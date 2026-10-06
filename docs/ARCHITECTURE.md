@@ -10,13 +10,22 @@ flowchart LR
     Scope --> Workspace[Create disposable workspace]
     Workspace --> Inspect[Inspect immutable repository]
     Inspect --> Plan[Create verification-backed plan]
-    Plan --> Risk[Assess risk]
+    Plan --> Contract[Compile canonical coverage]
+    Contract --> Capabilities[Execute base capability probe]
+    Capabilities --> Risk[Assess risk]
     Risk --> Approval{Approval required?}
-    Approval --> Patch[Generate and preflight patch]
+    Approval --> Patch[Compile typed exact edits and preflight]
     Patch --> Validate[Run base and candidate validation]
     Validate --> Evidence[Build evidence and draft PR payload]
-    Evidence --> Cleanup[Cleanup]
-    Cleanup --> Final[Finalize handoff]
+    Evidence --> Seal[Persist verified candidate]
+    Seal --> Branch[Branch]
+    Branch --> Commit[Commit]
+    Commit --> Push[Push and reconcile]
+    Push --> Draft[Create and verify exact draft]
+    Draft --> Cleanup[Cleanup]
+    Cleanup --> Durable[Persist cleanup and publication receipts]
+    Durable --> Memory[Eligible incident memory]
+    Memory --> Final[Finalize handoff]
     Provenance -->|missing or ambiguous| Human[HUMAN_ACTION_REQUIRED]
 ```
 
@@ -57,3 +66,50 @@ assertions without relying on candidate-only exports. Generic `node_test` remain
 reporter retains a bounded `test:stderr` diagnostic for setup failures, while pass/fail still comes only from structured
 test events. This prevents a missing application dependency from being mistaken for a reproduced defect and leaves a
 useful capability-gap explanation in validation evidence.
+
+## Execution bindings and recovery
+
+`CompiledContractV1`, `CapabilityReportV1`, `ExecutionBindingV1`, edit receipts and `PublicationJournalV1` are internal
+supplementary artifacts. `DiagnosisHandoffV1` and `RemediationHandoffV1` are unchanged. The original accepted input is
+redacted before checkpointing and retained with its manifest digest. A repeated run ID cannot replace that handoff.
+
+Source projection is separate from diagnostic redaction. Commit-pinned MCP bytes must match the local immutable source;
+secret spans cannot be edited or reconstructed. The host compiles `EditProposal`, verifies its applicability and actual
+result, then binds review to the canonical change. Edit-construction attempts and executed behavioral-repair attempts
+have separate limits. The fixed full contract remains in every revision, including browser obligations.
+
+The compiled contract supplies immutable operator assertions. Extra generated assertions are frozen across candidate
+repair; changing their digest requires review and a new baseline. Base setup errors never qualify as defect reproduction.
+Applications and browsers run in disposable copies with real middleware, SQLite and deterministic fixtures. Browser
+assets and application dependencies are independent locked offline graphs, verified before use. Chunked hosted uploads
+retain the existing total asset limits and are reassembled with digest checks; commands remain operator-owned argv.
+
+Publication is an idempotent sequence of graph stages. Fixed commit timestamps make exact candidate recovery reproduce
+the same commit after workspace cleanup. Tree/base mismatches stop delivery. Draft creation retries reconcile before
+writing; verification checks the actual head SHA, repository, base, open state and draft flag. The immutable validation
+brief is sealed before publication; subsequent recovery outcomes live in the publication journal and final handoff.
+Successful cleanup and persisted qualifying evidence precede incident-memory admission.
+
+The real-model qualification harness uses immutable source archives, real Git, actual restricted validation and test-only
+approval decisions. Only remote GitHub writes are simulated. Three consecutive hosted trials for each supported case are
+required as release evidence; fake benchmark results establish routing coverage only.
+
+
+## Executable release gate
+
+CI builds the immutable image before `qualify-agentcore-runtime.yaml` runs three consecutive trials for each sealed
+historical source snapshot. The qualification container uses that exact image and the existing runtime's model settings;
+only remote GitHub writes are simulated. The deploy workflow verifies `ReleaseQualificationV1` reports from the same
+Actions run, with unique successful trials, clean validation/cleanup/publication outcomes and unchanged assertion digests.
+It checks source SHA, immutable ECR digest, policy/assets/model bindings and current runtime environment before any update.
+Real native human approvals, GitHub writes and the Agent 4 handoff remain a separate post-release demonstration.
+
+Execution bindings also include the model configuration digest. Every unfinished approval/publication resume compares
+workflow/base/contract/policy/assets/prompt/model inputs. An incompatible checkpoint cannot reuse a prior approval.
+Observed baseline failures in operator-declared regression checks remain in the brief, PR and memory evidence;
+acceptance assertions and mandatory operator security tasks must pass, and introduced regressions always block.
+
+The sealed headless browser includes its matching ELF loader and shared libraries. The loader is colocated with browser
+resources; direct child-process launch avoids zygote re-executing the loader through `/proc/self/exe`. This preserves the
+existing outer Docker/managed-sandbox isolation controls. Qualification includes actual page interaction and loopback
+request interception; browser launch alone is insufficient evidence.

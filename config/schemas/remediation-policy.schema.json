@@ -82,6 +82,13 @@
           "title": "Max Context Bytes",
           "type": "integer"
         },
+        "max_edit_proposals": {
+          "default": 3,
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Max Edit Proposals",
+          "type": "integer"
+        },
         "max_file_bytes": {
           "exclusiveMinimum": 0,
           "title": "Max File Bytes",
@@ -370,6 +377,14 @@
           "title": "Argv",
           "type": "array"
         },
+        "assertions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 40,
+          "title": "Assertions",
+          "type": "object"
+        },
         "cwd": {
           "default": ".",
           "minLength": 1,
@@ -393,6 +408,14 @@
           "title": "Kind",
           "type": "string"
         },
+        "limitations": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Limitations",
+          "type": "array"
+        },
         "output_limit_bytes": {
           "exclusiveMinimum": 0,
           "title": "Output Limit Bytes",
@@ -415,6 +438,23 @@
           ],
           "default": null,
           "title": "Profile"
+        },
+        "regression_test_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Regression Test Ids",
+          "type": "array"
+        },
+        "repository_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Repository Patterns",
+          "type": "array"
         },
         "request_contract": {
           "anyOf": [
@@ -449,6 +489,19 @@
           "default": false,
           "title": "Retryable",
           "type": "boolean"
+        },
+        "source_syntax": {
+          "anyOf": [
+            {
+              "const": "javascript",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Syntax"
         },
         "test_paths": {
           "items": {

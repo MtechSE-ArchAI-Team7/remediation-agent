@@ -1,0 +1,70 @@
+name: Qualify AgentCore Runtime Image
+
+on:
+  workflow_call:
+    inputs:
+      image-uri:
+        required: true
+        type: string
+      image-digest:
+        required: true
+        type: string
+      source-revision:
+        required: true
+        type: string
+    secrets:
+      AWS_ROLE_ARN:
+        required: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 55
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [ah54, ah56]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-southeast-1
+          role-duration-seconds: 3600
+      - name: Qualify the immutable image with the deployed model configuration
+        env:
+          IMAGE_URI: ${{ inputs.image-uri }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          SOURCE_SHA: ${{ inputs.source-revision }}
+          CASE: ${{ matrix.case }}
+        run: |
+          set -euo pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "734849394833"
+          aws bedrock-agentcore-control get-agent-runtime \
+            --agent-runtime-id remediation_agent-2425SXH9D3 --region ap-southeast-1 \
+            > "$RUNNER_TEMP/qualification-runtime.json"
+          python scripts/qualification_environment.py "$RUNNER_TEMP/qualification-runtime.json" "$RUNNER_TEMP/qualification.env"
+          registry=734849394833.dkr.ecr.ap-southeast-1.amazonaws.com
+          aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin "$registry"
+          immutable_image="${IMAGE_URI%:*}@${IMAGE_DIGEST}"
+          docker pull "$immutable_image"
+          mkdir -p "$RUNNER_TEMP/qualification-output"
+          chmod 0777 "$RUNNER_TEMP/qualification-output"
+          docker run --rm --env-file "$RUNNER_TEMP/qualification.env" \
+            -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_DEFAULT_REGION \
+            -e AIOS_QUALIFICATION_SOURCE_SHA="$SOURCE_SHA" \
+            -e AIOS_QUALIFICATION_IMAGE_DIGEST="$IMAGE_DIGEST" \
+            --volume "$RUNNER_TEMP/qualification-output:/qualification-output" \
+            "$immutable_image" python scripts/qualify_workflow.py \
+            --backend code-interpreter --case "$CASE" --trials 3 --output /qualification-output
+      - name: Retain bounded qualification evidence, including failed trials
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-qualification-${{ matrix.case }}
+          path: ${{ runner.temp }}/qualification-output
+          retention-days: 30
+          if-no-files-found: error

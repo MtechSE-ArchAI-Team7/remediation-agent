@@ -23,6 +23,64 @@ from remediation_agent.verification import acceptance_ids
 from tests.conftest import build_test_service, diagnosis_handoff, scripted_responses
 
 
+@pytest.mark.parametrize("introduced", [False, True])
+async def test_preexisting_regression_is_visible_but_new_regression_blocks(
+    introduced: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tests.conftest as fixtures
+    from remediation_agent.policy.loader import load_policy as original_policy
+
+    def policy_with_regression(path):  # type: ignore[no-untyped-def]
+        policy = original_policy(path)
+        tasks = dict(policy.validation_tasks)
+        tasks["unit_tests"] = tasks["unit_tests"].model_copy(
+            update={
+                "required_test_ids": ["regression", "unaffected_route"],
+                "regression_test_ids": ["unaffected_route"],
+            }
+        )
+        return policy.model_copy(
+            update={
+                "validation_tasks": tasks,
+                "limits": policy.limits.model_copy(update={"max_validation_attempts": 1}),
+            }
+        )
+
+    monkeypatch.setattr(fixtures, "load_policy", policy_with_regression)
+    service, _, _, sandbox, provider, artifacts, _ = build_test_service(scripted_responses())
+    original = sandbox.run_behavior
+
+    async def with_regression(request: BehavioralTaskRequest) -> BehavioralTaskExecution:
+        execution = await original(request)
+        base = BehavioralReport(
+            cases=[
+                BehavioralCaseResult(test_id="regression", outcome="ASSERTION_FAILED"),
+                BehavioralCaseResult(
+                    test_id="unaffected_route", outcome="PASSED" if introduced else "ASSERTION_FAILED"
+                ),
+            ]
+        )
+        candidate = BehavioralReport(
+            cases=[
+                BehavioralCaseResult(test_id="regression", outcome="PASSED"),
+                BehavioralCaseResult(test_id="unaffected_route", outcome="ASSERTION_FAILED"),
+            ]
+        )
+        return execution.model_copy(
+            update={"evidence": execution.evidence.model_copy(update={"base": base, "candidate": candidate})}
+        )
+
+    monkeypatch.setattr(sandbox, "run_behavior", with_regression)
+    result = await service.start(diagnosis_handoff())
+    if introduced:
+        assert result.status is FinalStatus.VALIDATION_FAILED and not provider.requests
+    else:
+        assert result.status is FinalStatus.DRAFT_PR_PREPARED
+        assert "Observed pre-existing regression failure" in provider.requests[0].payload.body
+        brief = VerificationBriefV1.model_validate_json(artifacts.requests[-1].files["verification-brief.json"])
+        assert any(item.classification == "OBSERVED_BASELINE_FAILURE" for item in brief.observations)
+
+
 @pytest.mark.parametrize("mode", ["absent", "static", "unknown", "missing_ids", "duplicate"])
 async def test_incomplete_contract_never_prepares_pr(mode: str) -> None:
     responses = scripted_responses()

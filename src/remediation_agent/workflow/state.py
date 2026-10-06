@@ -11,11 +11,16 @@ from remediation_agent.domain.models import (
     ArtifactManifest,
     AuditEvent,
     BehavioralEvidence,
+    CapabilityReportV1,
     CleanupResult,
+    CompiledContractV1,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
     DraftPrMetadata,
+    EditProposal,
+    EditReceipt,
     ErrorRecord,
+    ExecutionBindingV1,
     IncidentMemoryRetrievalV1,
     IncidentMemoryWriteReceiptV1,
     InspectionArtifact,
@@ -24,6 +29,7 @@ from remediation_agent.domain.models import (
     ModelCallRecord,
     PatchCandidate,
     PatchPolicyResult,
+    PublicationJournalV1,
     ReleaseProvenanceV1,
     RemediationHandoffV1,
     RemediationPlan,
@@ -32,6 +38,8 @@ from remediation_agent.domain.models import (
     ValidationAttempt,
     ValidationExecutionRecord,
     ValidationTaskResult,
+    VerificationBriefV1,
+    WorkflowFailure,
     WorkspaceRef,
 )
 
@@ -53,11 +61,18 @@ class RemediationState(TypedDict, total=False):
     inspection_tool_calls: list[InspectionToolCallRecord]
     incident_memory_retrieval: IncidentMemoryRetrievalV1
 
+    sealed_verification_brief: VerificationBriefV1
+    execution_binding: ExecutionBindingV1
+    compiled_contract: CompiledContractV1
+    capability_reports: list[CapabilityReportV1]
     remediation_plan: RemediationPlan
     risk_assessment: RiskAssessment
     approval_request: ApprovalRequest
     approval_history: list[ApprovalDecisionV1]
 
+    edit_proposal: EditProposal
+    edit_receipts: list[EditReceipt]
+    workflow_failures: list[WorkflowFailure]
     patch_candidate: PatchCandidate
     patch_policy: PatchPolicyResult
     changed_files: list[str]
@@ -80,6 +95,8 @@ class RemediationState(TypedDict, total=False):
 
     residual_risks: list[str]
     rollback_instructions: RollbackInstructions
+    publication_journal: PublicationJournalV1
+    evidence_persisted: bool
     draft_pr: DraftPrMetadata
     proposed_branch: str
     proposed_commit: str

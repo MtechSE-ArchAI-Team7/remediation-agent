@@ -126,6 +126,12 @@ class InspectionPlan(StrictModel):
     rationale: NonEmptyStr
 
 
+class ProtectedSourceSpan(StrictModel):
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    reason: Literal["SECRET_VALUE"] = "SECRET_VALUE"
+
+
 class InspectionArtifact(StrictModel):
     kind: Literal["TREE", "FILE", "SEARCH"]
     locator: NonEmptyStr
@@ -133,6 +139,8 @@ class InspectionArtifact(StrictModel):
     digest: NonEmptyStr
     truncated: bool = False
     untrusted: bool = True
+    base_content_digest: str | None = None
+    protected_spans: list[ProtectedSourceSpan] = Field(default_factory=list, max_length=1000)
 
 
 class InspectionToolResponse(StrictModel):
@@ -297,7 +305,45 @@ class RemediationPlan(StrictModel):
     request_contracts: list[RequestContract] = Field(default_factory=list, max_length=20)
     rollback_strategy: NonEmptyStr
     unresolved_requirements: list[str] = Field(default_factory=list, max_length=20)
+    blocking_requirements: list[str] = Field(default_factory=list, max_length=20)
     evidence_ids: list[NonEmptyStr] = Field(min_length=1)
+
+
+class CompiledContractV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    workflow_version: Literal["remediation-v3"] = "remediation-v3"
+    base_commit: NonEmptyStr
+    policy_digest: NonEmptyStr
+    criteria: dict[str, str] = Field(max_length=20)
+    coverage: list[VerificationCriterion] = Field(max_length=20)
+    task_digests: dict[str, str] = Field(max_length=50)
+    assertions: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=50)
+    request_contracts: list[RequestContract] = Field(default_factory=list, max_length=20)
+    limitations: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ExecutionBindingV1(StrictModel):
+    workflow_version: Literal["remediation-v3"] = "remediation-v3"
+    base_commit: NonEmptyStr
+    contract_digest: NonEmptyStr
+    policy_digest: NonEmptyStr
+    validation_assets_digest: NonEmptyStr
+    prompt_version: NonEmptyStr
+    model_configuration_digest: str = ""
+
+
+class CapabilityReportV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    task_name: IdentifierStr
+    available: bool
+    base_commit: NonEmptyStr
+    assertions_digest: str | None = None
+    dependency_digest: str | None = None
+    runtime_digest: str | None = None
+    startup_verified: bool = False
+    cleanup_verified: bool = False
+    failure_code: str | None = None
+    detail: str = Field(default="", max_length=2000)
 
 
 class RiskFinding(StrictModel):
@@ -314,6 +360,46 @@ class RiskAssessment(StrictModel):
     rationale: NonEmptyStr
 
 
+class SourceEdit(StrictModel):
+    create: bool = False
+    path: RepositoryPathStr
+    base_content_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    start_line: int = Field(ge=1, description="Inclusive, one-based line in the inspected base file.")
+    end_line: int = Field(ge=1, description="Exclusive, one-based line; equal to start_line for insertion.")
+    expected_content: str = Field(max_length=262144, description="Exact visible source including newlines.")
+    replacement: str = Field(max_length=262144)
+
+
+class EditProposal(StrictModel):
+    edits: list[SourceEdit] = Field(min_length=1, max_length=60)
+    rationale: NonEmptyStr
+    proposed_validation_tasks: list[str] = Field(default_factory=list, max_length=10)
+
+
+class EditReceipt(StrictModel):
+    path: RepositoryPathStr
+    base_content_digest: NonEmptyStr
+    candidate_content_digest: NonEmptyStr
+    edited_ranges: list[tuple[int, int]] = Field(min_length=1, max_length=60)
+
+
+class WorkflowFailure(StrictModel):
+    category: Literal[
+        "SOURCE_MISMATCH",
+        "MALFORMED_PROPOSAL",
+        "POLICY_DENIAL",
+        "ENVIRONMENT_SETUP",
+        "ASSERTION_FAILURE",
+        "PUBLICATION_FAILURE",
+        "COVERAGE_GAP",
+    ]
+    code: IdentifierStr
+    detail: str = Field(max_length=4000)
+    path: str | None = None
+    line: int | None = Field(default=None, ge=1)
+    retryable: bool = False
+
+
 class PatchCandidate(StrictModel):
     unified_diff: str = Field(
         min_length=1,
@@ -325,6 +411,35 @@ class PatchCandidate(StrictModel):
     )
     rationale: NonEmptyStr
     proposed_validation_tasks: list[str] = Field(default_factory=list, max_length=10)
+
+
+class PublicationReceipt(StrictModel):
+    stage: Literal["EVIDENCE", "BRANCH", "COMMIT", "PUSH", "DRAFT", "VERIFIED"]
+    candidate_digest: NonEmptyStr
+    recorded_at: datetime
+    commit_sha: str | None = None
+    provider_id: str | None = None
+    attempts: int = Field(default=1, ge=1, le=3)
+
+
+class PublicationJournalV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    repository: NonEmptyStr
+    base_commit: NonEmptyStr
+    base_branch: NonEmptyStr
+    head_branch: NonEmptyStr
+    candidate_digest: NonEmptyStr
+    tree_digest: NonEmptyStr
+    created_at: datetime
+    receipts: list[PublicationReceipt] = Field(default_factory=list, max_length=30)
+    verified: bool = False
+
+
+class PublicationRetryRequestV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    operation: Literal["retry_publication"] = "retry_publication"
+    run_id: IdentifierStr
+    candidate_digest: NonEmptyStr
 
 
 class PatchPolicyResult(StrictModel):

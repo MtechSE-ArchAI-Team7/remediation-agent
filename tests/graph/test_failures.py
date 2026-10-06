@@ -285,13 +285,13 @@ async def test_partial_github_failure_retains_prepared_payload_and_cleanup_evide
 
     result = await service.start(diagnosis_handoff().model_validate(payload))
 
-    assert result.status is FinalStatus.DRAFT_PR_PREPARED
+    assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
     assert result.result is not None
     assert result.result.draft_pr is not None
     assert result.result.draft_pr.created is False
-    assert result.result.errors[-1].code == "DRAFT_PR_CREATE_FAILED"
+    assert result.result.errors[-1].code == "PUBLICATION_OPERATION_FAILED"
     assert repository.pushes
-    assert len(pr.requests) == 2
+    assert len(pr.requests) == 4
     assert sandbox.destroyed
 
 
@@ -305,11 +305,11 @@ async def test_validation_task_workspace_tampering_is_detected_and_bounded() -> 
         tampered_diff=patch_for(new="authentication = disabled"),
     )
     result = await service.start(diagnosis_handoff())
-    assert result.status is FinalStatus.VALIDATION_FAILED
+    assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
     assert result.result is not None
-    assert len(result.result.validation_attempts) == 3
+    assert len(result.result.validation_attempts) == 1
     assert all(
         any(task.task_name == "workspace_integrity" for task in attempt.results)
         for attempt in result.result.validation_attempts
     )
-    assert sandbox.restores == 2
+    assert sandbox.restores == 0

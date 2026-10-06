@@ -59,7 +59,9 @@ def test_main_release_runs_ci_then_image_then_agentcore_deploy() -> None:
 
     assert jobs["image"]["needs"] == "ci"
     assert jobs["image"]["if"] == "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
-    assert jobs["deploy"]["needs"] == "image"
+    assert jobs["qualify"]["needs"] == "image"
+    assert jobs["qualify"]["uses"] == "./.github/workflows/qualify-agentcore-runtime.yaml"
+    assert jobs["deploy"]["needs"] == ["image", "qualify"]
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
 
     refs = {_assert_sha_pinned(jobs[name]) for name in ("ci", "image")}
@@ -102,7 +104,8 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
 
     assert "workflow_dispatch" in triggers
     assert push == {"tags": ["v*"]}
-    assert jobs["deploy"]["needs"] == "image"
+    assert jobs["qualify"]["needs"] == "image"
+    assert jobs["deploy"]["needs"] == ["image", "qualify"]
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
     _assert_sha_pinned(jobs["image"])
     _assert_local_agentcore_deploy(jobs["deploy"])

@@ -30,6 +30,10 @@ def load_policy(path: Path) -> PolicyConfig:
     except json.JSONDecodeError as exc:
         raise PolicyLoadError(f"invalid policy JSON in {path.name}: {exc}") from exc
     try:
-        return PolicyConfig.model_validate(value)
+        policy = PolicyConfig.model_validate(value)
+        from remediation_agent.capabilities import verify_registry_policy
+
+        verify_registry_policy(policy)
+        return policy
     except ValidationError as exc:
         raise PolicyLoadError(f"invalid policy in {path.name}: {exc}") from exc

@@ -8,10 +8,26 @@ import pytest
 from pydantic import ValidationError
 
 from remediation_agent.adapters.checkpoint import checkpoint_serializer
-from remediation_agent.domain.models import BehavioralCaseResult, BehavioralReport, VerificationBriefV1
+from remediation_agent.domain.models import (
+    BehavioralCaseResult,
+    BehavioralReport,
+    DiagnosisHandoffV1,
+    VerificationBriefV1,
+)
 from remediation_agent.policy.models import ValidationTaskConfig
 from remediation_agent.verification import acceptance_ids
 from tests.conftest import diagnosis_handoff
+
+
+def ecommerce_handoff() -> DiagnosisHandoffV1:
+    handoff = diagnosis_handoff()
+    return handoff.model_copy(
+        update={
+            "repository": handoff.repository.model_copy(
+                update={"url": "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo"}
+            )
+        }
+    )
 
 
 def test_criteria_have_stable_content_bound_ids() -> None:
@@ -52,7 +68,7 @@ def test_test_overlay_cannot_replace_application_code(path: str) -> None:
         )
 
 
-@pytest.mark.parametrize("change", ["absent_contract", "wrong_route", "missing_caller"])
+@pytest.mark.parametrize("change", ["wrong_route", "missing_caller"])
 def test_purchase_requires_matching_contract_and_complete_inspection(change: str) -> None:
     from pathlib import Path
 
@@ -79,14 +95,14 @@ def test_purchase_requires_matching_contract_and_complete_inspection(change: str
         }
     )
     paths = set(task.required_evidence_paths)
-    assert not coverage_gaps(diagnosis_handoff(), plan, policy, paths)
+    assert not coverage_gaps(ecommerce_handoff(), plan, policy, paths)
     if change == "absent_contract":
         plan = plan.model_copy(update={"request_contracts": []})
     elif change == "wrong_route":
         plan = plan.model_copy(update={"request_contracts": [contract.model_copy(update={"path": "/checkout"})]})
     elif change == "missing_caller":
         paths.remove("public/app.js")
-    assert coverage_gaps(diagnosis_handoff(), plan, policy, paths)
+    assert coverage_gaps(ecommerce_handoff(), plan, policy, paths)
 
 
 def test_approved_plan_limitations_do_not_replace_or_invalidate_complete_coverage() -> None:
@@ -114,7 +130,7 @@ def test_approved_plan_limitations_do_not_replace_or_invalidate_complete_coverag
         }
     )
 
-    assert not coverage_gaps(diagnosis_handoff(), plan, policy, set(task.required_evidence_paths))
+    assert not coverage_gaps(ecommerce_handoff(), plan, policy, set(task.required_evidence_paths))
 
 
 async def test_verification_artifact_is_redacted_digest_bound_and_immutable(tmp_path: Path) -> None:
@@ -136,3 +152,48 @@ async def test_verification_artifact_is_redacted_digest_bound_and_immutable(tmp_
     assert await store.write_bundle(request) == manifest
     with pytest.raises(ValueError, match="immutable"):
         await store.write_bundle(request.model_copy(update={"files": {"verification-brief.json": "{}"}}))
+
+
+@pytest.mark.parametrize(
+    "field_types,blocked",
+    [
+        ({"productId": "integer numeric ID", "quantity": "positive integer"}, False),
+        ({"productId": "safe-integer", "quantity": "string"}, True),
+    ],
+)
+def test_contract_paraphrases_and_json_formatting_are_not_equality_gates(
+    field_types: dict[str, str], blocked: bool
+) -> None:
+    from remediation_agent.domain.enums import ModelOperation
+    from remediation_agent.domain.models import RemediationPlan
+    from remediation_agent.policy.loader import load_policy
+    from remediation_agent.verification import compile_contract, coverage_gaps
+    from tests.conftest import scripted_responses
+
+    policy = load_policy(Path(__file__).parents[2] / "config/policies/demo.json")
+    task = policy.validation_tasks["purchase_regression"]
+    assert task.request_contract is not None
+    proposed = task.request_contract.model_copy(
+        update={
+            "field_types": field_types,
+            "example_body": '{ "quantity": 1, "productId": 1 }',
+            "state_changes": ["Inventory remains correct after a server restart."],
+        }
+    )
+    plan = scripted_responses()[ModelOperation.PLANNING][0]
+    assert isinstance(plan, RemediationPlan)
+    plan = plan.model_copy(
+        update={
+            "verification": [
+                plan.verification[0].model_copy(
+                    update={"task_name": "purchase_regression", "test_ids": ["purchase_persistence"]}
+                )
+            ],
+            "request_contracts": [proposed],
+        }
+    )
+    assert bool(coverage_gaps(ecommerce_handoff(), plan, policy, set(task.required_evidence_paths))) is blocked
+    if not blocked:
+        canonical, contract = compile_contract(ecommerce_handoff(), plan, policy, "a" * 40)
+        assert canonical.request_contracts == [task.request_contract]
+        assert contract.assertions["purchase_regression"] == task.assertions

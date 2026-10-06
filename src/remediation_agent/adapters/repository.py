@@ -16,10 +16,15 @@ from remediation_agent.domain.models import RepositoryRef, WorkspaceRef
 from remediation_agent.ports.models import (
     BranchRequest,
     BranchResult,
+    CandidateVerifyRequest,
     CommitRequest,
     CommitResult,
     DiffResult,
+    EditCompileRequest,
+    EditCompileResult,
     FileContent,
+    PublicationCheckRequest,
+    PublicationError,
     PushRequest,
     PushResult,
     ReadFileRequest,
@@ -30,6 +35,7 @@ from remediation_agent.ports.models import (
     TreeResult,
 )
 from remediation_agent.ports.protocols import GitCredentialProvider
+from remediation_agent.source import compile_edits, digest
 
 
 class RepositoryError(RuntimeError):
@@ -55,6 +61,48 @@ class LocalGitRepository:
         self.author_email = author_email
         self.max_command_output_bytes = max_command_output_bytes
         self.credential_provider = credential_provider or NoGitCredentials()
+
+    async def compile_edits(self, request: EditCompileRequest) -> EditCompileResult:
+        root = self._workspace_root(request.workspace)
+        head = (await self._run(["git", "rev-parse", "HEAD"], cwd=root)).strip()
+        if head != request.workspace.base_commit:
+            raise RepositoryError("SOURCE_MISMATCH: workspace is not at its immutable base")
+        sources: dict[str, str] = {}
+        for path in dict.fromkeys(edit.path for edit in request.proposal.edits):
+            # Read only reviewed and inspected paths. The compiler also validates canonical paths.
+            if path not in request.allowed_paths or path not in {a.locator for a in request.artifacts}:
+                continue
+            result = await self.read_file(
+                ReadFileRequest(
+                    workspace=request.workspace,
+                    relative_path=path,
+                    max_bytes=request.max_file_bytes,
+                )
+            )
+            if result.truncated:
+                raise RepositoryError("SOURCE_MISMATCH: edit requires an untruncated source view")
+            sources[path] = result.content
+        for edit in request.proposal.edits:
+            if edit.create:
+                requested = Path(edit.path)
+                if requested.is_absolute() or ".." in requested.parts or ".git" in requested.parts:
+                    raise RepositoryError("unsafe new file path")
+                cursor = root
+                for component in requested.parts:
+                    cursor /= component
+                    if cursor.is_symlink():
+                        raise RepositoryError("new file path contains a symlink")
+                if cursor.exists():
+                    raise RepositoryError("new file path already exists")
+        candidate, receipts = compile_edits(request.proposal, request.artifacts, sources, set(request.allowed_paths))
+        return EditCompileResult(candidate=candidate, receipts=receipts)
+
+    async def verify_candidate(self, request: CandidateVerifyRequest) -> None:
+        root = self._workspace_root(request.workspace)
+        for receipt in request.receipts:
+            path = self._resolve_path(root, receipt.path, allow_directory=False)
+            if digest(path.read_text(encoding="utf-8")) != receipt.candidate_content_digest:
+                raise RepositoryError("CANDIDATE_MISMATCH: applied source differs from the canonical edit")
 
     async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef:
         self.workspace_root.mkdir(parents=True, exist_ok=True)
@@ -180,6 +228,30 @@ class LocalGitRepository:
         diff = await self._run(["git", "diff", "--no-ext-diff", "--binary", "HEAD", "--"], cwd=root)
         return DiffResult(unified_diff=diff, digest="sha256:" + hashlib.sha256(diff.encode()).hexdigest())
 
+    async def publication_check(self, request: PublicationCheckRequest) -> str:
+        root = self._workspace_root(request.workspace)
+        await self._run(["git", "add", "--all", "--", "."], cwd=root)
+        tree = (await self._run(["git", "write-tree"], cwd=root)).strip()
+        if request.expected_tree and tree != request.expected_tree:
+            raise PublicationError("VALIDATED_TREE_CHANGED")
+        if request.check_remote:
+            remote = (await self._run(["git", "remote", "get-url", "origin"], cwd=root)).strip()
+            if remote.removesuffix(".git") != request.repository.url.removesuffix(".git"):
+                raise PublicationError("PUBLICATION_REPOSITORY_MISMATCH")
+            result = await self._run(
+                ["git", "ls-remote", "--heads", "origin", f"refs/heads/{request.repository.base_branch}"],
+                cwd=root,
+                extra_environment=self.credential_provider.environment_for(remote),
+            )
+            matches = [
+                line.split()[0]
+                for line in result.splitlines()
+                if line.split()[-1] == f"refs/heads/{request.repository.base_branch}"
+            ]
+            if matches != [request.workspace.base_commit]:
+                raise PublicationError("BASE_CHANGED_REVALIDATION_REQUIRED")
+        return tree
+
     async def create_branch(self, request: BranchRequest) -> BranchResult:
         root = self._workspace_root(request.workspace)
         current = (await self._run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)).strip()
@@ -192,7 +264,15 @@ class LocalGitRepository:
         root = self._workspace_root(request.workspace)
         await self._run(["git", "add", "--all", "--", "."], cwd=root)
         status = (await self._run(["git", "status", "--porcelain"], cwd=root)).strip()
+        if request.expected_tree:
+            tree = (await self._run(["git", "write-tree"], cwd=root)).strip()
+            if tree != request.expected_tree:
+                raise PublicationError("VALIDATED_TREE_CHANGED")
         if not status:
+            if request.expected_tree:
+                parent = (await self._run(["git", "rev-parse", "HEAD^"], cwd=root)).strip()
+                if parent != request.workspace.base_commit:
+                    raise PublicationError("UNRELATED_EXISTING_COMMIT")
             existing_message = (await self._run(["git", "log", "-1", "--pretty=%s"], cwd=root)).strip()
             if existing_message != request.message:
                 raise RepositoryError("refused to create an empty or unrelated commit")
@@ -210,6 +290,12 @@ class LocalGitRepository:
                 request.message,
             ],
             cwd=root,
+            extra_environment={
+                "GIT_AUTHOR_DATE": request.authored_at.isoformat(),
+                "GIT_COMMITTER_DATE": request.authored_at.isoformat(),
+            }
+            if request.authored_at
+            else None,
         )
         sha = (await self._run(["git", "rev-parse", "HEAD"], cwd=root)).strip()
         return CommitResult(commit_sha=sha)
@@ -220,6 +306,19 @@ class LocalGitRepository:
             raise RepositoryError("Git remote name is not canonical")
         remote_url = (await self._run(["git", "remote", "get-url", "--push", request.remote], cwd=root)).strip()
         credential_environment = self.credential_provider.environment_for(remote_url)
+        if request.expected_commit:
+            head = (await self._run(["git", "rev-parse", request.branch_name], cwd=root)).strip()
+            if head != request.expected_commit:
+                raise PublicationError("PUBLICATION_COMMIT_MISMATCH")
+            remote_head = await self._run(
+                ["git", "ls-remote", "--heads", request.remote, f"refs/heads/{request.branch_name}"],
+                cwd=root,
+                extra_environment=credential_environment,
+            )
+            if remote_head.strip():
+                if remote_head.split()[0] != request.expected_commit:
+                    raise PublicationError("UNRELATED_REMOTE_BRANCH")
+                return PushResult(remote=request.remote, branch_name=request.branch_name, pushed=True)
         await self._run(
             ["git", "push", "--set-upstream", request.remote, request.branch_name],
             cwd=root,

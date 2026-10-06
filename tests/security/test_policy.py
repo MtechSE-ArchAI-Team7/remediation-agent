@@ -105,7 +105,14 @@ def test_live_demo_validation_catalog_covers_the_agent2_benchmark() -> None:
     assert benchmark.validation_tasks["checkout_regression"].profile == "ecommerce_checkout"
     assert live.validation_tasks["checkout_regression"].required_test_ids == [
         "checkout_persists_before_success",
+        "checkout_server_priced_multiple_products",
+        "checkout_invalid_carts",
         "checkout_write_failure_no_success",
+        "checkout_restart_persistence",
+        "checkout_browser_confirmed_success",
+        "checkout_browser_http_failure",
+        "checkout_browser_network_failure",
+        "checkout_catalog_regression",
     ]
     assert "public/app.js" in live.paths.autonomous
 

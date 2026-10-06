@@ -26,7 +26,11 @@ def build_graph(
     analysis_builder.add_edge("create_workspace", "retrieve_incident_memory")
     analysis_builder.add_edge("retrieve_incident_memory", "inspect_repository")
     analysis_builder.add_edge("inspect_repository", "create_plan")
-    analysis_builder.add_edge("create_plan", END)
+    analysis_builder.add_node("compile_verification", nodes.compile_verification)
+    analysis_builder.add_node("verify_capabilities", nodes.verify_capabilities)
+    analysis_builder.add_edge("create_plan", "compile_verification")
+    analysis_builder.add_edge("compile_verification", "verify_capabilities")
+    analysis_builder.add_edge("verify_capabilities", END)
     analysis_workflow = analysis_builder.compile()
 
     repair_builder = StateGraph(RemediationState)
@@ -76,13 +80,21 @@ def build_graph(
     parent = StateGraph(RemediationState)
     parent.add_node("validate_intake", nodes.validate_intake)
     parent.add_node("verify_release_provenance", nodes.verify_release_provenance)
+    parent.add_node("verify_intake_capabilities", nodes.verify_intake_capabilities)
     parent.add_node("classify_scope", nodes.classify_scope)
     parent.add_node("analysis_workflow", analysis_workflow)
     parent.add_node("assess_risk", nodes.assess_risk)
     parent.add_node("plan_approval", nodes.plan_approval)
     parent.add_node("repair_workflow", repair_workflow)
     parent.add_node("build_evidence", nodes.build_evidence)
+    parent.add_node("seal_candidate", nodes.seal_candidate)
     parent.add_node("prepare_pr", nodes.prepare_pr)
+    parent.add_node("publish_branch", nodes.publish_branch)
+    parent.add_node("publish_commit", nodes.publish_commit)
+    parent.add_node("publish_push", nodes.publish_push)
+    parent.add_node("publish_draft", nodes.publish_draft)
+    parent.add_node("verify_publication", nodes.verify_publication)
+    parent.add_node("persist_delivery_evidence", nodes.persist_delivery_evidence)
     parent.add_node("cleanup", nodes.cleanup)
     parent.add_node("store_incident_memory", nodes.store_incident_memory)
     parent.add_node("finalize", nodes.finalize)
@@ -92,8 +104,9 @@ def build_graph(
     parent.add_conditional_edges(
         "verify_release_provenance",
         _after_release_provenance,
-        {"classify": "classify_scope", "finalize": "finalize"},
+        {"classify": "verify_intake_capabilities", "finalize": "finalize"},
     )
+    parent.add_edge("verify_intake_capabilities", "classify_scope")
     parent.add_conditional_edges(
         "classify_scope",
         _after_scope,
@@ -114,10 +127,17 @@ def build_graph(
     parent.add_conditional_edges(
         "build_evidence",
         _after_evidence,
-        {"pr": "prepare_pr", "cleanup": "cleanup"},
+        {"pr": "seal_candidate", "cleanup": "cleanup"},
     )
-    parent.add_edge("prepare_pr", "cleanup")
-    parent.add_edge("cleanup", "store_incident_memory")
+    parent.add_edge("seal_candidate", "prepare_pr")
+    parent.add_edge("prepare_pr", "publish_branch")
+    parent.add_edge("publish_branch", "publish_commit")
+    parent.add_edge("publish_commit", "publish_push")
+    parent.add_edge("publish_push", "publish_draft")
+    parent.add_edge("publish_draft", "verify_publication")
+    parent.add_edge("verify_publication", "cleanup")
+    parent.add_edge("cleanup", "persist_delivery_evidence")
+    parent.add_edge("persist_delivery_evidence", "store_incident_memory")
     parent.add_edge("store_incident_memory", "finalize")
     parent.add_edge("finalize", END)
     return parent.compile(checkpointer=checkpointer)
@@ -181,6 +201,8 @@ def _after_validation(state: RemediationState) -> str:
 def _after_evidence(state: RemediationState) -> str:
     return (
         "pr"
-        if state.get("repair_outcome") is ValidationOutcome.PASSED and state.get("locally_verified", False)
+        if state["final_status"] is FinalStatus.PENDING
+        and state.get("repair_outcome") is ValidationOutcome.PASSED
+        and state.get("locally_verified", False)
         else "cleanup"
     )

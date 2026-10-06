@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "PublicationReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 1,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "candidate_digest": {
+          "minLength": 1,
+          "title": "Candidate Digest",
+          "type": "string"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "provider_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider Id"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "stage": {
+          "enum": [
+            "EVIDENCE",
+            "BRANCH",
+            "COMMIT",
+            "PUSH",
+            "DRAFT",
+            "VERIFIED"
+          ],
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "candidate_digest",
+        "recorded_at"
+      ],
+      "title": "PublicationReceipt",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_branch": {
+      "minLength": 1,
+      "title": "Base Branch",
+      "type": "string"
+    },
+    "base_commit": {
+      "minLength": 1,
+      "title": "Base Commit",
+      "type": "string"
+    },
+    "candidate_digest": {
+      "minLength": 1,
+      "title": "Candidate Digest",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "head_branch": {
+      "minLength": 1,
+      "title": "Head Branch",
+      "type": "string"
+    },
+    "receipts": {
+      "items": {
+        "$ref": "#/$defs/PublicationReceipt"
+      },
+      "maxItems": 30,
+      "title": "Receipts",
+      "type": "array"
+    },
+    "repository": {
+      "minLength": 1,
+      "title": "Repository",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tree_digest": {
+      "minLength": 1,
+      "title": "Tree Digest",
+      "type": "string"
+    },
+    "verified": {
+      "default": false,
+      "title": "Verified",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "repository",
+    "base_commit",
+    "base_branch",
+    "head_branch",
+    "candidate_digest",
+    "tree_digest",
+    "created_at"
+  ],
+  "title": "PublicationJournalV1",
+  "type": "object"
+}

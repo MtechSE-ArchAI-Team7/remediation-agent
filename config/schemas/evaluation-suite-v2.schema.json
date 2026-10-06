@@ -362,6 +362,14 @@
     "RemediationPlan": {
       "additionalProperties": false,
       "properties": {
+        "blocking_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Blocking Requirements",
+          "type": "array"
+        },
         "evidence_ids": {
           "items": {
             "minLength": 1,

@@ -12,6 +12,7 @@ import os
 import tarfile
 import time
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
@@ -37,6 +38,7 @@ from remediation_agent.ports.models import (
 _MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _MAX_ARCHIVE_FILES = 50_000
 _REMOTE_ARCHIVE = "aios-workspace.tar.gz"
+_REMOTE_BROWSER = "aios-trusted-browser.tar.xz"
 _REMOTE_VENDOR = "aios-pytest-vendor.tar.gz"
 _RESULT_MARKER = "__AIOS_VALIDATION_RESULT__"
 _FORBIDDEN_ARCHIVE_PATTERNS = (
@@ -129,6 +131,17 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         root = self._workspace(request.workspace)
         self._validate_workdir(root, request.task.cwd)
         self._validate_environment(request.task.environment)
+        browser_path = root / ".aios-verification/bundle/browser.tar.xz"
+        browser = b""
+        if browser_path.is_file():
+            expected = self.behavioral_bundle / "browser.tar.xz"
+            browser = await asyncio.to_thread(browser_path.read_bytes)
+            if (
+                browser_path.is_symlink()
+                or archive_digest(browser) != archive_digest(expected.read_bytes())
+                or len(browser) > _MAX_UPLOAD_BYTES
+            ):
+                raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: untrusted or oversized browser asset")
         archive = await asyncio.to_thread(self._archive_workspace, root)
         bundle = await asyncio.to_thread(self._read_bundle)
         if len(archive) + len(bundle) > _MAX_UPLOAD_BYTES:
@@ -139,13 +152,22 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         raw_result: dict[str, str | int | bool] | None = None
         task_result: ValidationTaskResult | None = None
         failure: Exception | None = None
+        cleanup_status = ValidationCleanupStatus.NOT_APPLICABLE
+        starting = asyncio.create_task(asyncio.to_thread(self._start_session, request.workspace.workspace_id))
         try:
-            session_id = await asyncio.to_thread(self._start_session, request.workspace.workspace_id)
-            await asyncio.to_thread(self._upload, session_id, archive, bundle)
+            # Cancellation cannot abandon a provider request that may already own a session.
+            session_id = await asyncio.shield(starting)
+            transfer = await asyncio.to_thread(self._upload, session_id, archive, bundle, browser)
             raw_result = await asyncio.wait_for(
-                asyncio.to_thread(self._execute, session_id, request),
+                asyncio.to_thread(self._execute, session_id, request, transfer),
                 timeout=float(request.task.timeout_seconds) + 30.0,
             )
+        except asyncio.CancelledError:
+            if session_id is None:
+                # Preserve cancellation if the bounded provider request failed before returning an ID.
+                with suppress(Exception):
+                    session_id = await asyncio.shield(starting)
+            raise
         except TimeoutError:
             task_result = ValidationTaskResult(
                 task_name=request.task_name,
@@ -155,11 +177,10 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
             )
         except Exception as exc:  # noqa: BLE001 - normalize cloud SDK failures at the adapter boundary
             failure = exc
-
-        cleanup_status = ValidationCleanupStatus.NOT_APPLICABLE
-        if session_id is not None:
-            stopped = await asyncio.to_thread(self._stop_session, session_id)
-            cleanup_status = ValidationCleanupStatus.SUCCEEDED if stopped else ValidationCleanupStatus.FAILED
+        finally:
+            if session_id is not None:
+                stopped = await asyncio.shield(asyncio.to_thread(self._stop_session, session_id))
+                cleanup_status = ValidationCleanupStatus.SUCCEEDED if stopped else ValidationCleanupStatus.FAILED
 
         if failure is not None:
             suffix = " and session cleanup failed" if cleanup_status is ValidationCleanupStatus.FAILED else ""
@@ -229,27 +250,53 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
             raise RuntimeError("Code Interpreter omitted its session identifier")
         return session_id
 
-    def _upload(self, session_id: str, archive: bytes, bundle: bytes) -> None:
-        result = self._invoke(
-            session_id,
-            "writeFiles",
-            {
-                "content": [
-                    {"path": _REMOTE_ARCHIVE, "blob": archive},
-                    {"path": _REMOTE_VENDOR, "blob": bundle},
-                ]
-            },
-        )
-        if result.get("isError") is True:
-            raise RuntimeError("Code Interpreter rejected validation inputs")
+    def _upload(
+        self, session_id: str, archive: bytes, bundle: bytes, browser: bytes = b""
+    ) -> dict[str, dict[str, str | int]]:
+        # Bound each HTTP request independently of the total offline asset budget.
+        # Larger trusted assets are reassembled and digest-checked before any execution.
+        chunk_size = 4 * 1024 * 1024
+        items = [(_REMOTE_ARCHIVE, archive), (_REMOTE_VENDOR, bundle)]
+        if browser:
+            items.append((_REMOTE_BROWSER, browser))
+        small = [{"path": name, "blob": data} for name, data in items if len(data) <= chunk_size]
+        if small:
+            result = self._invoke(session_id, "writeFiles", {"content": small})
+            if result.get("isError") is True:
+                raise RuntimeError("Code Interpreter rejected validation inputs")
+        transfer: dict[str, dict[str, str | int]] = {}
+        for name, data in items:
+            if len(data) <= chunk_size:
+                continue
+            count = (len(data) + chunk_size - 1) // chunk_size
+            for index in range(count):
+                result = self._invoke(
+                    session_id,
+                    "writeFiles",
+                    {
+                        "content": [
+                            {
+                                "path": f"{name}.part-{index}",
+                                "blob": data[index * chunk_size : (index + 1) * chunk_size],
+                            }
+                        ]
+                    },
+                )
+                if result.get("isError") is True:
+                    raise RuntimeError("Code Interpreter rejected bounded validation asset chunk")
+            transfer[name] = {"parts": count, "bytes": len(data), "digest": archive_digest(data)}
+        return transfer
 
-    def _execute(self, session_id: str, request: ValidationTaskRequest) -> dict[str, str | int | bool]:
+    def _execute(
+        self, session_id: str, request: ValidationTaskRequest, transfer: dict[str, dict[str, str | int]]
+    ) -> dict[str, str | int | bool]:
         runner = _runner_code(
             list(request.task.argv),
             request.task.cwd,
             dict(request.task.environment),
             request.task.timeout_seconds,
             request.task.output_limit_bytes,
+            transfer,
         )
         result = self._invoke(
             session_id,
@@ -321,12 +368,14 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 directories[:] = sorted(
                     name
                     for name in directories
-                    if name != ".git" and not _forbidden((current / name).relative_to(root).as_posix())
+                    if name != ".git"
+                    and (current / name).relative_to(root).as_posix() != ".aios-verification/browser-runtime"
+                    and not _forbidden((current / name).relative_to(root).as_posix())
                 )
                 for name in sorted(files):
                     path = current / name
                     relative = path.relative_to(root).as_posix()
-                    if _forbidden(relative):
+                    if _forbidden(relative) or relative == ".aios-verification/bundle/browser.tar.xz":
                         continue
                     if path.is_symlink():
                         raise SandboxError(f"validation archive contains a symlink: {relative}")
@@ -374,15 +423,38 @@ def _cap(value: str | int | bool, limit: int) -> tuple[str, bool]:
     return raw[:limit].decode("utf-8", errors="ignore"), True
 
 
-def _runner_code(argv: list[str], cwd: str, environment: dict[str, str], timeout: int, output_limit: int) -> str:
+def _runner_code(
+    argv: list[str],
+    cwd: str,
+    environment: dict[str, str],
+    timeout: int,
+    output_limit: int,
+    transfer: dict[str, dict[str, str | int]] | None = None,
+) -> str:
     payload = json.dumps(
         {"argv": argv, "cwd": cwd, "environment": environment, "timeout": timeout, "limit": output_limit},
         sort_keys=True,
     )
     return f"""
-import base64, io, json, os, pathlib, subprocess, tarfile
+import base64, io, json, os, pathlib, subprocess, tarfile, shutil, runpy, hashlib, selectors, time, signal
 
 cfg = json.loads({payload!r})
+transfer = json.loads({json.dumps(transfer or {})!r})
+for name, spec in transfer.items():
+    hasher = hashlib.sha256()
+    total = 0
+    with pathlib.Path(name).open('wb') as output:
+        for index in range(spec['parts']):
+            part = pathlib.Path(name + '.part-' + str(index))
+            data = part.read_bytes()
+            hasher.update(data)
+            total += len(data)
+            if total > {_MAX_UPLOAD_BYTES}:
+                raise RuntimeError('transferred validation asset exceeds limit')
+            output.write(data)
+            part.unlink()
+    if total != spec['bytes'] or 'sha256:' + hasher.hexdigest() != spec['digest']:
+        raise RuntimeError('transferred validation asset digest mismatch')
 root = pathlib.Path('aios-workspace').resolve()
 vendor = pathlib.Path('aios-vendor').resolve()
 root.mkdir(parents=True, exist_ok=True)
@@ -398,21 +470,52 @@ def safe_extract(source, destination):
 
 safe_extract({_REMOTE_ARCHIVE!r}, root)
 safe_extract({_REMOTE_VENDOR!r}, vendor)
+browser_source = pathlib.Path({_REMOTE_BROWSER!r})
+assets = root / '.aios-verification'
+if browser_source.exists() and (assets / 'bundle').is_dir():
+    shutil.copyfile(browser_source, assets / 'bundle/browser.tar.xz')
+    task = json.loads((assets / 'task.json').read_text())
+    if task.get('profile') == 'ecommerce_checkout':
+        trusted = runpy.run_path(str(assets / 'runner.py'), run_name='aios_bootstrap')
+        trusted['unpack_browser'](assets / 'bundle', assets / 'browser-runtime')
 workdir = (root / cfg['cwd']).resolve()
 if not workdir.is_relative_to(root) or not workdir.is_dir():
     raise RuntimeError('unsafe validation cwd')
 env = {{'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'PYTHONPATH': str(vendor), 'PYTHONDONTWRITEBYTECODE': '1'}}
 env.update(cfg['environment'])
-try:
-    process = subprocess.run(cfg['argv'], cwd=workdir, env=env, shell=False, capture_output=True,
-                             timeout=cfg['timeout'], check=False)
-    stdout, stderr, exit_code = process.stdout, process.stderr, process.returncode
-except subprocess.TimeoutExpired as exc:
-    stdout, stderr, exit_code = exc.stdout or b'', exc.stderr or b'', 124
 limit = cfg['limit']
-truncated = len(stdout) + len(stderr) > limit
-stdout = stdout[:limit]
-stderr = stderr[:max(0, limit - len(stdout))]
+output = [bytearray(), bytearray()]
+truncated = False
+process = subprocess.Popen(cfg['argv'], cwd=workdir, env=env, shell=False,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+selector = selectors.DefaultSelector()
+selector.register(process.stdout, selectors.EVENT_READ, 0)
+selector.register(process.stderr, selectors.EVENT_READ, 1)
+deadline = time.monotonic() + cfg['timeout']
+exit_code = 124
+try:
+    while selector.get_map():
+        if time.monotonic() >= deadline:
+            break
+        for key, _ in selector.select(0.1):
+            data = os.read(key.fd, 8192)
+            if not data:
+                selector.unregister(key.fd)
+            remaining = max(0, limit - sum(len(item) for item in output))
+            output[key.data].extend(data[:remaining])
+            truncated = truncated or len(data) > remaining
+    else:
+        exit_code = process.wait(timeout=1)
+finally:
+    selector.close()
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait(timeout=5)
+    process.stdout.close()
+    process.stderr.close()
+stdout, stderr = bytes(output[0]), bytes(output[1])
 result = {{'stdout': base64.b64encode(stdout).decode(), 'stderr': base64.b64encode(stderr).decode(),
           'exit_code': exit_code, 'truncated': truncated}}
 print({_RESULT_MARKER!r} + json.dumps(result, sort_keys=True, separators=(',', ':')))

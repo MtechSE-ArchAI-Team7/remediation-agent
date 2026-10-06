@@ -15,163 +15,64 @@ from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.models import BehavioralTaskRequest
 from tests.integration.test_docker_sandbox import _git, docker_executable  # noqa: F401
 
-_APP = """
-const express = require('express');
-const sqlite3 = require('sqlite3');
-const fs = require('fs');
-const app = express();
-app.use(express.json());
-const db = new sqlite3.Database('ecommerce.db');
-db.serialize(() => {
-  db.exec(fs.readFileSync('schema.sql','utf8'));
-  db.exec(fs.readFileSync('seed.sql','utf8'));
-});
-app.get('/products', (req,res) => db.all('SELECT * FROM products', (err,rows) => res.json(rows)));
-app.post('/purchase', (req,res) => {
- const {productId, quantity} = req.body;
- if (!Number.isSafeInteger(productId) || !Number.isSafeInteger(quantity) || quantity <= 0)
-   return res.status(400).json({error:'Invalid product ID or quantity'});
- // BEHAVIOR
-});
-app.listen(process.env.PORT, '127.0.0.1');
-"""
-_FIXED = """db.run('UPDATE products SET inventory = inventory - ? WHERE id = ? AND inventory >= ?',
- [quantity,productId,quantity], function(err) {
-  if(err) return res.status(500).json({error:'Database error'});
-  if(!this.changes) return res.status(400).json({error:'Insufficient inventory'});
-  db.get('SELECT inventory FROM products WHERE id = ?', [productId], (err,row) => {
-    if(err || !row) return res.status(500).json({error:'Database error'});
-    res.json({success:true, remaining:row.inventory});
-  });
- });"""
 
-_CHECKOUT_APP = """
-const express = require('express');
-const sqlite3 = require('sqlite3');
-const fs = require('fs');
-const app = express();
-app.use(express.json());
-const db = new sqlite3.Database(process.env.ECOMMERCE_DB_PATH || 'ecommerce.db');
-const databaseReady = new Promise((resolve, reject) => {
-  db.exec(fs.readFileSync('schema.sql', 'utf8'), (error) => error ? reject(error) : resolve());
-});
-app.get('/products', async (req, res) => {
-  await databaseReady;
-  db.all('SELECT * FROM products', (error, rows) => {
-    if (error) return res.status(500).json({error: 'Database error'});
-    res.json(rows);
-  });
-});
-app.post('/checkout', async (req, res) => {
-  await databaseReady;
-  // CHECKOUT_BEHAVIOR
-});
-if (require.main === module) app.listen(process.env.PORT, '127.0.0.1');
-module.exports = {app, db, databaseReady};
-"""
-_CHECKOUT_FIXED = """db.run('INSERT INTO orders(total, status) VALUES (?, ?)', [10, 'placed'], (error) => {
-    if (error) return res.status(500).json({error: 'Database error'});
-    res.json({message: 'Order placed', itemCount: req.body.cart.length});
-  });"""
+def snapshot_workspace(tmp_path: Path, case: str) -> WorkspaceRef:
+    """Real immutable frontend/server/schema/init, with a reviewed known-good patch."""
+    from scripts.qualify_workflow import initialize_snapshot
+
+    _, base, _ = initialize_snapshot(tmp_path, case)
+    root = tmp_path / "source"
+    _git(root, "apply", str(Path(__file__).parents[1] / "fixtures/qualification" / (case + ".diff")))
+    return WorkspaceRef(workspace_id=case + "-proof", path=str(root), base_commit=base)
 
 
 def purchase_workspace(tmp_path: Path) -> WorkspaceRef:
-    root = tmp_path / "purchase"
-    root.mkdir()
-    (root / "package.json").write_text((Path(__file__).parents[2] / "validation/ecommerce/package.json").read_text())
-    (root / "server.js").write_text(
-        _APP.replace("// BEHAVIOR", "res.status(400).json({error:'Insufficient inventory'});")
-    )
-    (root / "schema.sql").write_text("CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, inventory INTEGER);")
-    (root / "seed.sql").write_text("INSERT OR IGNORE INTO products VALUES(1,10);")
-    _git(root, "init", "-b", "main")
-    _git(root, "config", "user.name", "AIOS disposable fixture")
-    _git(root, "config", "user.email", "fixture@example.invalid")
-    _git(root, "add", ".")
-    _git(root, "commit", "-m", "isolated test fixture")
-    commit = _git(root, "rev-parse", "HEAD")
-    (root / "server.js").write_text(_APP.replace("// BEHAVIOR", _FIXED))
-    return WorkspaceRef(workspace_id="purchase-proof", path=str(root), base_commit=commit)
+    return snapshot_workspace(tmp_path, "ah54")
 
 
 def checkout_workspace(tmp_path: Path) -> WorkspaceRef:
-    root = tmp_path / "checkout"
-    root.mkdir()
-    (root / "package.json").write_text((Path(__file__).parents[2] / "validation/ecommerce/package.json").read_text())
-    (root / "server.js").write_text(
-        _CHECKOUT_APP.replace(
-            "// CHECKOUT_BEHAVIOR",
-            "res.json({message: 'Order placed', itemCount: req.body.cart.length});",
-        )
-    )
-    (root / "schema.sql").write_text(
-        "CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, price REAL);"
-        "CREATE TABLE IF NOT EXISTS orders(id INTEGER PRIMARY KEY, total REAL, status TEXT);"
-    )
-    (root / "seed.sql").write_text("INSERT INTO products(id, price) VALUES(1, 10);")
-    _git(root, "init", "-b", "main")
-    _git(root, "config", "user.name", "AIOS disposable fixture")
-    _git(root, "config", "user.email", "fixture@example.invalid")
-    _git(root, "add", ".")
-    _git(root, "commit", "-m", "isolated checkout fixture")
-    commit = _git(root, "rev-parse", "HEAD")
-    (root / "server.js").write_text(_CHECKOUT_APP.replace("// CHECKOUT_BEHAVIOR", _CHECKOUT_FIXED))
-    return WorkspaceRef(workspace_id="checkout-proof", path=str(root), base_commit=commit)
+    return snapshot_workspace(tmp_path, "ah56")
 
 
 async def qualify(sandbox: DockerSandboxExecutor, workspace: WorkspaceRef) -> None:
-    task = load_policy(Path(__file__).parents[2] / "config/policies/demo.json").validation_tasks["purchase_regression"]
-    before = (Path(workspace.path) / "server.js").read_bytes()
-    result = await sandbox.run_behavior(
-        BehavioralTaskRequest(
-            workspace=workspace,
-            task_name="purchase_regression",
-            task=task,
-            attempt=1,
-            patch_digest="sha256:fixture",
-        )
-    )
-    base = {case.test_id: case.outcome for case in result.evidence.base.cases}
-    assert "purchase_below_stock" in base, result.evidence.model_dump_json()
-    assert base["purchase_below_stock"] == "ASSERTION_FAILED"
-    assert base["purchase_persistence"] == "ASSERTION_FAILED"
-    assert all(case.outcome == "PASSED" for case in result.evidence.candidate.cases)
-    assert set(base) == set(task.required_test_ids)
-    assert result.evidence.cleanup_succeeded and len(result.executions) == 2
-    assert (Path(workspace.path) / "server.js").read_bytes() == before
-    assert not list(sandbox.workspace_root.glob("verification-*"))
-    assert not list(Path(workspace.path).glob("*.db"))
+    await qualify_profile(sandbox, workspace, "purchase_regression", "purchase_below_stock")
 
 
 async def qualify_checkout(sandbox: DockerSandboxExecutor, workspace: WorkspaceRef) -> None:
-    task = load_policy(Path(__file__).parents[2] / "config/policies/demo.json").validation_tasks["checkout_regression"]
+    await qualify_profile(sandbox, workspace, "checkout_regression", "checkout_persists_before_success")
+
+
+async def qualify_profile(
+    sandbox: DockerSandboxExecutor, workspace: WorkspaceRef, task_name: str, reproduction: str
+) -> None:
+    task = load_policy(Path(__file__).parents[2] / "config/policies/demo.json").validation_tasks[task_name]
+    root = Path(workspace.path)
+    before = _git(root, "diff", "HEAD")
     result = await sandbox.run_behavior(
         BehavioralTaskRequest(
-            workspace=workspace,
-            task_name="checkout_regression",
-            task=task,
-            attempt=1,
-            patch_digest="sha256:fixture",
+            workspace=workspace, task_name=task_name, task=task, attempt=1, patch_digest="sha256:fixture"
         )
     )
-    assert [(case.test_id, case.outcome) for case in result.evidence.base.cases] == [
-        ("checkout_persists_before_success", "ASSERTION_FAILED"),
-        ("checkout_write_failure_no_success", "ASSERTION_FAILED"),
-    ], result.evidence.model_dump_json()
-    assert [(case.test_id, case.outcome) for case in result.evidence.candidate.cases] == [
-        ("checkout_persists_before_success", "PASSED"),
-        ("checkout_write_failure_no_success", "PASSED"),
-    ], result.evidence.model_dump_json()
-    assert {case.test_id for case in result.evidence.base.cases} == set(task.required_test_ids)
-    assert result.evidence.cleanup_succeeded
+    base = {case.test_id: case.outcome for case in result.evidence.base.cases}
+    candidate = {case.test_id: case.outcome for case in result.evidence.candidate.cases}
+    assert base[reproduction] == "ASSERTION_FAILED", result.evidence.model_dump_json()
+    assert set(base) == set(candidate) == set(task.required_test_ids)
+    assert all(outcome == "PASSED" for outcome in candidate.values()), result.evidence.model_dump_json()
+    assert result.evidence.assertions_digest.startswith("sha256:")
+    assert result.evidence.dependency_digest.startswith("sha256:")
+    assert result.evidence.base.runtime_digest == result.evidence.candidate.runtime_digest
+    assert result.evidence.cleanup_succeeded and len(result.executions) == 2
+    assert _git(root, "diff", "HEAD") == before
     assert not list(sandbox.workspace_root.glob("verification-*"))
-    assert not list(Path(workspace.path).glob("*.db"))
+    assert not list(root.glob("*.db"))
 
 
 @pytest.mark.integration
 @pytest.mark.usefixtures("docker_executable")
 async def test_purchase_real_express_sqlite_before_after(tmp_path: Path) -> None:
-    bundle = Path(__file__).parents[2] / ".artifacts/validation/ecommerce"
+    bundle = Path(
+        os.environ.get("AIOS_BEHAVIORAL_BUNDLE", str(Path(__file__).parents[2] / ".artifacts/validation/ecommerce"))
+    )
     if not bundle.is_dir():
         pytest.skip("Build offline native assets with make validation-bundle first")
     sandbox = DockerSandboxExecutor(tmp_path, "aios-remediation-sandbox:local", behavioral_bundle=bundle)
@@ -181,11 +82,39 @@ async def test_purchase_real_express_sqlite_before_after(tmp_path: Path) -> None
 @pytest.mark.integration
 @pytest.mark.usefixtures("docker_executable")
 async def test_checkout_real_express_sqlite_before_after(tmp_path: Path) -> None:
-    bundle = Path(__file__).parents[2] / ".artifacts/validation/ecommerce"
+    bundle = Path(
+        os.environ.get("AIOS_BEHAVIORAL_BUNDLE", str(Path(__file__).parents[2] / ".artifacts/validation/ecommerce"))
+    )
     if not bundle.is_dir():
         pytest.skip("Build offline native assets with make validation-bundle first")
     sandbox = DockerSandboxExecutor(tmp_path, "aios-remediation-sandbox:local", behavioral_bundle=bundle)
     await qualify_checkout(sandbox, checkout_workspace(tmp_path))
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("docker_executable")
+async def test_browser_omitting_checkout_request_is_bounded_assertion_failure(tmp_path: Path) -> None:
+    bundle = Path(os.environ.get("AIOS_BEHAVIORAL_BUNDLE", ".artifacts/validation/ecommerce"))
+    if not bundle.is_dir():
+        pytest.skip("Build offline native assets with make validation-bundle first")
+    workspace = checkout_workspace(tmp_path)
+    app = Path(workspace.path) / "public/app.js"
+    app.write_text(app.read_text() + "\nfunction checkout() {}\n")
+    sandbox = DockerSandboxExecutor(tmp_path, "aios-remediation-sandbox:local", behavioral_bundle=bundle)
+    task = load_policy(Path("config/policies/demo.json")).validation_tasks["checkout_regression"]
+    result = await sandbox.run_behavior(
+        BehavioralTaskRequest(
+            workspace=workspace,
+            task_name="checkout_regression",
+            task=task,
+            attempt=1,
+            patch_digest="sha256:missing-browser-request",
+        )
+    )
+    cases = {case.test_id: case.outcome for case in result.evidence.candidate.cases}
+    assert cases["checkout_persists_before_success"] == "PASSED"
+    assert all(cases[name] == "ASSERTION_FAILED" for name in task.required_test_ids if "browser" in name)
+    assert result.evidence.cleanup_succeeded
 
 
 @pytest.mark.live_code_interpreter

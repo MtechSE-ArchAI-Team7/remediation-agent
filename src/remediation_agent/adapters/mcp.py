@@ -41,6 +41,7 @@ from remediation_agent.domain.models import (
     WorkspaceRef,
 )
 from remediation_agent.policy.engine import PolicyEngine
+from remediation_agent.source import source_artifact
 
 GITHUB_MCP_ENDPOINT = "https://api.githubcopilot.com/mcp/"
 INSPECTION_MCP_TOOL_NAMES = frozenset({"get_repository_tree", "get_file_contents", "search_code"})
@@ -268,7 +269,7 @@ class GitHubRemoteMcpInspectionTools:
             }
             try:
                 result = await client.call_tool(self._upstream_tool_name("get_file_contents"), arguments)
-                response = self._normalize_file_or_directory(result, requested_path)
+                response = self._normalize_file_or_directory(result, requested_path, workspace)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 response = self._failed("GITHUB_MCP_TOOL_FAILED", type(exc).__name__)
             return _tool_response(response)
@@ -407,7 +408,9 @@ class GitHubRemoteMcpInspectionTools:
                 break
         return self._success("TREE", locator, "\n".join(entries), truncated=truncated)
 
-    def _normalize_file_or_directory(self, result: CallToolResult, locator: str) -> InspectionToolResponse:
+    def _normalize_file_or_directory(
+        self, result: CallToolResult, locator: str, workspace: WorkspaceRef
+    ) -> InspectionToolResponse:
         error = self._remote_error(result)
         if error is not None:
             return error
@@ -427,7 +430,14 @@ class GitHubRemoteMcpInspectionTools:
             if result.structuredContent is not None:
                 raise ValueError("GitHub MCP file response mixed structured and embedded content")
             bounded, truncated = _truncate_utf8(embedded_text, self.policy.config.limits.max_file_bytes)
-            return self._success("FILE", locator, bounded, truncated=truncated)
+            with (Path(workspace.path) / locator).open("rb") as local_file:
+                local = local_file.read(self.policy.config.limits.max_file_bytes)
+            if local[: self.policy.config.limits.max_file_bytes].decode("utf-8") != bounded:
+                raise ValueError("SOURCE_MISMATCH: hosted content differs from the immutable checkout")
+            return InspectionToolResponse(
+                status=InspectionToolStatus.SUCCEEDED,
+                artifact=source_artifact(locator, bounded, truncated=truncated),
+            )
 
         parsed = self._json_value(result)
         if isinstance(parsed, list):

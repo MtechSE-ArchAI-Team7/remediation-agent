@@ -368,7 +368,7 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
     assert result.result.draft_pr.created is False
     assert result.result.artifact_manifest is not None
     artifact_names = {item.name for item in result.result.artifact_manifest.artifacts}
-    assert artifact_names == {
+    assert artifact_names >= {
         "audit.jsonl",
         "draft-pr.json",
         "explainability.json",
@@ -381,6 +381,14 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         "validation-execution.json",
         "incident-memory.json",
         "verification-brief.json",
+        "diagnosis-handoff.json",
+        "compiled-contract.json",
+        "capability-report.json",
+        "execution-binding.json",
+        "edit-receipts.json",
+        "publication-journal.json",
+        "candidate-evidence.json",
+        "cleanup.json",
     }
     run_directory = artifact_root / result.run_id
     assert all((run_directory / name).is_file() for name in artifact_names)

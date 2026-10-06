@@ -477,6 +477,7 @@ class EvaluationExpectationV2(StrictModel):
             ExpectedRoute.APPROVAL: {FinalStatus.AWAITING_APPROVAL},
             ExpectedRoute.DENY: {FinalStatus.UNSAFE_REMEDIATION},
             ExpectedRoute.FAIL_SAFE: {
+                FinalStatus.HUMAN_ACTION_REQUIRED,
                 FinalStatus.INTERNAL_ERROR,
                 FinalStatus.CLEANUP_FAILED,
                 FinalStatus.INVALID_REQUEST,

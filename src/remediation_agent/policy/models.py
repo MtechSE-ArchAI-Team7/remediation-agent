@@ -28,6 +28,7 @@ class Limits(StrictModel):
     autonomous_max_diff_lines: int = Field(gt=0)
     absolute_max_diff_lines: int = Field(gt=0)
     max_validation_attempts: int = Field(gt=0)
+    max_edit_proposals: int = Field(default=3, ge=1, le=3)
     max_model_format_retries: int = Field(ge=0)
     max_tree_entries: int = Field(gt=0)
     max_file_bytes: int = Field(gt=0)
@@ -53,14 +54,23 @@ class Limits(StrictModel):
 
 class ValidationTaskConfig(StrictModel):
     kind: Literal["STATIC", "BEHAVIORAL"] = "STATIC"
+    source_syntax: Literal["javascript"] | None = None
     profile: Literal["pytest", "node_test", "ecommerce_checkout", "ecommerce_purchase"] | None = None
     test_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)
     required_test_ids: list[NonEmptyStr] = Field(default_factory=list, max_length=40)
+    regression_test_ids: list[NonEmptyStr] = Field(default_factory=list, max_length=40)
     required_evidence_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)
     request_contract: RequestContract | None = None
+    assertions: dict[str, str] = Field(default_factory=dict, max_length=40)
+    limitations: list[str] = Field(default_factory=list, max_length=20)
+    repository_patterns: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def behavioral_configuration(self) -> ValidationTaskConfig:
+        if not set(self.regression_test_ids).issubset(self.required_test_ids):
+            raise ValueError("regression checks must be required operator assertions")
+        if self.source_syntax and (self.kind != "STATIC" or self.argv != ["node", "--check", "server.js"]):
+            raise ValueError("source syntax requires the fixed operator JavaScript syntax task")
         if self.kind == "BEHAVIORAL" and self.profile is None:
             raise ValueError("behavioral tasks require a trusted profile")
         if self.kind == "STATIC" and self.profile is not None:

@@ -106,7 +106,9 @@ def scripted_responses(
     configured_tasks = tasks or ["unit_tests"]
     responses: dict[ModelOperation, list[BaseModel | dict[str, object]]] = {
         ModelOperation.INSPECTION: [
-            InspectionPlan(paths_to_read=[target_path], search_queries=["int("], rationale="Inspect evidence path.")
+            InspectionPlan(
+                paths_to_read=target_paths or [target_path], search_queries=["int("], rationale="Inspect evidence path."
+            )
         ],
         ModelOperation.PLANNING: [
             RemediationPlan(

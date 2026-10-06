@@ -79,7 +79,7 @@ class Settings(BaseSettings):
 
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8080, ge=1, le=65535)
-    prompt_version: str = "remediation-v2"
+    prompt_version: str = "remediation-v3"
 
     agentcore_memory_id: str | None = None
     incident_memory_enabled: bool = False

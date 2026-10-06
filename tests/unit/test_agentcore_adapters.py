@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import tarfile
+import threading
 from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
@@ -89,6 +91,82 @@ class _FakeCodeInterpreter:
     def stop_code_interpreter_session(self, **kwargs: object) -> Mapping[str, object]:
         self.stopped.append(cast(str, kwargs["sessionId"]))
         return {}
+
+
+@pytest.mark.parametrize("during_start", [True, False])
+async def test_cancellation_waits_for_owned_session_cleanup(tmp_path: Path, during_start: bool) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingInterpreter(_FakeCodeInterpreter):
+        def start_code_interpreter_session(self, **kwargs: object) -> Mapping[str, object]:
+            if during_start:
+                entered.set()
+                assert release.wait(5)
+            return super().start_code_interpreter_session(**kwargs)
+
+        def invoke_code_interpreter(self, **kwargs: object) -> Mapping[str, object]:
+            if not during_start:
+                entered.set()
+                assert release.wait(5)
+            return super().invoke_code_interpreter(**kwargs)
+
+    workspace = tmp_path / "run"
+    workspace.mkdir()
+    (workspace / "test_app.py").write_text("def test_ok(): assert True\n")
+    bundle = tmp_path / "vendor.tar.gz"
+    with tarfile.open(bundle, "w:gz"):
+        pass
+    fake = BlockingInterpreter()
+    sandbox = AgentCoreCodeInterpreterSandbox(
+        tmp_path, region_name="ap-southeast-1", validation_bundle=bundle, client=fake
+    )
+    pending = asyncio.create_task(
+        sandbox.run_task(
+            ValidationTaskRequest(
+                workspace=WorkspaceRef(workspace_id="run", path=str(workspace), base_commit="a" * 40),
+                task_name="unit_tests",
+                task=ValidationTaskConfig(
+                    argv=["python", "-m", "pytest"],
+                    cwd=".",
+                    environment={},
+                    timeout_seconds=30,
+                    output_limit_bytes=4096,
+                    retryable=False,
+                ),
+            )
+        )
+    )
+    assert await asyncio.to_thread(entered.wait, 5)
+    pending.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert fake.stopped == ["ci-session"]
+
+
+def test_large_offline_assets_use_bounded_digest_bound_transfers(tmp_path: Path) -> None:
+    fake = _FakeCodeInterpreter()
+    sandbox = AgentCoreCodeInterpreterSandbox(tmp_path, region_name="ap-southeast-1", client=fake)
+    asset = b"sealed" * 1_000_000
+    transfer = sandbox._upload("session", b"archive", b"vendor", asset)
+    content = [
+        entry
+        for call in fake.invocations
+        for entry in cast(dict[str, list[dict[str, object]]], call["arguments"])["content"]
+    ]
+    parts = [
+        cast(bytes, entry["blob"])
+        for entry in content
+        if str(entry["path"]).startswith("aios-trusted-browser.tar.xz.part-")
+    ]
+    assert b"".join(parts) == asset
+    assert all(len(part) <= 4 * 1024 * 1024 for part in parts)
+    assert transfer["aios-trusted-browser.tar.xz"] == {
+        "parts": 2,
+        "bytes": len(asset),
+        "digest": "sha256:" + hashlib.sha256(asset).hexdigest(),
+    }
 
 
 async def test_runtime_secret_is_strict_and_requires_a_32_byte_key() -> None:

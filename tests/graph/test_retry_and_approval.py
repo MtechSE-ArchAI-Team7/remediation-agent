@@ -34,12 +34,10 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
     assert pr.requests == []
     revision_requests = [request for request in model.requests if request.operation.value == "REVISION"]
     assert len(revision_requests) == 2
-    assert "complete replacement patch" in revision_requests[0].system_instruction
-    assert revision_requests[0].payload["previous_patch"] == {
-        "unified_diff": initial,
-        "rationale": "Bounded fix.",
-        "proposed_validation_tasks": [],
-    }
+    assert "all replacement edits against the clean base" in revision_requests[0].system_instruction
+    prior = revision_requests[0].payload["previous_patch"]
+    assert isinstance(prior, dict)
+    assert prior["edits"][0]["replacement"] == "value = safe_int_v1(raw)\n"
     audit_events = [json.loads(line) for line in audit.requests[-1].jsonl.splitlines()]
     failed_task_event = next(
         event
@@ -49,64 +47,24 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
     assert "failure=fake unit_tests: FAILED" in failed_task_event["detail"]
 
 
-async def test_patch_apply_mismatch_restores_base_and_generates_bounded_revision() -> None:
-    initial = patch_for(new="value = safe_int_v1(raw)")
-    revision = patch_for(new="value = safe_int_v2(raw)")
-    service, model, _, sandbox, pr, _, _ = build_test_service(
-        scripted_responses(patch=initial, revisions=[revision]),
-        apply_failures=["git apply failed: error: patch failed: src/app.py:1"],
-    )
-
-    result = await service.start(diagnosis_handoff())
-
-    assert result.status is FinalStatus.DRAFT_PR_PREPARED
-    assert result.result is not None
-    assert len(sandbox.applied_patches) == 2
-    assert sandbox.restores == 1
-    assert len(pr.requests) == 1
-    assert result.result.validation_attempts[0].outcome is ValidationOutcome.ERROR
-    assert result.result.validation_attempts[0].results[0].task_name == "patch_apply"
-    revision_requests = [request for request in model.requests if request.operation.value == "REVISION"]
-    assert len(revision_requests) == 1
-    assert "git apply failed" in str(revision_requests[0].payload["revision_context"])
-
-
-async def test_patch_apply_mismatch_stops_at_configured_attempt_limit() -> None:
-    initial = patch_for(new="value = safe_int_v1(raw)")
-    revisions = [
-        patch_for(new="value = safe_int_v2(raw)"),
-        patch_for(new="value = safe_int_v3(raw)"),
-    ]
-    service, _, _, sandbox, pr, _, _ = build_test_service(
-        scripted_responses(patch=initial, revisions=revisions),
-        apply_failures=["git apply failed: patch does not apply"] * 3,
-    )
-
-    result = await service.start(diagnosis_handoff())
-
-    assert result.status is FinalStatus.VALIDATION_FAILED
-    assert result.result is not None
-    assert len(result.result.validation_attempts) == 3
-    assert all(attempt.outcome is ValidationOutcome.ERROR for attempt in result.result.validation_attempts)
-    assert len(sandbox.applied_patches) == 3
-    assert sandbox.restores == 2
-    assert pr.requests == []
-    assert any("Patch application failed" in risk for risk in result.result.residual_risks)
-
-
-async def test_non_applicability_patch_error_remains_terminal() -> None:
-    service, model, _, sandbox, pr, _, _ = build_test_service(
+@pytest.mark.parametrize(
+    "error", ["git apply failed: patch does not apply", "workspace unavailable", "applied workspace diff differs"]
+)
+async def test_prechecked_patch_application_failure_requires_revalidation_without_code_revision(error: str) -> None:
+    service, model, _, sandbox, pr, artifacts, _ = build_test_service(
         scripted_responses(revisions=[patch_for(new="value = safe_int_v2(raw)")]),
-        apply_failures=["applied workspace diff does not match the preflighted file scope"],
+        apply_failures=[error],
     )
-
     result = await service.start(diagnosis_handoff())
-
-    assert result.status is FinalStatus.INTERNAL_ERROR
+    assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
+    assert result.result is not None and not result.result.validation_attempts
     assert len(sandbox.applied_patches) == 1
-    assert sandbox.restores == 0
+    assert sandbox.restores == 0 and sandbox.destroyed
     assert pr.requests == []
     assert all(request.operation.value != "REVISION" for request in model.requests)
+    failure = json.loads(artifacts.requests[-1].files["workflow-failures.json"])[-1]
+    assert failure["category"] == "ENVIRONMENT_SETUP"
+    assert failure["code"] == "PATCH_APPLICATION_FAILED"
 
 
 async def test_plan_approval_interrupt_can_resume_same_run() -> None:
@@ -248,9 +206,10 @@ async def test_approval_is_bound_to_exact_scope() -> None:
 async def test_revised_sensitive_patch_invalidates_prior_diff_approval() -> None:
     first_patch = patch_for("pyproject.toml", old='name = "old"', new='name = "first"')
     revised_patch = patch_for("pyproject.toml", old='name = "old"', new='name = "second"')
-    responses = scripted_responses(patch=first_patch, revisions=[revised_patch])
+    responses = scripted_responses(target_path="pyproject.toml", patch=first_patch, revisions=[revised_patch])
     service, _, _, sandbox, _, _, _ = build_test_service(
         responses,
+        files={"pyproject.toml": 'name = "old"\n'},
         task_outcomes={"unit_tests": [ValidationOutcome.FAILED, ValidationOutcome.PASSED]},
     )
     first_wait = await service.start(diagnosis_handoff())
@@ -266,6 +225,18 @@ async def test_revised_sensitive_patch_invalidates_prior_diff_approval() -> None
             decided_at=datetime.now(UTC),
         ),
     )
+    patch_request = second_wait.approval_request
+    assert patch_request is not None and patch_request.kind == "PATCH"
+    second_wait = await service.approve(
+        first_wait.run_id,
+        ApprovalDecisionV1(
+            approval_id=patch_request.approval_id,
+            scope_digest=patch_request.scope_digest,
+            status=ApprovalStatus.APPROVED,
+            reviewer_id="reviewer",
+            decided_at=datetime.now(UTC),
+        ),
+    )
     second_request = second_wait.approval_request
     assert second_wait.status is FinalStatus.AWAITING_APPROVAL
     assert second_request is not None
@@ -273,11 +244,10 @@ async def test_revised_sensitive_patch_invalidates_prior_diff_approval() -> None
     assert len(sandbox.applied_patches) == 1
 
 
-async def test_patch_path_outside_reviewed_plan_requires_approval() -> None:
+async def test_edit_path_outside_reviewed_plan_requires_new_planning() -> None:
     responses = scripted_responses(patch=patch_for("src/unplanned.py"))
     service, _, _, sandbox, _, _, _ = build_test_service(responses)
     waiting = await service.start(diagnosis_handoff())
-    assert waiting.status is FinalStatus.AWAITING_APPROVAL
-    assert waiting.approval_request is not None
-    assert "beyond the reviewed plan" in waiting.approval_request.summary
+    assert waiting.status is FinalStatus.HUMAN_ACTION_REQUIRED
+    assert waiting.approval_request is None
     assert sandbox.applied_patches == []

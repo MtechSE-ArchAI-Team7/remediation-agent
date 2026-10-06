@@ -16,9 +16,13 @@ from remediation_agent.domain.models import (
     CleanupResult,
     DraftPrMetadata,
     DraftPrPayload,
+    EditProposal,
+    EditReceipt,
     IncidentMemoryRecordV1,
+    InspectionArtifact,
     ModelCallRecord,
     NonEmptyStr,
+    PatchCandidate,
     RemediationHandoffV1,
     RepositoryRef,
     StrictModel,
@@ -44,6 +48,19 @@ class ArtifactReadError(RuntimeError):
     def __init__(self, code: ArtifactReadErrorCode) -> None:
         super().__init__(code)
         self.code = code
+
+
+class PublicationError(RuntimeError):
+    """Safe typed publication failure; transport data must not enter evidence."""
+
+    def __init__(self, code: str, *, retryable: bool = False):
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+
+
+class PatchApplicabilityError(RuntimeError):
+    """Canonical patch could not be applied; distinct from sandbox infrastructure failure."""
 
 
 class StructuredModelFailure(RuntimeError):
@@ -104,6 +121,31 @@ class DiffResult(StrictModel):
     digest: NonEmptyStr
 
 
+class EditCompileRequest(StrictModel):
+    workspace: WorkspaceRef
+    proposal: EditProposal
+    artifacts: list[InspectionArtifact]
+    allowed_paths: list[str]
+    max_file_bytes: int = Field(gt=0)
+
+
+class EditCompileResult(StrictModel):
+    candidate: PatchCandidate
+    receipts: list[EditReceipt]
+
+
+class CandidateVerifyRequest(StrictModel):
+    workspace: WorkspaceRef
+    receipts: list[EditReceipt]
+
+
+class PublicationCheckRequest(StrictModel):
+    workspace: WorkspaceRef
+    repository: RepositoryRef
+    expected_tree: str | None = None
+    check_remote: bool = True
+
+
 class BranchRequest(StrictModel):
     workspace: WorkspaceRef
     branch_name: NonEmptyStr
@@ -116,6 +158,8 @@ class BranchResult(StrictModel):
 class CommitRequest(StrictModel):
     workspace: WorkspaceRef
     message: NonEmptyStr
+    expected_tree: str | None = None
+    authored_at: datetime | None = None
 
 
 class CommitResult(StrictModel):
@@ -124,6 +168,7 @@ class CommitResult(StrictModel):
 
 class PushRequest(StrictModel):
     workspace: WorkspaceRef
+    expected_commit: str | None = None
     remote: NonEmptyStr = "origin"
     branch_name: NonEmptyStr
 
@@ -162,6 +207,7 @@ class SandboxExecutionProfile(StrictModel):
 
 
 class BehavioralTaskRequest(ValidationTaskRequest):
+    capability_only: bool = False
     patch_digest: NonEmptyStr
 
 
@@ -205,6 +251,8 @@ class ModelGeneration[TModel: BaseModel]:
 
 
 class DraftPrRequest(StrictModel):
+    expected_commit: str | None = None
+    expected_base_commit: str | None = None
     repository: RepositoryRef
     repository_slug: str | None = None
     payload: DraftPrPayload

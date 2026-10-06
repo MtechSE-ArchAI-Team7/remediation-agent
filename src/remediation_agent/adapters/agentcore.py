@@ -148,7 +148,7 @@ class S3ArtifactStore:
         refs: list[ArtifactRef] = []
         for name, content in sorted(request.files.items()):
             relative = _safe_relative(name)
-            redacted = self._redactor.redact(content)
+            redacted = self._redactor.redact_artifact(name, content)
             digest = _digest(redacted)
             key = f"runs/{run_id}/artifacts/{digest.removeprefix('sha256:')}/{relative.as_posix()}"
             await self._put_immutable(key, redacted.encode("utf-8"), _media_type(name))

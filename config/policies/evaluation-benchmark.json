@@ -67,20 +67,21 @@
     "absolute_max_changed_files": 10,
     "autonomous_max_diff_lines": 400,
     "absolute_max_diff_lines": 800,
-    "max_validation_attempts": 2,
+    "max_validation_attempts": 3,
     "max_model_format_retries": 2,
     "max_tree_entries": 500,
     "max_file_bytes": 65536,
     "max_search_results": 50,
     "max_context_bytes": 262144,
-    "max_inspection_rounds": 8,
-    "max_inspection_tool_calls": 12,
+    "max_inspection_rounds": 14,
+    "max_inspection_tool_calls": 16,
     "max_mcp_tool_timeout_seconds": 30,
     "max_task_timeout_seconds": 120,
     "max_task_output_bytes": 1048576,
     "max_validation_tasks_per_attempt": 5,
-    "max_model_output_tokens": 4096,
-    "max_active_runs": 1
+    "max_model_output_tokens": 8192,
+    "max_active_runs": 1,
+    "max_edit_proposals": 3
   },
   "default_validation_tasks": [
     "javascript_syntax"
@@ -96,7 +97,8 @@
       "environment": {},
       "timeout_seconds": 60,
       "output_limit_bytes": 65536,
-      "retryable": false
+      "retryable": false,
+      "source_syntax": "javascript"
     },
     "average_regression": {
       "argv": [
@@ -148,12 +150,21 @@
       "test_paths": [],
       "required_test_ids": [
         "checkout_persists_before_success",
-        "checkout_write_failure_no_success"
+        "checkout_server_priced_multiple_products",
+        "checkout_invalid_carts",
+        "checkout_write_failure_no_success",
+        "checkout_restart_persistence",
+        "checkout_browser_confirmed_success",
+        "checkout_browser_http_failure",
+        "checkout_browser_network_failure",
+        "checkout_catalog_regression"
       ],
       "required_evidence_paths": [
         "server.js",
         "schema.sql",
+        "seed.sql",
         "public/app.js",
+        "public/index.html",
         "package.json"
       ],
       "request_contract": {
@@ -165,22 +176,49 @@
         },
         "example_body": "{\"cart\":[{\"id\":1,\"price\":0}]}",
         "expected_responses": [
-          "200: {message: \"Order placed\", itemCount: 1} only after the order insert succeeds",
-          "non-200 JSON error without an order-placed message when the order insert fails"
+          "200: {message: \"Order placed\", itemCount: cart.length} after persisted server-priced order",
+          "4xx JSON error for invalid or unknown carts",
+          "non-200 JSON error on failed order insert"
         ],
         "state_changes": [
-          "Persist one orders row using the server-side product price before returning success; persist no row on write failure."
+          "Persist one orders row with total calculated from server prices before success; retain orders across restart; no persistence on invalid cart or write failure.",
+          "Browser retains cart on pending/failed requests and clears it only after confirmed success."
         ],
         "prerequisites": [
-          "Disposable ecommerce.db initialized from schema.sql and seed.sql with at least one product."
+          "Disposable ecommerce.db initialized from schema.sql and seed.sql with two products priced at 11.25 and 7.50; real storefront, offline Chromium and real SQLite."
         ],
         "evidence_paths": [
           "server.js",
           "schema.sql",
+          "seed.sql",
           "public/app.js",
+          "public/index.html",
           "package.json"
         ]
-      }
+      },
+      "assertions": {
+        "checkout_persists_before_success": "A one-product numeric-ID cart returns the existing 200 {message: Order placed, itemCount: 1} only after an orders row is persisted using server prices; no status literal is required.",
+        "checkout_server_priced_multiple_products": "Two distinct products total 18.75 from database prices, ignoring submitted prices; itemCount equals cart length.",
+        "checkout_invalid_carts": "Missing, empty, malformed, non-array, null-entry, string-ID, fractional-ID, negative-ID and unknown-ID carts return a 4xx client error without persisting an order.",
+        "checkout_write_failure_no_success": "SQLite insert rejection never returns success or creates an order.",
+        "checkout_restart_persistence": "Persisted orders survive application restart with the same database.",
+        "checkout_browser_confirmed_success": "Real storefront keeps cart and suppresses success until actual checkout response; clears cart and shows success only after persistence.",
+        "checkout_browser_http_failure": "Actual SQLite write failure causes HTTP error; browser retains cart and never shows success.",
+        "checkout_browser_network_failure": "A failed checkout network request retains cart and never shows success.",
+        "checkout_catalog_regression": "Existing product catalog and storefront remain available."
+      },
+      "limitations": [
+        "No order-status literal is imposed.",
+        "Email delivery, user association, line items, inventory changes and idempotency are outside this checkout profile.",
+        "Deployment and runtime soak remain pending Agent 4 verification."
+      ],
+      "repository_patterns": [
+        "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
+        "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
+      ],
+      "regression_test_ids": [
+        "checkout_catalog_regression"
+      ]
     },
     "shipping_regression": {
       "argv": [
@@ -203,7 +241,12 @@
   "mandatory_tasks": [
     {
       "path_patterns": [
-        "server.js"
+        "*.js",
+        "*.cjs",
+        "*.mjs",
+        "**/*.js",
+        "**/*.cjs",
+        "**/*.mjs"
       ],
       "task_names": [
         "javascript_syntax"

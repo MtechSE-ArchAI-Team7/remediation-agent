@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -48,7 +49,7 @@ async def test_local_artifact_reader_uses_manifest_path_and_rejects_symlinks(tmp
         )
     )
 
-    assert result.content == '{"ok":true}'
+    assert json.loads(result.content) == {"ok": True}
     (root / "run" / "result.json").unlink()
     outside = tmp_path / "outside.json"
     outside.write_text('{"secret":true}', encoding="utf-8")

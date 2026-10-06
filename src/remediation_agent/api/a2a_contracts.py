@@ -11,6 +11,7 @@ from remediation_agent.domain.enums import FinalStatus
 from remediation_agent.domain.models import NonEmptyStr, StrictModel
 
 DIAGNOSIS_HANDOFF_MEDIA_TYPE = "application/vnd.aios.diagnosis-handoff.v1+json"
+PUBLICATION_RETRY_MEDIA_TYPE = "application/vnd.aios.publication-retry.v1+json"
 APPROVAL_DECISION_MEDIA_TYPE = "application/vnd.aios.approval-decision.v1+json"
 APPROVAL_REQUEST_MEDIA_TYPE = "application/vnd.aios.approval-request.v1+json"
 REMEDIATION_HANDOFF_MEDIA_TYPE = "application/vnd.aios.remediation-handoff.v1+json"
@@ -97,6 +98,7 @@ SUPPORTED_INPUT_MEDIA_TYPES = frozenset(
     {
         DIAGNOSIS_HANDOFF_MEDIA_TYPE,
         APPROVAL_DECISION_MEDIA_TYPE,
+        PUBLICATION_RETRY_MEDIA_TYPE,
         PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
         ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
     }

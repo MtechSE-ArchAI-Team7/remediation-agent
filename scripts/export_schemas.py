@@ -13,13 +13,20 @@ from remediation_agent.api.a2a_contracts import (
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
+    CapabilityReportV1,
+    CompiledContractV1,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
+    EditProposal,
+    ExecutionBindingV1,
     ExplainabilityTraceV1,
+    PublicationJournalV1,
+    PublicationRetryRequestV1,
     ReleaseProvenanceV1,
     RemediationHandoffV1,
     VerificationBriefV1,
 )
+from remediation_agent.domain.qualification import ReleaseQualificationV1
 from remediation_agent.evaluation import (
     EvaluationJudgeSuiteV1,
     EvaluationSuiteManifestV2,
@@ -34,6 +41,13 @@ def main() -> None:
     output = Path(__file__).parents[1] / "config" / "schemas"
     output.mkdir(parents=True, exist_ok=True)
     schemas = {
+        "release-qualification-v1.schema.json": ReleaseQualificationV1.model_json_schema(),
+        "compiled-contract-v1.schema.json": CompiledContractV1.model_json_schema(),
+        "capability-report-v1.schema.json": CapabilityReportV1.model_json_schema(),
+        "edit-proposal.schema.json": EditProposal.model_json_schema(),
+        "execution-binding-v1.schema.json": ExecutionBindingV1.model_json_schema(),
+        "publication-journal-v1.schema.json": PublicationJournalV1.model_json_schema(),
+        "publication-retry-request-v1.schema.json": PublicationRetryRequestV1.model_json_schema(),
         "verification-brief-v1.schema.json": VerificationBriefV1.model_json_schema(),
         "release-provenance-v1.schema.json": ReleaseProvenanceV1.model_json_schema(),
         "diagnosis-handoff-v1.schema.json": DiagnosisHandoffV1.model_json_schema(),

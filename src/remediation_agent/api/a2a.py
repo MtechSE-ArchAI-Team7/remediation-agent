@@ -27,6 +27,7 @@ from remediation_agent.api.a2a_contracts import (
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
+    PUBLICATION_RETRY_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
 )
 from remediation_agent.api.a2a_executor import RemediationA2AExecutor
@@ -74,6 +75,7 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
         default_input_modes=[
             DIAGNOSIS_HANDOFF_MEDIA_TYPE,
             APPROVAL_DECISION_MEDIA_TYPE,
+            PUBLICATION_RETRY_MEDIA_TYPE,
             ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
         ],
         default_output_modes=[
@@ -92,7 +94,7 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
                     "restricted workspace, and return a versioned remediation handoff."
                 ),
                 tags=["remediation", "repository", "langgraph"],
-                input_modes=[DIAGNOSIS_HANDOFF_MEDIA_TYPE, APPROVAL_DECISION_MEDIA_TYPE],
+                input_modes=[DIAGNOSIS_HANDOFF_MEDIA_TYPE, APPROVAL_DECISION_MEDIA_TYPE, PUBLICATION_RETRY_MEDIA_TYPE],
                 output_modes=[
                     APPROVAL_REQUEST_MEDIA_TYPE,
                     REMEDIATION_HANDOFF_MEDIA_TYPE,

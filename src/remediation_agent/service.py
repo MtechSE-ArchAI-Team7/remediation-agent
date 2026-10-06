@@ -77,9 +77,12 @@ class RemediationService:
     async def start(self, handoff: DiagnosisHandoffV1, *, run_id: str | None = None) -> RemediationRunView:
         run_id = run_id or str(uuid4())
         self._validate_run_id(run_id)
-        if await self._exists(run_id):
-            return await self.get(run_id)
         redacted_handoff = DiagnosisHandoffV1.model_validate(self._redact_data(handoff.model_dump(mode="python")))
+        if await self._exists(run_id):
+            snapshot = await self._snapshot(run_id)
+            if snapshot.values.get("handoff") != redacted_handoff:
+                raise ApprovalConflictError("RUN_INPUT_MISMATCH")
+            return await self.get(run_id)
         initial_state: RemediationState = {
             "run_id": run_id,
             "thread_id": run_id,
@@ -91,7 +94,7 @@ class RemediationService:
         self._validate_run_id(run_id)
         snapshot = await self._snapshot(run_id)
         state = cast(RemediationState, snapshot.values)
-        if "release_provenance" not in state:
+        if "release_provenance" not in state or "execution_binding" not in state:
             raise ApprovalConflictError("REVALIDATION_REQUIRED")
         redacted_decision = ApprovalDecisionV1.model_validate(self._redact_data(decision.model_dump(mode="python")))
         request = self._pending_approval(state, snapshot)
@@ -117,6 +120,29 @@ class RemediationService:
             if recovered != state["workspace"]:
                 await self.graph.aupdate_state(self._config(run_id), {"workspace": recovered})
         return await self._invoke(Command(resume=redacted_decision.model_dump(mode="json")), run_id)
+
+    async def retry_publication(self, run_id: str, candidate_digest: str) -> RemediationRunView:
+        self._validate_run_id(run_id)
+        snapshot = await self._snapshot(run_id)
+        state = cast(RemediationState, snapshot.values)
+        journal = state.get("publication_journal")
+        if journal is not None and journal.verified and state.get("final_status") is FinalStatus.DRAFT_PR_CREATED:
+            return await self.get(run_id)
+        if (
+            snapshot.next
+            or journal is None
+            or state.get("execution_binding") is None
+            or not state.get("locally_verified")
+            or not state.get("evidence_persisted")
+            or candidate_digest != journal.candidate_digest
+            or candidate_digest != state.get("diff_digest")
+            or not any(f.category == "PUBLICATION_FAILURE" for f in state.get("workflow_failures", []))
+        ):
+            raise ApprovalConflictError("PUBLICATION_RETRY_REVALIDATION_REQUIRED")
+        await self.graph.aupdate_state(
+            self._config(run_id), {"final_status": FinalStatus.PENDING}, as_node="build_evidence"
+        )
+        return await self._invoke(None, run_id)
 
     async def get(self, run_id: str) -> RemediationRunView:
         self._validate_run_id(run_id)
@@ -258,7 +284,8 @@ class RemediationService:
         view = self._view(state, run_id, approval_request=approval_request)
         if (
             self._handoff_delivery is None
-            or view.status not in {FinalStatus.DRAFT_PR_PREPARED, FinalStatus.DRAFT_PR_CREATED}
+            or view.status is not FinalStatus.DRAFT_PR_CREATED
+            or not (state.get("publication_journal") and state["publication_journal"].verified)
             or view.result is None
         ):
             return view

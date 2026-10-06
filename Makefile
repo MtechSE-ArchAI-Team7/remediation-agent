@@ -42,6 +42,12 @@ test-sandbox-integration: sandbox-build validation-bundle
 test-code-interpreter-live:
 	AIOS_RUN_CODE_INTERPRETER_LIVE=1 uv run pytest -m live_code_interpreter tests/integration/test_agentcore_code_interpreter_live.py tests/integration/test_purchase_behavior.py
 
+qualify-workflow-docker:
+	AIOS_RUN_WORKFLOW_QUALIFICATION=1 uv run python scripts/qualify_workflow.py --backend docker --case all --trials 3 --output .artifacts/qualification/docker
+
+qualify-workflow-hosted:
+	AIOS_RUN_WORKFLOW_QUALIFICATION=1 uv run python scripts/qualify_workflow.py --backend code-interpreter --case all --trials 3 --output .artifacts/qualification/hosted
+
 security:
 	uv run bandit -q -r src
 	uv run pip-audit --skip-editable

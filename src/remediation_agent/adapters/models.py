@@ -63,6 +63,7 @@ class ProviderStructuredModel:
         http_client: httpx.Client | None = None,
         http_async_client: httpx.AsyncClient | None = None,
         redactor: SecretRedactor | None = None,
+        configuration_digest: str | None = None,
     ) -> None:
         self.chat_model = chat_model
         self.provider = provider
@@ -72,6 +73,10 @@ class ProviderStructuredModel:
         self._http_client = http_client
         self._http_async_client = http_async_client
         self._redactor = redactor or SecretRedactor()
+        self._configuration_digest = configuration_digest or _digest(f"{provider}:{model}")
+
+    def configuration_digest(self) -> str:
+        return self._configuration_digest
 
     async def aclose(self) -> None:
         """Close any HTTP transports owned by this adapter."""
@@ -351,6 +356,23 @@ def build_structured_model(
         retries=max_format_retries,
         http_client=owned_http_client,
         http_async_client=owned_http_async_client,
+        configuration_digest=_digest(
+            json.dumps(
+                {
+                    "provider": settings.llm_provider,
+                    "model": settings.llm_model,
+                    "temperature": settings.model_temperature,
+                    "max_output_tokens": max_output_tokens,
+                    "openai_auth_mode": settings.openai_auth_mode,
+                    "gateway": settings.openai_gateway_arn,
+                    "openai_base_url": settings.openai_base_url,
+                    "deepseek_base_url": settings.deepseek_base_url,
+                    "region": settings.aws_region,
+                },
+                sort_keys=True,
+                default=str,
+            )
+        ),
     )
 
 

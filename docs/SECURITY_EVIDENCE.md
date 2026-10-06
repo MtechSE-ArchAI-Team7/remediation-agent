@@ -35,7 +35,7 @@ The local JSONL audit chain is tamper-evident, not immutable. WORM storage and i
   call metadata survives final artifacts without raw provider content.
 - `tests/security/test_github_workflows.py` binds source SHA, image digest, release ID, runtime ID, mount and account checks
   to the guarded deployment and rollback path.
-- `make test-model-live` exercises `RemediationPlan`, `RiskAssessment`, and `PatchCandidate` through the authenticated
+- `make test-model-live` exercises `RemediationPlan`, `RiskAssessment`, and `EditProposal` through the authenticated
   OpenAI-compatible gateway. It remains explicitly opt-in and is complemented by the deployment canary.
 
 
@@ -64,3 +64,31 @@ The first 2026-10-06 implementation audit passed Bandit but reported 18 pip-audi
 `PyJWT 2.13.0`, and `urllib3 2.7.0`. The guarded-release follow-up upgraded those packages to 0.4.5, 2.15.1, and 2.8.0;
 the subsequent Bandit and pip-audit checks passed. The opt-in managed-runtime behavioral qualification remains separate
 from dependency auditing; checkout and purchase profiles passed it in `ap-southeast-1` on 2026-10-07.
+
+## Diagnosis-to-publication hardening
+
+AH-56 failed because source redaction altered ordinary JavaScript and Agent 3 trusted fragile model-authored patch mechanics;
+component probes did not exercise the complete generated workflow. Canonical contracts, exact source edits, real browser/database
+assertions and reconciled publication address these gaps, with complete hosted qualification required before release.
+
+| Threat | Status | Evidence and residual limits |
+|---|---|---|
+| Non-secret source corruption and placeholder patches (LLM05) | MITIGATED | `tests/unit/test_source_edits.py`: code references survive; real secret locations remain protected; exact ranges/digests, overlap and placeholder rejection precede host-generated diffs. Bounded identifier matching prevents pathological redaction scans. |
+| Lost publication response or unrelated PR accepted (LLM05/06) | MITIGATED | `tests/unit/test_pr_provider.py`: exact commit/base/repository/open/draft checks, lost POST reconciliation, rate-limit classification; no duplicate create or force push. |
+| Stale approvals and publication recovery (LLM05/09) | MITIGATED | `tests/graph/test_publication_recovery.py`: changed assets stop approval, failed artifact writes prevent publication, retries bind the verified candidate and preserve the sealed brief; memory waits for delivery evidence and cleanup. |
+| Unqualified browser/runtime dependencies (LLM03/09) | PARTIALLY_MITIGATED | Locked application and independent Playwright manifests, sealed browser/shared libraries, platform and digest checks, actual storefront assertions. Every release must produce hosted application/browser qualification; a Docker pass alone is insufficient. |
+| Incomplete inspected context or prose-sensitive contracts (LLM09) | PARTIALLY_MITIGATED | Required evidence paths and named assertions are operator-owned; missing coverage stops before approval, canonical request semantics replace descriptive equality. Natural-language diagnosis interpretation still requires review. |
+
+The cloud sandbox is not equivalent to Docker `--network none`: AWS documents limited S3/DNS connectivity for its system
+sandbox. No credentials or production endpoints are supplied; custom public/VPC interpreters remain rejected. Browser
+requests are restricted to the disposable loopback origin. These boundaries do not claim adversarial-proof attestation
+of arbitrary repository code. Production deployment, baseline security findings and Agent 4's runtime soak remain separate.
+
+
+Release gate evidence: `tests/unit/test_release_qualification.py` rejects changed source/image/runtime configuration,
+partial/duplicate trials and changed assertions. `tests/security/test_github_workflows.py` verifies image → qualification
+→ guarded deployment ordering. `tests/integration/test_local_repository.py` demonstrates real Git lost-push recovery and
+stale-base rejection. `tests/unit/test_source_edits.py` covers ordinary variable/member expressions, protected literals,
+placeholder rejection, stale ranges/digests and overlapping edits. Operator qualifications are explicit opt-ins; default
+checks do not call cloud services. The operator release role gains scoped gateway/system-sandbox invocation and ECR read
+permissions; the runtime role does not gain them. ECR login requires account-level `GetAuthorizationToken` visibility.

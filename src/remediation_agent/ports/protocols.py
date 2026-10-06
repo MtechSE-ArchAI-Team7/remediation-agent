@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from remediation_agent.domain.models import (
     ArtifactManifest,
+    CapabilityReportV1,
     CleanupResult,
     DownstreamDeliveryReceiptV1,
     IncidentMemoryRetrievalV1,
@@ -30,11 +31,14 @@ from remediation_agent.ports.models import (
     BehavioralTaskRequest,
     BranchRequest,
     BranchResult,
+    CandidateVerifyRequest,
     CommitRequest,
     CommitResult,
     CreatedDraftPr,
     DiffResult,
     DraftPrRequest,
+    EditCompileRequest,
+    EditCompileResult,
     FileContent,
     HandoffDeliveryRequest,
     IncidentMemoryRetrievalRequest,
@@ -44,6 +48,7 @@ from remediation_agent.ports.models import (
     PatchApplyRequest,
     PatchApplyResult,
     PreparedDraftPr,
+    PublicationCheckRequest,
     PushRequest,
     PushResult,
     ReadFileRequest,
@@ -67,6 +72,12 @@ class RepositoryInspectionPort(Protocol):
 
 
 class RepositoryWorkspacePort(Protocol):
+    async def publication_check(self, request: PublicationCheckRequest) -> str: ...
+
+    async def compile_edits(self, request: EditCompileRequest) -> EditCompileResult: ...
+
+    async def verify_candidate(self, request: CandidateVerifyRequest) -> None: ...
+
     async def create_workspace(self, ref: RepositoryRef) -> WorkspaceRef: ...
 
     async def current_diff(self, workspace: WorkspaceRef) -> DiffResult: ...
@@ -99,6 +110,12 @@ class InspectionToolProvider(Protocol):
 
 
 class SandboxExecutor(Protocol):
+    def verification_fingerprint(self) -> str: ...
+
+    async def probe_capability(self, request: BehavioralTaskRequest) -> CapabilityReportV1: ...
+
+    async def check_patch(self, request: PatchApplyRequest) -> None: ...
+
     def execution_profile(self) -> SandboxExecutionProfile: ...
 
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult: ...
@@ -115,6 +132,8 @@ class SandboxExecutor(Protocol):
 
 
 class StructuredModel(Protocol):
+    def configuration_digest(self) -> str: ...
+
     async def generate(self, request: ModelRequest, output_schema: type[TModel]) -> ModelGeneration[TModel]: ...
 
     async def generate_tool_turn(
@@ -130,6 +149,10 @@ class ReleaseProvenancePort(Protocol):
 
 
 class PullRequestProvider(Protocol):
+    async def check_readiness(self, repository: RepositoryRef, slug: str | None) -> None: ...
+
+    async def verify_draft(self, request: DraftPrRequest) -> CreatedDraftPr: ...
+
     async def prepare(self, request: DraftPrRequest) -> PreparedDraftPr: ...
 
     async def create_draft(self, request: DraftPrRequest) -> CreatedDraftPr: ...

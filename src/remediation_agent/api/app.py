@@ -34,7 +34,12 @@ from remediation_agent.api.openapi import (
     START_REMEDIATION_EXAMPLES,
 )
 from remediation_agent.config import Settings
-from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
+from remediation_agent.domain.models import (
+    ApprovalDecisionV1,
+    DiagnosisHandoffV1,
+    PublicationRetryRequestV1,
+    RemediationRunView,
+)
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.protocols import IncidentMemoryPort, InspectionToolProvider
@@ -273,6 +278,25 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         except ApprovalConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    @application.post(
+        "/v1/remediations/{run_id}/publication-retry",
+        response_model=RemediationRunView,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["Remediations"],
+        operation_id="retry_publication",
+    )
+    async def retry_publication(
+        run_id: str, retry: PublicationRetryRequestV1, runtime: Annotated[RemediationService, Depends(_service)]
+    ) -> RemediationRunView:
+        if retry.run_id != run_id:
+            raise HTTPException(status_code=409, detail="Publication retry run identity mismatch")
+        try:
+            return await runtime.retry_publication(run_id, retry.candidate_digest)
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ApprovalConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @application.get(
         "/v1/remediations/{run_id}",

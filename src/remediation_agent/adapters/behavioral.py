@@ -166,13 +166,18 @@ async def run_behavioral_pair(
             if not manifest.is_file():
                 raise ValueError("UNSUPPORTED_VALIDATION_ENVIRONMENT: offline e-commerce bundle is absent")
             dependency_digest = "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
-        for label, snapshot in (("base", base), ("candidate", candidate)):
+        snapshots = [("base", base)] if request.capability_only else [("base", base), ("candidate", candidate)]
+        for label, snapshot in snapshots:
             reserved = snapshot / ".aios-verification"
             if reserved.exists():
                 raise ValueError("Repository attempts to replace trusted validation assets")
             shutil.copytree(_ASSETS, reserved, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             if request.task.profile in _ECOMMERCE_PROFILES:
                 shutil.copytree(sandbox.behavioral_bundle, reserved / "bundle", symlinks=False)
+                if request.task.profile == "ecommerce_checkout":
+                    from remediation_agent.adapters.validation_assets.runner import unpack_browser
+
+                    await asyncio.to_thread(unpack_browser, reserved / "bundle", reserved / "browser-runtime")
             (reserved / "task.json").write_text(
                 json.dumps(
                     {
@@ -209,7 +214,7 @@ async def run_behavioral_pair(
                 raise ValueError("Validation changed the isolated source, assertions, or trusted assets")
             result = execution.result
             if result.output_truncated or result.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT}:
-                raise ValueError("Behavioral execution timed out, failed, or produced truncated evidence")
+                raise ValueError(f"Behavioral execution {result.outcome}: " + (result.stderr or result.stdout)[:2000])
             if execution.execution.cleanup_status not in {
                 ValidationCleanupStatus.SUCCEEDED,
                 ValidationCleanupStatus.NOT_APPLICABLE,
@@ -220,7 +225,7 @@ async def run_behavioral_pair(
             if result.exit_code != expected_exit:
                 raise ValueError("Behavioral report disagrees with executor exit status")
             reports.append(report)
-        if reports[0].runtime_digest != reports[1].runtime_digest:
+        if reports[0].runtime_digest != reports[-1].runtime_digest:
             raise ValueError("Base/candidate runtime dependency fingerprints differ")
         if request.task.profile not in _ECOMMERCE_PROFILES and reports[0].runtime_digest:
             dependency_digest = reports[0].runtime_digest
@@ -233,7 +238,7 @@ async def run_behavioral_pair(
                 assertions_digest=assertion_digest,
                 dependency_digest=dependency_digest,
                 base=reports[0],
-                candidate=reports[1],
+                candidate=reports[-1],
                 cleanup_succeeded=True,
             ),
             executions=executions,

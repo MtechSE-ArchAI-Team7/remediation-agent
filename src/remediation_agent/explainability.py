@@ -130,21 +130,30 @@ def _stage_for_event(event_type: str) -> str:
         return "inspection"
     if event_type.startswith("INCIDENT_MEMORY"):
         return "memory"
-    if event_type.startswith("PLAN"):
+    if event_type.startswith(("PLAN", "CONTRACT", "CAPABILITIES")):
         return "planning"
     if event_type.startswith("RISK"):
         return "risk"
     if event_type.startswith("APPROVAL"):
         return "approval"
-    if event_type in {"PATCH_GENERATED", "PATCH_APPLIED"}:
+    if event_type in {
+        "PATCH_GENERATED",
+        "PATCH_APPLIED",
+        "PATCH_CONSTRUCTED",
+        "PATCH_GENERATION_FAILED",
+        "PATCH_APPLY_FAILED",
+    }:
         return "patch"
     if event_type == "PATCH_PREFLIGHT":
         return "policy"
-    if event_type.startswith("VALIDATION") or event_type in {"WORKSPACE_RESTORED", "REVISION_PREPARED"}:
+    if event_type.startswith(("VALIDATION", "BEHAVIORAL", "VERIFICATION")) or event_type in {
+        "WORKSPACE_RESTORED",
+        "REVISION_PREPARED",
+    }:
         return "validation"
     if event_type.startswith("ROLLBACK"):
         return "rollback"
-    if event_type.startswith("DRAFT_PR"):
+    if event_type.startswith(("DRAFT_PR", "PUBLICATION", "CANDIDATE_EVIDENCE")):
         return "draft_pr"
     if event_type.startswith("WORKSPACE_CLEANUP"):
         return "cleanup"

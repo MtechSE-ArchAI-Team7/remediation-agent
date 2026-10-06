@@ -79,6 +79,15 @@ jobs:
       runtime-arn: ${{ steps.release.outputs.runtime-arn }}
       runtime-version: ${{ steps.release.outputs.runtime-version }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install locked release evidence verifier
+        run: uv sync --frozen --no-dev
+      - name: Read this workflow's immutable-image qualification evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: workflow-qualification-*
+          path: ${{ runner.temp }}/workflow-qualification
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -238,6 +247,17 @@ jobs:
             echo "runtime-arn=$runtime_arn"
             echo "target-image=$target_image"
           } >>"$GITHUB_OUTPUT"
+          uv run python -m scripts.check_release_qualification \
+            --evidence "$RUNNER_TEMP/workflow-qualification" \
+            --runtime "$current_file" \
+            --source "$SOURCE_REVISION" --image "$IMAGE_DIGEST"
+          tagged_digest="$(aws ecr describe-images --repository-name aios/remediation-agent \
+            --image-ids "imageTag=$SOURCE_REVISION" --region "$AWS_REGION" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          if [[ "$tagged_digest" != "$IMAGE_DIGEST" ]]; then
+            echo "The pushed source tag does not identify the qualified immutable image." >&2
+            exit 1
+          fi
           if [[ "$current_image" == "$target_image" && "$current_protocol" == "$SERVER_PROTOCOL" &&
                 "$current_repository" == "$TARGET_GITHUB_REPOSITORY" && "$filesystem_ready" == "true" &&
                 "$current_release_id" == "$RELEASE_ID" && "$current_source_revision" == "$SOURCE_REVISION" &&

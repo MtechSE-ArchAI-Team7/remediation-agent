@@ -19,9 +19,23 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
-  deploy:
+  qualify:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: image
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/qualify-agentcore-runtime.yaml
+    with:
+      image-uri: ${{ needs.image.outputs.image-uri }}
+      image-digest: ${{ needs.image.outputs.image-digest }}
+      source-revision: ${{ github.sha }}
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_AGENTCORE_DEPLOY_ROLE_ARN }}
+
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [image, qualify]
     permissions:
       contents: read
       id-token: write

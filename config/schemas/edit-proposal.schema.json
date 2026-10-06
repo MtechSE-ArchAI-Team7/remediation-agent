@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "SourceEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "base_content_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Base Content Digest",
+          "type": "string"
+        },
+        "create": {
+          "default": false,
+          "title": "Create",
+          "type": "boolean"
+        },
+        "end_line": {
+          "description": "Exclusive, one-based line; equal to start_line for insertion.",
+          "minimum": 1,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "expected_content": {
+          "description": "Exact visible source including newlines.",
+          "maxLength": 262144,
+          "title": "Expected Content",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "replacement": {
+          "maxLength": 262144,
+          "title": "Replacement",
+          "type": "string"
+        },
+        "start_line": {
+          "description": "Inclusive, one-based line in the inspected base file.",
+          "minimum": 1,
+          "title": "Start Line",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "base_content_digest",
+        "start_line",
+        "end_line",
+        "expected_content",
+        "replacement"
+      ],
+      "title": "SourceEdit",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "edits": {
+      "items": {
+        "$ref": "#/$defs/SourceEdit"
+      },
+      "maxItems": 60,
+      "minItems": 1,
+      "title": "Edits",
+      "type": "array"
+    },
+    "proposed_validation_tasks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Proposed Validation Tasks",
+      "type": "array"
+    },
+    "rationale": {
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    }
+  },
+  "required": [
+    "edits",
+    "rationale"
+  ],
+  "title": "EditProposal",
+  "type": "object"
+}

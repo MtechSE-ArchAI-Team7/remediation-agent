@@ -32,8 +32,11 @@ async def test_successful_outcome_delivers_once_and_persists_receipt() -> None:
     service, *_ = build_test_service(
         scripted_responses(),
         handoff_delivery=delivery,
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/example-service",
     )
 
+    _[3].create = True
     view = await service.start(diagnosis_handoff())
     fetched = await service.get(view.run_id)
 
@@ -49,8 +52,11 @@ async def test_delivery_failure_is_separate_from_remediation_status() -> None:
     service, *_ = build_test_service(
         scripted_responses(),
         handoff_delivery=delivery,
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/example-service",
     )
 
+    _[3].create = True
     view = await service.start(diagnosis_handoff())
 
     assert view.result is not None

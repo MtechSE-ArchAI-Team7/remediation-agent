@@ -35,6 +35,19 @@ class SecretRedactor:
             result = pattern.sub("[REDACTED]", result)
         return result
 
+    def redact_artifact(self, name: str, content: str) -> str:
+        if name == "patch.diff":
+            from remediation_agent.source import source_artifact
+
+            return source_artifact(name, content).content
+        if name.endswith(".json"):
+            try:
+                parsed = json.loads(content)
+            except ValueError:
+                return self.redact(content)
+            return json.dumps(self.redact_data(parsed), indent=2, ensure_ascii=False)
+        return self.redact(content)
+
     def redact_data(self, value: object) -> object:
         """Redact values before JSON encoding so replacement never corrupts structure."""
         if isinstance(value, str):
@@ -141,7 +154,7 @@ class LocalArtifactStore:
             if not target.is_relative_to(run_directory):
                 raise ValueError(f"artifact path escapes run directory: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            redacted = self.redactor.redact(content)
+            redacted = self.redactor.redact_artifact(name, content)
             if name == "verification-brief.json":
                 try:
                     with target.open("x", encoding="utf-8") as output:

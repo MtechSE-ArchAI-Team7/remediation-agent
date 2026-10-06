@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "base_commit": {
+      "minLength": 1,
+      "title": "Base Commit",
+      "type": "string"
+    },
+    "contract_digest": {
+      "minLength": 1,
+      "title": "Contract Digest",
+      "type": "string"
+    },
+    "model_configuration_digest": {
+      "default": "",
+      "title": "Model Configuration Digest",
+      "type": "string"
+    },
+    "policy_digest": {
+      "minLength": 1,
+      "title": "Policy Digest",
+      "type": "string"
+    },
+    "prompt_version": {
+      "minLength": 1,
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "validation_assets_digest": {
+      "minLength": 1,
+      "title": "Validation Assets Digest",
+      "type": "string"
+    },
+    "workflow_version": {
+      "const": "remediation-v3",
+      "default": "remediation-v3",
+      "title": "Workflow Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "base_commit",
+    "contract_digest",
+    "policy_digest",
+    "validation_assets_digest",
+    "prompt_version"
+  ],
+  "title": "ExecutionBindingV1",
+  "type": "object"
+}

@@ -18,6 +18,7 @@ from remediation_agent.domain.enums import (
 )
 from remediation_agent.domain.models import (
     ArtifactManifest,
+    CapabilityReportV1,
     CleanupResult,
     ValidationExecutionRecord,
     ValidationTaskResult,
@@ -26,6 +27,7 @@ from remediation_agent.domain.models import (
 from remediation_agent.ports.models import (
     BehavioralTaskExecution,
     BehavioralTaskRequest,
+    PatchApplicabilityError,
     PatchApplyRequest,
     PatchApplyResult,
     SandboxExecutionProfile,
@@ -64,6 +66,48 @@ class DockerSandboxExecutor:
                 "TIMEOUT_AND_OUTPUT_CAP",
             ],
         )
+
+    def verification_fingerprint(self) -> str:
+        from remediation_agent.adapters.behavioral import _ASSETS, _digest_files
+
+        manifest = self.behavioral_bundle / "manifest.json"
+        dependencies = manifest.read_bytes() if manifest.is_file() else b"NO_ECOMMERCE_BUNDLE"
+        return (
+            "sha256:" + hashlib.sha256(_digest_files(_ASSETS, ignore_bytecode=True).encode() + dependencies).hexdigest()
+        )
+
+    async def probe_capability(self, request: BehavioralTaskRequest) -> CapabilityReportV1:
+        try:
+            execution = await self.run_behavior(request.model_copy(update={"capability_only": True}))
+            pair = execution.evidence
+            ready = all(case.outcome in {"PASSED", "ASSERTION_FAILED"} for case in pair.base.cases)
+            return CapabilityReportV1(
+                task_name=request.task_name,
+                available=ready and pair.cleanup_succeeded,
+                base_commit=request.workspace.base_commit,
+                assertions_digest=pair.assertions_digest,
+                dependency_digest=pair.dependency_digest,
+                runtime_digest=pair.base.runtime_digest,
+                startup_verified=ready,
+                cleanup_verified=pair.cleanup_succeeded,
+                failure_code=None if ready else "BASE_SETUP_FAILED",
+                detail="; ".join(c.detail for c in pair.base.cases if c.outcome == "SETUP_ERROR")[:2000],
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            from remediation_agent.adapters.evidence import SecretRedactor
+
+            return CapabilityReportV1(
+                task_name=request.task_name,
+                available=False,
+                base_commit=request.workspace.base_commit,
+                failure_code="CAPABILITY_UNAVAILABLE",
+                detail=SecretRedactor().redact(str(exc))[:2000],
+            )
+
+    async def check_patch(self, request: PatchApplyRequest) -> None:
+        root = self._workspace(request.workspace)
+        self._validate_patch_paths(root, request.unified_diff)
+        await self._run_git_apply(root, request.unified_diff.encode("utf-8"), check_only=True)
 
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult:
         root = self._workspace(request.workspace)
@@ -251,7 +295,7 @@ class DockerSandboxExecutor:
             raise SandboxError("git apply timed out") from exc
         if process.returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[:4_000]
-            raise SandboxError(f"git apply failed: {detail}")
+            raise PatchApplicabilityError(f"git apply failed: {detail}")
 
     def _git_argv(self, root: Path, *arguments: str) -> list[str]:
         validated_root = self._workspace_path(root)

@@ -14,6 +14,7 @@ import signal
 # Fixed argv inside the restricted execution boundary.
 import subprocess  # nosec B404
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
@@ -73,6 +74,19 @@ def verify_bundle(bundle: Path) -> str:
     return str(bundle.resolve() / "node")
 
 
+def _version_satisfies(spec: str, supplied: str) -> bool:
+    import re
+
+    if spec == supplied:
+        return True
+    if not re.fullmatch(r"\^\d+\.\d+\.\d+", spec) or not re.fullmatch(r"\d+\.\d+\.\d+", supplied):
+        return False
+    base = tuple(map(int, spec[1:].split(".")))
+    actual = tuple(map(int, supplied.split(".")))
+    upper = (base[0] + 1, 0, 0) if base[0] else ((0, base[1] + 1, 0) if base[1] else (0, 0, base[2] + 1))
+    return base <= actual < upper
+
+
 def verify_dependencies(bundle: Path, root: Path) -> None:
     """The offline version set must satisfy the reviewed application's declared contract."""
     locked = json.loads((bundle / "package-lock.json").read_text())["packages"]
@@ -82,7 +96,7 @@ def verify_dependencies(bundle: Path, root: Path) -> None:
         raise RuntimeError("Application dependency contract is absent")
     for name, spec in dependencies.items():
         supplied = locked.get(f"node_modules/{name}", {}).get("version")
-        if not supplied or spec not in {supplied, f"^{supplied}"}:
+        if not supplied or not _version_satisfies(spec, supplied):
             raise RuntimeError(f"Offline bundle does not support application dependency {name}")
     app_lock = root / "package-lock.json"
     if app_lock.exists():
@@ -94,11 +108,43 @@ def verify_dependencies(bundle: Path, root: Path) -> None:
                 raise RuntimeError(f"Application lockfile differs from offline dependency {name}")
 
 
+def unpack_browser(bundle: Path, destination: Path) -> tuple[str, str]:
+    with tarfile.open(bundle / "browser.tar.xz", "r:xz") as archive:
+        members = archive.getmembers()
+        if len(members) > 2000 or sum(m.size for m in members) > 512 * 1024 * 1024:
+            raise RuntimeError("Browser assets exceed the fixed operator bundle limit")
+        for member in members:
+            if not member.isfile() or not (destination / member.name).resolve().is_relative_to(destination.resolve()):
+                raise RuntimeError("Unsafe browser asset")
+        archive.extractall(destination, filter="data")
+    return verify_browser(destination)
+
+
+def verify_browser(destination: Path) -> tuple[str, str]:
+    manifest = json.loads((destination / "browser-manifest.json").read_text())
+    for name, expected in manifest["files"].items():
+        item = destination / name
+        if (
+            not item.resolve().is_relative_to(destination.resolve())
+            or hashlib.sha256(item.read_bytes()).hexdigest() != expected
+        ):
+            raise RuntimeError("Browser asset digest mismatch")
+    executable = destination / manifest["executable"]
+    if not executable.resolve().is_relative_to(destination.resolve()):
+        raise RuntimeError("Unsafe browser executable")
+    return str(executable), str(destination / "lib")
+
+
 def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="aios-runner-") as temporary:
+        return run(Path(temporary))
+
+
+def run(temporary: Path) -> int:
     assets = Path(__file__).resolve().parent
     cfg = json.loads((assets / "task.json").read_text())
     before = snapshot_digest(Path.cwd())
-    report_path = Path(tempfile.mkdtemp(prefix="aios-report-")) / "result.json"
+    report_path = temporary / "result.json"
     # Clear PYTHONPATH, cloud variables and caller credentials before executing repository code.
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONDONTWRITEBYTECODE": "1"}
     profile = cfg["profile"]
@@ -111,12 +157,15 @@ def main() -> int:
     elif profile == "ecommerce_checkout":
         node = verify_bundle(assets / "bundle")
         verify_dependencies(assets / "bundle", Path.cwd())
-        env["NODE_PATH"] = str(assets / "bundle" / "node_modules")
+        env["NODE_PATH"] = os.pathsep.join([str(assets / "bundle/node_modules"), str(assets / "bundle/runner_modules")])
+        _, libraries = verify_browser(assets / "browser-runtime")
+        env["AIOS_BROWSER_EXECUTABLE"] = str(assets / "browser_launch.py")
+        env["AIOS_BROWSER_LIBRARY_PATH"] = libraries
         argv = [node, str(assets / "checkout.cjs")]
     elif profile == "ecommerce_purchase":
         node = verify_bundle(assets / "bundle")
         verify_dependencies(assets / "bundle", Path.cwd())
-        env["NODE_PATH"] = str(assets / "bundle" / "node_modules")
+        env["NODE_PATH"] = os.pathsep.join([str(assets / "bundle/node_modules"), str(assets / "bundle/runner_modules")])
         argv = [node, str(assets / "purchase.cjs")]
     else:
         raise RuntimeError("Unknown trusted behavioral profile")
@@ -142,7 +191,6 @@ def main() -> int:
             raise RuntimeError(f"Malformed behavioral report (exit={code}): {output[:800]}") from exc
     finally:
         report_path.unlink(missing_ok=True)
-        report_path.parent.rmdir()
     if not report.get("cases") or code not in (0, 1):
         raise RuntimeError("No executable behavioral assertions or test runner setup failed")
     report["runtime_digest"] = "sha256:" + hashlib.sha256(json.dumps(runtime, sort_keys=True).encode()).hexdigest()

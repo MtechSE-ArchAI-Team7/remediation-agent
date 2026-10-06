@@ -229,7 +229,7 @@ async def test_mutable_ref_denial_is_explained_as_recovered_guardrail() -> None:
 
 async def test_finish_without_success_cannot_bypass_inspection_and_round_limit_cleans_workspace() -> None:
     turns = [_turn(index, "finish_inspection", {"rationale": "Skip repository reads."}) for index in range(1, 9)]
-    service, model, _, sandbox, _, _, _ = build_test_service({}, tool_turns=turns)
+    service, model, _, sandbox, _, _, _ = build_test_service({}, tool_turns=turns, max_inspection_rounds=8)
 
     result = await service.start(diagnosis_handoff())
     snapshot = await service.graph.aget_state({"configurable": {"thread_id": result.run_id}})
@@ -249,7 +249,7 @@ async def test_search_result_alone_is_not_persisted_evidence_and_cannot_finish()
         _turn(1, "search_code", _search_args("int(")),
         _turn(2, "finish_inspection", {"rationale": "Search should be sufficient."}),
     ]
-    service, _, _, sandbox, _, _, _ = build_test_service({}, tool_turns=turns)
+    service, _, _, sandbox, _, _, _ = build_test_service({}, tool_turns=turns, max_inspection_rounds=8)
 
     result = await service.start(diagnosis_handoff())
     snapshot = await service.graph.aget_state({"configurable": {"thread_id": result.run_id}})

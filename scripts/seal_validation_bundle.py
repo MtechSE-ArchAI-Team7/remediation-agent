@@ -20,6 +20,9 @@ def seal(source: Path, destination: Path, node: Path) -> None:
     for path in (destination / "node_modules").rglob("*"):
         if path.is_file() and (path.suffix in {".key", ".pem"} or path.name.startswith((".env", "credentials"))):
             path.unlink()
+    shutil.copytree(source / "browser-runner/node_modules", destination / "runner_modules", symlinks=False)
+    shutil.copyfile(source / "browser-runner/package-lock.json", destination / "runner-package-lock.json")
+    shutil.copyfile(source / "browser.tar.xz", destination / "browser.tar.xz")
     shutil.copyfile(source / "package-lock.json", destination / "package-lock.json")
     shutil.copy2(node, destination / "node")
     manifest = {

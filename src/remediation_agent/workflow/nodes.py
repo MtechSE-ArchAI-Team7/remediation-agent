@@ -44,7 +44,9 @@ from remediation_agent.domain.models import (
     AuditEvent,
     CleanupResult,
     DraftPrPayload,
+    EditProposal,
     ErrorRecord,
+    ExecutionBindingV1,
     FinishInspectionArgs,
     IncidentMemoryRecordV1,
     IncidentMemoryRetrievalV1,
@@ -54,7 +56,8 @@ from remediation_agent.domain.models import (
     InspectionPlan,
     InspectionToolCallRecord,
     InspectionToolResponse,
-    PatchCandidate,
+    PublicationJournalV1,
+    PublicationReceipt,
     ReleaseProvenanceV1,
     RemediationHandoffV1,
     RemediationPlan,
@@ -64,6 +67,7 @@ from remediation_agent.domain.models import (
     ValidationExecutionRecord,
     ValidationTaskResult,
     VerificationBriefV1,
+    WorkflowFailure,
 )
 from remediation_agent.explainability import build_explainability_trace
 from remediation_agent.policy.engine import PolicyEngine
@@ -72,12 +76,17 @@ from remediation_agent.ports.models import (
     AuditWriteRequest,
     BehavioralTaskRequest,
     BranchRequest,
+    CandidateVerifyRequest,
     CommitRequest,
     DraftPrRequest,
+    EditCompileRequest,
     IncidentMemoryRetrievalRequest,
     IncidentMemoryStoreRequest,
     ModelRequest,
+    PatchApplicabilityError,
     PatchApplyRequest,
+    PublicationCheckRequest,
+    PublicationError,
     PushRequest,
     StructuredModelFailure,
     ValidationTaskRequest,
@@ -100,8 +109,9 @@ from remediation_agent.prompts import (
     REVISION_SYSTEM_PROMPT,
     RISK_SYSTEM_PROMPT,
 )
+from remediation_agent.source import EditConstructionError
 from remediation_agent.tools import FINISH_INSPECTION_TOOL_NAME, finish_inspection
-from remediation_agent.verification import acceptance_ids, coverage_gaps, evidence_gaps, observations
+from remediation_agent.verification import acceptance_ids, compile_contract, coverage_gaps, evidence_gaps, observations
 from remediation_agent.workflow.state import RemediationState
 
 _SUPPORTED_TYPES = {RemediationType.CODE, RemediationType.CONFIGURATION}
@@ -197,6 +207,35 @@ class WorkflowNodes:
             "residual_risks": [],
             "audit_events": events,
             "workspace_status": WorkspaceStatus.NOT_CREATED,
+        }
+
+    async def verify_intake_capabilities(self, state: RemediationState) -> dict[str, object]:
+        if state["final_status"] is not FinalStatus.PENDING:
+            return {}
+        try:
+            if self.github_writes_enabled:
+                await self.pr_provider.check_readiness(state["handoff"].repository, self.github_repository)
+            manifest = await self.artifact_store.write_bundle(
+                ArtifactWriteRequest(
+                    run_id=state["run_id"],
+                    files={
+                        "diagnosis-handoff.json": state["handoff"].model_dump_json(indent=2),
+                        "release-provenance.json": state["release_provenance"].model_dump_json(indent=2),
+                    },
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            return self._verification_blocked(
+                state, ["INTAKE_CAPABILITY_UNAVAILABLE: " + self.audit.redactor.redact(str(exc))[:1000]]
+            )
+        return {
+            "artifact_manifest": manifest,
+            "audit_events": self._event(
+                state,
+                "INTAKE_CAPABILITIES_VERIFIED",
+                "OK",
+                "Original accepted handoff persisted; required publication configuration checked.",
+            ),
         }
 
     async def classify_scope(self, state: RemediationState) -> dict[str, object]:
@@ -389,6 +428,11 @@ class WorkflowNodes:
                 payload={
                     "handoff": handoff.model_dump(mode="json"),
                     "inspection_target": inspection_target,
+                    "available_capabilities": {
+                        name: task.model_dump(mode="json", exclude={"argv", "environment"})
+                        for name, task in self.policy.config.validation_tasks.items()
+                        if task.kind == "BEHAVIORAL"
+                    },
                     "incident_memory_hints": _memory_hint_payload(state.get("incident_memory_retrieval")),
                 },
             )
@@ -401,7 +445,25 @@ class WorkflowNodes:
                 while finish_rationale is None:
                     if rounds >= max_rounds:
                         raise RuntimeError("inspection round limit exhausted before a valid finish call")
-                    ai_message, model_record = await self.model.generate_tool_turn(request, messages, all_tools)
+                    bounded_request = request.model_copy(
+                        update={
+                            "payload": {
+                                **request.payload,
+                                "remaining_rounds_including_finish": max_rounds - rounds,
+                                "inspected_paths": [a.locator for a in artifacts if a.kind == "FILE"],
+                            }
+                        }
+                    )
+                    guidance = SystemMessage(
+                        content="Operator-owned inspection requirements and remaining budget: "
+                        + json.dumps(bounded_request.payload.get("available_capabilities", {}))
+                        + f"\nRounds left including finish: {max_rounds - rounds}. "
+                        "Read all required_evidence_paths for "
+                        "the behavior profile that will be selected. Complete evidence is required before planning."
+                    )
+                    ai_message, model_record = await self.model.generate_tool_turn(
+                        bounded_request, [*messages, guidance], all_tools
+                    )
                     rounds += 1
                     model_calls.append(model_record)
                     if ai_message.invalid_tool_calls:
@@ -630,6 +692,140 @@ class WorkflowNodes:
             "audit_events": self._event(state, "PLAN_CREATED", "OK", generated.value.summary),
         }
 
+    async def compile_verification(self, state: RemediationState) -> dict[str, object]:
+        if state["final_status"] is not FinalStatus.PENDING:
+            return {}
+        plan = state["remediation_plan"]
+        policy_assessment = self.policy.assess_plan(
+            state["handoff"],
+            plan,
+            RiskAssessment(
+                level=RiskLevel.LOW, decision=PolicyDecision.ALLOW, rationale="Deterministic contract preflight."
+            ),
+        )
+        if policy_assessment.decision is PolicyDecision.DENY:
+            return {
+                "risk_assessment": policy_assessment,
+                "final_status": FinalStatus.UNSAFE_REMEDIATION,
+                "residual_risks": [*state.get("residual_risks", []), *(f.summary for f in policy_assessment.findings)],
+                "audit_events": self._event(
+                    state, "RISK_ASSESSED", "DENY", "; ".join(f.code for f in policy_assessment.findings)
+                ),
+            }
+        paths = {item.locator for item in state["inspection_artifacts"] if item.kind == "FILE" and not item.truncated}
+        gaps = coverage_gaps(state["handoff"], plan, self.policy.config, paths)
+        calls = list(state.get("model_calls", []))
+        if gaps:
+            try:
+                correction = await self.model.generate(
+                    ModelRequest(
+                        operation=ModelOperation.PLANNING,
+                        prompt_version=self.prompt_version,
+                        system_instruction=PLANNING_SYSTEM_PROMPT,
+                        payload={
+                            "handoff": state["handoff"].model_dump(mode="json"),
+                            "plan": plan.model_dump(mode="json"),
+                            "contract_errors": gaps,
+                            "acceptance_criteria_by_id": acceptance_ids(state["handoff"]),
+                            "inspection_artifacts": [a.model_dump(mode="json") for a in state["inspection_artifacts"]],
+                            "base_commit": state["workspace"].base_commit,
+                            "available_validation_tasks": {
+                                name: t.model_dump(mode="json", exclude={"argv", "environment"})
+                                for name, t in self.policy.config.validation_tasks.items()
+                            },
+                        },
+                    ),
+                    RemediationPlan,
+                )
+                calls.append(correction.record)
+                plan = correction.value
+                gaps = coverage_gaps(state["handoff"], plan, self.policy.config, paths)
+            except StructuredModelFailure as exc:
+                calls.append(exc.record)
+                gaps.append("Planning correction failed at the structured provider boundary.")
+            except (RuntimeError, ValueError):
+                gaps.append("One bounded planning correction did not resolve the contract.")
+        if gaps:
+            checked = cast(
+                RemediationState,
+                {
+                    **state,
+                    "audit_events": self._event(
+                        state,
+                        "RISK_ASSESSED",
+                        policy_assessment.decision,
+                        "controls: " + ", ".join(f.code for f in policy_assessment.findings),
+                    ),
+                },
+            )
+            result = self._verification_blocked(checked, gaps)
+            result["model_calls"] = calls
+            result["risk_assessment"] = policy_assessment
+            return result
+        plan, contract = compile_contract(state["handoff"], plan, self.policy.config, state["workspace"].base_commit)
+        return {
+            "remediation_plan": plan,
+            "compiled_contract": contract,
+            "model_calls": calls,
+            "audit_events": self._event(
+                state, "CONTRACT_COMPILED", "OK", "Canonical operator requirements cover every criterion."
+            ),
+        }
+
+    async def verify_capabilities(self, state: RemediationState) -> dict[str, object]:
+        if state["final_status"] is not FinalStatus.PENDING:
+            return {}
+        reports = []
+        for name in state["compiled_contract"].task_digests:
+            report = await self.sandbox.probe_capability(
+                BehavioralTaskRequest(
+                    workspace=state["workspace"],
+                    task_name=name,
+                    task=self.policy.config.validation_tasks[name],
+                    attempt=1,
+                    patch_digest=self.policy.digest_text(""),
+                )
+            )
+            reports.append(report)
+        gaps = [f"{r.task_name}: {r.failure_code}: {r.detail}" for r in reports if not r.available]
+        update: dict[str, object] = (
+            self._verification_blocked(state, gaps)
+            if gaps
+            else {
+                "audit_events": self._event(
+                    state,
+                    "CAPABILITIES_VERIFIED",
+                    "OK",
+                    "Base startup, assertions, dependencies and cleanup executed before approval.",
+                )
+            }
+        )
+        update["capability_reports"] = reports
+        update["execution_binding"] = self._execution_binding(state)
+        return update
+
+    def _execution_binding(self, state: RemediationState) -> ExecutionBindingV1:
+        return ExecutionBindingV1(
+            base_commit=state["workspace"].base_commit,
+            contract_digest=self.policy.digest_text(state["compiled_contract"].model_dump_json()),
+            policy_digest=self.policy.digest_text(self.policy.config.model_dump_json()),
+            validation_assets_digest=self.sandbox.verification_fingerprint(),
+            prompt_version=self.prompt_version,
+            model_configuration_digest=self.model.configuration_digest(),
+        )
+
+    def _approval_scope(self, state: RemediationState, kind: str, candidate: str) -> str:
+        return self.policy.digest_text(
+            json.dumps(
+                {
+                    "kind": kind,
+                    "candidate": candidate,
+                    "binding": self._execution_binding(state).model_dump(mode="json"),
+                },
+                sort_keys=True,
+            )
+        )
+
     async def assess_risk(self, state: RemediationState) -> dict[str, object]:
         if state["final_status"] is not FinalStatus.PENDING or "remediation_plan" not in state:
             return {}
@@ -642,6 +838,8 @@ class WorkflowNodes:
                     payload={
                         "handoff": state["handoff"].model_dump(mode="json"),
                         "plan": state["remediation_plan"].model_dump(mode="json"),
+                        "compiled_contract": state["compiled_contract"].model_dump(mode="json"),
+                        "capability_reports": [r.model_dump(mode="json") for r in state["capability_reports"]],
                         "inspection_artifacts": [
                             item.model_dump(mode="json") for item in state["inspection_artifacts"]
                         ],
@@ -688,50 +886,137 @@ class WorkflowNodes:
     async def generate_patch(self, state: RemediationState) -> dict[str, object]:
         if state["final_status"] is not FinalStatus.PENDING:
             return {}
+        if state.get("execution_binding") != self._execution_binding(state):
+            return self._verification_blocked(state, ["REVALIDATION_REQUIRED: execution inputs changed."])
         operation = ModelOperation.PATCH if state.get("attempt_counter", 0) == 0 else ModelOperation.REVISION
-        previous_patch = state.get("patch_candidate") if operation is ModelOperation.REVISION else None
-        try:
-            generated = await self.model.generate(
-                ModelRequest(
-                    operation=operation,
-                    prompt_version=self.prompt_version,
-                    system_instruction=(
-                        REVISION_SYSTEM_PROMPT if operation is ModelOperation.REVISION else PATCH_SYSTEM_PROMPT
-                    ),
-                    payload={
-                        "handoff": state["handoff"].model_dump(mode="json"),
-                        "plan": state["remediation_plan"].model_dump(mode="json"),
-                        "inspection_artifacts": [
-                            item.model_dump(mode="json") for item in state["inspection_artifacts"]
-                        ],
-                        "previous_attempts": [
-                            item.model_dump(mode="json") for item in state.get("validation_attempts", [])
-                        ],
-                        "previous_patch": previous_patch.model_dump(mode="json") if previous_patch else None,
-                        "behavioral_evidence": [
-                            item.model_dump(mode="json") for item in state.get("behavioral_evidence", [])
-                        ],
-                        "revision_context": state.get("revision_context", ""),
-                        "available_validation_tasks": {
-                            name: task.model_dump(mode="json", exclude={"argv", "environment"})
-                            for name, task in self.policy.config.validation_tasks.items()
+        previous_patch = state.get("edit_proposal")
+        records = list(state.get("model_calls", []))
+        failures = list(state.get("workflow_failures", []))
+        events = list(state.get("audit_events", []))
+        for _ in range(self.policy.config.limits.max_edit_proposals):
+            try:
+                generated = await self.model.generate(
+                    ModelRequest(
+                        operation=operation,
+                        prompt_version=self.prompt_version,
+                        system_instruction=(REVISION_SYSTEM_PROMPT if previous_patch else PATCH_SYSTEM_PROMPT),
+                        payload={
+                            "handoff": state["handoff"].model_dump(mode="json"),
+                            "plan": state["remediation_plan"].model_dump(mode="json"),
+                            "compiled_contract": state["compiled_contract"].model_dump(mode="json"),
+                            "capability_reports": [r.model_dump(mode="json") for r in state["capability_reports"]],
+                            "inspection_artifacts": [
+                                item.model_dump(mode="json") for item in state["inspection_artifacts"]
+                            ],
+                            "previous_attempts": [
+                                item.model_dump(mode="json") for item in state.get("validation_attempts", [])
+                            ],
+                            "previous_patch": previous_patch.model_dump(mode="json") if previous_patch else None,
+                            "behavioral_evidence": [
+                                item.model_dump(mode="json") for item in state.get("behavioral_evidence", [])
+                            ],
+                            "revision_context": state.get("revision_context", ""),
+                            "source_lines": {
+                                a.locator: {
+                                    str(i): line for i, line in enumerate(a.content.splitlines(keepends=True), 1)
+                                }
+                                for a in state["inspection_artifacts"]
+                                if a.kind == "FILE" and a.locator in state["remediation_plan"].target_paths
+                            },
+                            "edit_source_bindings": {
+                                a.locator: {"base_content_digest": a.base_content_digest}
+                                for a in state["inspection_artifacts"]
+                                if a.kind == "FILE"
+                            },
+                            "empty_file_digest": self.policy.digest_text(""),
+                            "edit_failures": [f.model_dump(mode="json") for f in failures[-3:]],
+                            "available_validation_tasks": {
+                                name: task.model_dump(mode="json", exclude={"argv", "environment"})
+                                for name, task in self.policy.config.validation_tasks.items()
+                            },
+                            "acceptance_criteria_by_id": acceptance_ids(state["handoff"]),
+                            "base_commit": state["workspace"].base_commit,
                         },
-                        "acceptance_criteria_by_id": acceptance_ids(state["handoff"]),
-                        "base_commit": state["workspace"].base_commit,
-                    },
-                ),
-                PatchCandidate,
-            )
-        except StructuredModelFailure as exc:
-            return self._model_failure(state, "PATCH_GENERATION_FAILED", "generate_patch", exc)
-        except (RuntimeError, ValueError) as exc:
-            return self._failure(state, "PATCH_GENERATION_FAILED", "generate_patch", str(exc))
-        return {
-            "patch_candidate": generated.value,
-            "locally_verified": False,
-            "model_calls": [*state.get("model_calls", []), generated.record],
-            "audit_events": self._event(state, "PATCH_GENERATED", "OK", generated.value.rationale),
-        }
+                    ),
+                    EditProposal,
+                )
+                records.append(generated.record)
+                previous_patch = generated.value
+                compiled = await self.repository.compile_edits(
+                    EditCompileRequest(
+                        workspace=state["workspace"],
+                        proposal=generated.value,
+                        artifacts=state["inspection_artifacts"],
+                        allowed_paths=state["remediation_plan"].target_paths,
+                        max_file_bytes=self.policy.config.limits.max_file_bytes,
+                    )
+                )
+                # Canonical construction is checked before requesting exact diff approval.
+                preflight = self.policy.preflight_patch(compiled.candidate.unified_diff)
+                if preflight.decision is not PolicyDecision.DENY:
+                    await self.sandbox.check_patch(
+                        PatchApplyRequest(
+                            workspace=state["workspace"],
+                            unified_diff=compiled.candidate.unified_diff,
+                        )
+                    )
+                return {
+                    "edit_proposal": generated.value,
+                    "edit_receipts": compiled.receipts,
+                    "patch_candidate": compiled.candidate,
+                    "locally_verified": False,
+                    "model_calls": records,
+                    "workflow_failures": failures,
+                    "audit_events": self._event_from(
+                        state, events, "PATCH_CONSTRUCTED", "OK", generated.value.rationale
+                    ),
+                }
+            except EditConstructionError as exc:
+                failures.append(exc.failure)
+                events = self._event_from(
+                    state,
+                    events,
+                    "EDIT_PROPOSAL_REJECTED",
+                    exc.failure.code,
+                    f"{exc.failure.path}:{exc.failure.line}: {exc.failure.detail}",
+                )
+                if not exc.failure.retryable:
+                    break
+            except PatchApplicabilityError:
+                failures.append(
+                    WorkflowFailure(
+                        category="MALFORMED_PROPOSAL",
+                        code="PATCH_NOT_APPLICABLE",
+                        detail="Canonical proposal did not pass the applicability check; refresh its source ranges.",
+                        retryable=True,
+                    )
+                )
+            except StructuredModelFailure as exc:
+                result = self._model_failure(state, "PATCH_GENERATION_FAILED", "generate_patch", exc)
+                result["model_calls"] = [*records, exc.record]
+                return result
+            except (OSError, RuntimeError, ValueError) as exc:
+                result = self._verification_blocked(
+                    state, ["Patch construction capability unavailable: " + self.audit.redactor.redact(str(exc))[:1000]]
+                )
+                result["model_calls"] = records
+                result["workflow_failures"] = [
+                    *failures,
+                    WorkflowFailure(
+                        category="ENVIRONMENT_SETUP",
+                        code="EDIT_CAPABILITY_UNAVAILABLE",
+                        detail="Edit construction could not complete.",
+                    ),
+                ]
+                return result
+        result = self._verification_blocked(
+            cast(RemediationState, {**state, "audit_events": events}),
+            ["Exact edit construction failed: " + failures[-1].detail],
+        )
+        result.update(model_calls=records, workflow_failures=failures)
+        if previous_patch is not None:
+            result["edit_proposal"] = previous_patch
+        return result
 
     async def preflight_patch(self, state: RemediationState) -> dict[str, object]:
         if state["final_status"] is not FinalStatus.PENDING or "patch_candidate" not in state:
@@ -783,7 +1068,7 @@ class WorkflowNodes:
                 for item in state.get("approval_history", [])
                 if item.status is ApprovalStatus.APPROVED
             }
-            if result.scope_digest not in approved_scopes:
+            if self._approval_scope(state, "PATCH", result.scope_digest) not in approved_scopes:
                 update["approval_request"] = self._approval_request(
                     state,
                     "PATCH",
@@ -805,6 +1090,12 @@ class WorkflowNodes:
             )
             if not result.applied:
                 raise RuntimeError(result.detail)
+            await self.repository.verify_candidate(
+                CandidateVerifyRequest(
+                    workspace=state["workspace"],
+                    receipts=state.get("edit_receipts", []),
+                )
+            )
             applied_diff = await self.repository.current_diff(state["workspace"])
             applied_policy = self.policy.preflight_patch(applied_diff.unified_diff)
             if applied_policy.decision is PolicyDecision.DENY:
@@ -815,44 +1106,17 @@ class WorkflowNodes:
             if applied_policy.changed_files != state["patch_policy"].changed_files:
                 raise RuntimeError("applied workspace diff does not match the preflighted file scope")
         except (OSError, RuntimeError, ValueError) as exc:
-            detail = self.audit.redactor.redact(str(exc))
-            if detail.startswith("git apply failed:"):
-                attempt_number = state.get("attempt_counter", 0) + 1
-                failure_result = ValidationTaskResult(
-                    task_name="patch_apply",
-                    outcome=ValidationOutcome.ERROR,
-                    duration_ms=0,
-                    stderr=detail,
-                )
-                attempt = ValidationAttempt(
-                    attempt=attempt_number,
-                    patch_digest=state["diff_digest"],
-                    results=[failure_result],
-                    outcome=ValidationOutcome.ERROR,
-                )
-                exhausted = attempt_number >= state["max_validation_attempts"]
-                update: dict[str, object] = {
-                    "attempt_counter": attempt_number,
-                    "current_validation_results": [failure_result],
-                    "validation_attempts": [*state.get("validation_attempts", []), attempt],
-                    "validation_outcome": ValidationOutcome.ERROR,
-                    "repair_outcome": ValidationOutcome.FAILED,
-                    "audit_events": self._event(
-                        state,
-                        "PATCH_APPLY_FAILED",
-                        "EXHAUSTED" if exhausted else "REVISE",
-                        detail,
-                    ),
-                }
-                if exhausted:
-                    update["final_status"] = FinalStatus.VALIDATION_FAILED
-                    update["residual_risks"] = [
-                        *state.get("residual_risks", []),
-                        "Patch application failed and the configured repair-attempt limit was exhausted.",
-                    ]
-                return update
-            update = self._failure(state, "PATCH_APPLY_FAILED", "apply_patch", detail)
-            update["repair_outcome"] = ValidationOutcome.ERROR
+            update = self._verification_blocked(
+                state, ["Canonical patch application failed: " + self.audit.redactor.redact(str(exc))[:1000]]
+            )
+            update["workflow_failures"] = [
+                *state.get("workflow_failures", []),
+                WorkflowFailure(
+                    category="ENVIRONMENT_SETUP",
+                    code="PATCH_APPLICATION_FAILED",
+                    detail="A prechecked canonical patch could not be applied unchanged; revalidation is required.",
+                ),
+            ]
             return update
         return {
             "workspace_status": WorkspaceStatus.PATCHED,
@@ -901,6 +1165,10 @@ class WorkflowNodes:
             "repair_outcome": ValidationOutcome.NOT_RUN,
             "locally_verified": False,
             "verification_gaps": safe,
+            "workflow_failures": [
+                *state.get("workflow_failures", [])[-99:],
+                WorkflowFailure(category="COVERAGE_GAP", code="VERIFICATION_INCOMPLETE", detail="; ".join(safe)[:4000]),
+            ],
             "residual_risks": list(dict.fromkeys([*state.get("residual_risks", []), *safe])),
             "audit_events": self._event(
                 state, "VERIFICATION_INCOMPLETE", "HUMAN_ACTION_REQUIRED", "; ".join(safe)[:4000]
@@ -908,10 +1176,13 @@ class WorkflowNodes:
         }
 
     async def run_validation(self, state: RemediationState) -> dict[str, object]:
+        if state.get("execution_binding") != self._execution_binding(state):
+            return self._verification_blocked(state, ["REVALIDATION_REQUIRED: execution inputs changed."])
         results: list[ValidationTaskResult] = []
         behavioral = list(state.get("behavioral_evidence", []))
         gaps: list[str] = []
         execution_records = list(state.get("validation_execution_records", []))
+        failures = list(state.get("workflow_failures", []))
         task_events = list(state.get("audit_events", []))
         attempt_number = state.get("attempt_counter", 0) + 1
         for name in state["selected_validation_tasks"]:
@@ -949,20 +1220,65 @@ class WorkflowNodes:
                     outcomes = {case.outcome for case in pair.evidence.candidate.cases}
                     if outcomes & {"SETUP_ERROR", "SKIPPED"}:
                         gaps.append(f"{name}: behavioral tests were skipped or failed during setup.")
-                    if "ASSERTION_FAILED" in outcomes:
+                    base_outcomes = {case.test_id: case.outcome for case in pair.evidence.base.cases}
+                    blocking_assertions = [
+                        case
+                        for case in pair.evidence.candidate.cases
+                        if case.outcome == "ASSERTION_FAILED"
+                        and not (
+                            case.test_id in task.regression_test_ids
+                            and base_outcomes.get(case.test_id) == "ASSERTION_FAILED"
+                        )
+                    ]
+                    if blocking_assertions:
                         result = result.model_copy(update={"outcome": ValidationOutcome.FAILED})
+                        failures.extend(
+                            WorkflowFailure(
+                                category="ASSERTION_FAILURE",
+                                code="BEHAVIORAL_ASSERTION_FAILED",
+                                detail=self.audit.redactor.redact(f"{name}/{case.test_id}: {case.detail}")[:4000],
+                                retryable=True,
+                            )
+                            for case in blocking_assertions
+                        )
+                    elif outcomes <= {"PASSED", "ASSERTION_FAILED"}:
+                        result = result.model_copy(update={"outcome": ValidationOutcome.PASSED})
                     for report in (pair.evidence.base, pair.evidence.candidate):
                         if any(case.outcome in {"SETUP_ERROR", "SKIPPED"} for case in report.cases):
                             gaps.append(f"{name}: paired execution has setup errors or skipped assertions.")
                         if not set(task.required_test_ids).issubset(case.test_id for case in report.cases):
                             gaps.append(f"{name}: required operator assertions are absent.")
+                elif task.source_syntax == "javascript":
+                    syntax_results = []
+                    paths = [path for path in state["changed_files"] if path.endswith((".js", ".cjs", ".mjs"))]
+                    for path in paths or ["server.js"]:
+                        syntax = task.model_copy(update={"argv": ["node", "--check", path]})
+                        execution = await self.sandbox.run_task(request.model_copy(update={"task": syntax}))
+                        syntax_results.append(execution.result)
+                        execution_records.append(execution.execution)
+                    result = ValidationTaskResult(
+                        task_name=name,
+                        outcome=next(
+                            (
+                                r.outcome
+                                for r in syntax_results
+                                if r.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT}
+                            ),
+                            ValidationOutcome.PASSED
+                            if all(r.outcome is ValidationOutcome.PASSED for r in syntax_results)
+                            else ValidationOutcome.FAILED,
+                        ),
+                        duration_ms=sum(r.duration_ms for r in syntax_results),
+                        stdout="\n".join(r.stdout for r in syntax_results)[: task.output_limit_bytes],
+                        stderr="\n".join(r.stderr for r in syntax_results)[: task.output_limit_bytes],
+                        output_truncated=any(r.output_truncated for r in syntax_results),
+                    )
                 else:
                     task_execution = await self.sandbox.run_task(request)
                     result = task_execution.result
                     execution_records.append(task_execution.execution)
             except (OSError, RuntimeError, ValueError) as exc:
-                if task.kind == "BEHAVIORAL":
-                    gaps.append(f"{name}: behavioral capability unavailable: {exc}")
+                gaps.append(f"{name}: validation capability unavailable: {exc}")
                 result = ValidationTaskResult(
                     task_name=name,
                     outcome=ValidationOutcome.ERROR,
@@ -990,6 +1306,8 @@ class WorkflowNodes:
                         duration_ms=0,
                     )
                 )
+            if result.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT}:
+                gaps.append(f"{name}: validation did not complete; infrastructure recovery is required.")
             result = result.model_copy(
                 update={
                     "stdout": self.audit.redactor.redact(result.stdout),
@@ -1032,6 +1350,16 @@ class WorkflowNodes:
                     stderr=f"Could not verify the post-validation workspace diff: {exc}",
                 )
             )
+        for item in results:
+            if item.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT} or item.output_truncated:
+                gaps.append(f"{item.task_name}: execution, integrity, or output bounds could not be verified.")
+                failures.append(
+                    WorkflowFailure(
+                        category="ENVIRONMENT_SETUP",
+                        code="VALIDATION_CAPABILITY_GAP",
+                        detail=self.audit.redactor.redact(f"{item.task_name}: {item.stderr}")[:4000],
+                    )
+                )
         results = [
             item.model_copy(
                 update={
@@ -1053,8 +1381,9 @@ class WorkflowNodes:
             outcome=outcome,
         )
         return {
-            "attempt_counter": attempt_number,
+            "attempt_counter": attempt_number if not gaps else state.get("attempt_counter", 0),
             "behavioral_evidence": behavioral,
+            "workflow_failures": failures[-100:],
             "verification_gaps": [self.audit.redactor.redact(item)[:2000] for item in gaps][:50],
             "current_validation_results": results,
             "validation_execution_records": execution_records,
@@ -1070,6 +1399,8 @@ class WorkflowNodes:
         }
 
     async def evaluate_validation(self, state: RemediationState) -> dict[str, object]:
+        if state["final_status"] is not FinalStatus.PENDING:
+            return {}
         gaps = list(state.get("verification_gaps", []))
         gaps.extend(
             evidence_gaps(
@@ -1077,6 +1408,7 @@ class WorkflowNodes:
                 [item for item in state.get("behavioral_evidence", []) if item.attempt == state["attempt_counter"]],
                 state["diff_digest"],
                 state["workspace"].base_commit,
+                self.policy.config,
             )
         )
         if gaps:
@@ -1160,11 +1492,22 @@ class WorkflowNodes:
             "rollback_instructions": rollback,
             "audit_events": self._event(state, "ROLLBACK_PREPARED", "OK", rollback.summary),
         }
+        baseline = [
+            f"Observed pre-existing regression failure: {item.task_name}/{item.test_id}; unchanged by this candidate."
+            for item in observations(
+                [pair for pair in state.get("behavioral_evidence", []) if pair.attempt == state.get("attempt_counter")]
+            )
+            if item.classification == "OBSERVED_BASELINE_FAILURE"
+        ]
+        if baseline:
+            update["residual_risks"] = list(dict.fromkeys([*state.get("residual_risks", []), *baseline]))
         if state.get("repair_outcome") is ValidationOutcome.PASSED and not state.get("locally_verified", False):
             update.update(self._verification_blocked(state, ["Legacy run requires current behavioral revalidation."]))
         return update
 
     async def prepare_pr(self, state: RemediationState) -> dict[str, object]:
+        if state["final_status"] is not FinalStatus.PENDING:
+            return {}
         if state.get("repair_outcome") is not ValidationOutcome.PASSED or not state.get("locally_verified", False):
             return self._verification_blocked(
                 state, ["PR preparation requires current behavioral verification evidence."]
@@ -1174,6 +1517,7 @@ class WorkflowNodes:
             [item for item in state.get("behavioral_evidence", []) if item.attempt == state.get("attempt_counter")],
             state["diff_digest"],
             state["workspace"].base_commit,
+            self.policy.config,
         )
         if gaps:
             return self._verification_blocked(state, gaps)
@@ -1201,38 +1545,252 @@ class WorkflowNodes:
             "final_status": FinalStatus.DRAFT_PR_PREPARED,
             "audit_events": self._event(state, "DRAFT_PR_PREPARED", "OK", "Draft pull-request payload prepared."),
         }
-        if not self.github_writes_enabled:
-            return update
+        if self.github_writes_enabled:
+            update["final_status"] = FinalStatus.PENDING
+        return update
+
+    async def seal_candidate(self, state: RemediationState) -> dict[str, object]:
+        if not state.get("locally_verified") or state["final_status"] is not FinalStatus.PENDING:
+            return {}
         try:
-            await self.repository.create_branch(BranchRequest(workspace=state["workspace"], branch_name=branch))
-            commit = await self.repository.commit(
-                CommitRequest(workspace=state["workspace"], message=f"fix: remediate {handoff.case_id}")
+            if "execution_binding" not in state or state["execution_binding"] != self._execution_binding(state):
+                raise PublicationError("REVALIDATION_REQUIRED")
+            workspace = state["workspace"]
+            if state.get("workspace_status") is WorkspaceStatus.DESTROYED:
+                workspace = await self.repository.create_workspace(state["handoff"].repository)
+                state = cast(
+                    RemediationState, {**state, "workspace": workspace, "workspace_status": WorkspaceStatus.READY}
+                )
+                await self.sandbox.check_patch(
+                    PatchApplyRequest(workspace=workspace, unified_diff=state["current_diff"])
+                )
+                await self.sandbox.apply_patch(
+                    PatchApplyRequest(workspace=workspace, unified_diff=state["current_diff"])
+                )
+                state = cast(
+                    RemediationState, {**state, "workspace": workspace, "workspace_status": WorkspaceStatus.PATCHED}
+                )
+            await self.repository.verify_candidate(
+                CandidateVerifyRequest(workspace=workspace, receipts=state.get("edit_receipts", []))
             )
-            update["proposed_commit"] = commit.commit_sha
-            await self.repository.push(PushRequest(workspace=state["workspace"], branch_name=branch))
-            created = await self.pr_provider.create_draft(request)
+            actual = await self.repository.current_diff(workspace)
+            if actual.digest != state["diff_digest"]:
+                raise PublicationError("VALIDATED_DIFF_CHANGED")
+            existing = state.get("publication_journal")
+            tree = await self.repository.publication_check(
+                PublicationCheckRequest(
+                    workspace=workspace,
+                    repository=state["handoff"].repository,
+                    expected_tree=existing.tree_digest if existing else None,
+                    check_remote=self.github_writes_enabled,
+                )
+            )
+            journal = existing or PublicationJournalV1(
+                repository=state["handoff"].repository.url,
+                base_commit=workspace.base_commit,
+                base_branch=state["handoff"].repository.base_branch,
+                head_branch=_branch_name(state["case_id"], state["run_id"]),
+                candidate_digest=state["diff_digest"],
+                tree_digest=tree,
+                created_at=datetime.now(UTC),
+            )
+            brief = self._verification_brief(state)
+            updated = cast(
+                RemediationState, {**state, "publication_journal": journal, "sealed_verification_brief": brief}
+            )
+            manifest = await self.artifact_store.write_bundle(
+                ArtifactWriteRequest(run_id=state["run_id"], files=self._candidate_artifacts(updated))
+            )
         except (OSError, RuntimeError, ValueError) as exc:
-            update["errors"] = [
+            failed = self._publication_failure(state, "EVIDENCE", exc)
+            if "workspace" in state:
+                failed.update(workspace=state["workspace"], workspace_status=state["workspace_status"])
+            return failed
+        return {
+            "publication_journal": journal,
+            "sealed_verification_brief": brief,
+            "artifact_manifest": manifest,
+            "evidence_persisted": True,
+            "workspace": workspace,
+            "workspace_status": WorkspaceStatus.PATCHED,
+            "audit_events": self._event(
+                state,
+                "CANDIDATE_EVIDENCE_PERSISTED",
+                "OK",
+                "Validated candidate and immutable inputs are durably retained.",
+            ),
+        }
+
+    def _candidate_artifacts(self, state: RemediationState) -> dict[str, str]:
+        if self.audit.redactor.redact_artifact("patch.diff", state["current_diff"]) != state["current_diff"]:
+            raise PublicationError("CANDIDATE_ARTIFACT_REDACTION_MISMATCH")
+        files = {
+            "patch.diff": state["current_diff"],
+            "diagnosis-handoff.json": state["handoff"].model_dump_json(indent=2),
+            "compiled-contract.json": state["compiled_contract"].model_dump_json(indent=2),
+            "execution-binding.json": state["execution_binding"].model_dump_json(indent=2),
+            "release-provenance.json": state["release_provenance"].model_dump_json(indent=2),
+            "verification-brief.json": self._verification_brief_json(state),
+            "candidate-evidence.json": json.dumps(
+                {
+                    "patch_digest": state["diff_digest"],
+                    "behavioral_evidence": [e.model_dump(mode="json") for e in state.get("behavioral_evidence", [])],
+                    "edit_receipts": [e.model_dump(mode="json") for e in state.get("edit_receipts", [])],
+                    "capability_reports": [e.model_dump(mode="json") for e in state.get("capability_reports", [])],
+                },
+                indent=2,
+            ),
+            "publication-journal.json": state["publication_journal"].model_dump_json(indent=2),
+        }
+        if "cleanup_result" in state:
+            files["cleanup.json"] = state["cleanup_result"].model_dump_json(indent=2)
+        return files
+
+    async def publish_branch(self, state: RemediationState) -> dict[str, object]:
+        return await self._publication_stage(state, "BRANCH")
+
+    async def publish_commit(self, state: RemediationState) -> dict[str, object]:
+        return await self._publication_stage(state, "COMMIT")
+
+    async def publish_push(self, state: RemediationState) -> dict[str, object]:
+        return await self._publication_stage(state, "PUSH")
+
+    async def publish_draft(self, state: RemediationState) -> dict[str, object]:
+        return await self._publication_stage(state, "DRAFT")
+
+    async def verify_publication(self, state: RemediationState) -> dict[str, object]:
+        return await self._publication_stage(state, "VERIFIED")
+
+    async def _publication_stage(
+        self,
+        state: RemediationState,
+        stage: Literal["BRANCH", "COMMIT", "PUSH", "DRAFT", "VERIFIED"],
+    ) -> dict[str, object]:
+        if not self.github_writes_enabled or state["final_status"] is not FinalStatus.PENDING:
+            return {}
+        journal = state.get("publication_journal")
+        if journal is None or not state.get("evidence_persisted") or journal.candidate_digest != state["diff_digest"]:
+            return self._publication_failure(state, stage, PublicationError("PUBLICATION_EVIDENCE_MISSING"))
+        for attempt in range(1, 4):
+            try:
+                if state.get("execution_binding") != self._execution_binding(state):
+                    raise PublicationError("REVALIDATION_REQUIRED")
+                await self.repository.publication_check(
+                    PublicationCheckRequest(
+                        workspace=state["workspace"],
+                        repository=state["handoff"].repository,
+                        expected_tree=journal.tree_digest,
+                    )
+                )
+                updates: dict[str, object] = {}
+                if stage == "BRANCH":
+                    await self.repository.create_branch(
+                        BranchRequest(workspace=state["workspace"], branch_name=journal.head_branch)
+                    )
+                elif stage == "COMMIT":
+                    committed = await self.repository.commit(
+                        CommitRequest(
+                            workspace=state["workspace"],
+                            message=f"fix: remediate {state['case_id']}",
+                            expected_tree=journal.tree_digest,
+                            authored_at=journal.created_at,
+                        )
+                    )
+                    if state.get("proposed_commit") and state["proposed_commit"] != committed.commit_sha:
+                        raise PublicationError("PUBLICATION_COMMIT_MISMATCH")
+                    updates["proposed_commit"] = committed.commit_sha
+                elif stage == "PUSH":
+                    await self.repository.push(
+                        PushRequest(
+                            workspace=state["workspace"],
+                            branch_name=journal.head_branch,
+                            expected_commit=state["proposed_commit"],
+                        )
+                    )
+                else:
+                    request = DraftPrRequest(
+                        repository=state["handoff"].repository,
+                        repository_slug=self.github_repository,
+                        payload=state["draft_pr"].payload,
+                        idempotency_key=f"{state['run_id']}:{state['diff_digest']}",
+                        expected_commit=state["proposed_commit"],
+                        expected_base_commit=journal.base_commit,
+                    )
+                    result = await (
+                        self.pr_provider.create_draft(request)
+                        if stage == "DRAFT"
+                        else self.pr_provider.verify_draft(request)
+                    )
+                    updates["draft_pr"] = result.metadata
+                receipt = PublicationReceipt(
+                    stage=stage,
+                    candidate_digest=journal.candidate_digest,
+                    recorded_at=datetime.now(UTC),
+                    commit_sha=cast(str | None, updates.get("proposed_commit", state.get("proposed_commit"))),
+                    attempts=attempt,
+                )
+                updates["publication_journal"] = journal.model_copy(
+                    update={
+                        "receipts": [*(r for r in journal.receipts if r.stage != stage), receipt],
+                        "verified": stage == "VERIFIED",
+                    }
+                )
+                if stage == "VERIFIED":
+                    updates["final_status"] = FinalStatus.DRAFT_PR_CREATED
+                    resolved = {
+                        f.detail for f in state.get("workflow_failures", []) if f.category == "PUBLICATION_FAILURE"
+                    }
+                    updates["residual_risks"] = [r for r in state.get("residual_risks", []) if r not in resolved]
+                    updates["errors"] = [e for e in state.get("errors", []) if e.stage != "publication"]
+                updates["audit_events"] = self._event(
+                    state, f"PUBLICATION_{stage}", "OK", f"Exact candidate publication stage {stage} confirmed."
+                )
+                return updates
+            except PublicationError as exc:
+                if not exc.retryable or attempt == 3:
+                    return self._publication_failure(state, stage, exc)
+            except (OSError, RuntimeError, ValueError) as exc:
+                if attempt == 3:
+                    return self._publication_failure(state, stage, exc)
+            await asyncio.sleep(0.25 * attempt)
+        raise AssertionError("bounded publication loop exhausted without outcome")
+
+    def _publication_failure(self, state: RemediationState, stage: str, exc: Exception) -> dict[str, object]:
+        code = exc.code if isinstance(exc, PublicationError) else "PUBLICATION_OPERATION_FAILED"
+        detail = (
+            f"Publication {stage} failed: {code}. The verified candidate is retained for an exact publication retry."
+        )
+        return {
+            "final_status": FinalStatus.HUMAN_ACTION_REQUIRED,
+            "errors": [
                 *state.get("errors", []),
                 ErrorRecord(
-                    code="DRAFT_PR_CREATE_FAILED",
-                    stage="prepare_pr",
-                    message=self.audit.redactor.redact(str(exc)),
-                    retryable=True,
+                    code=code,
+                    stage="publication",
+                    message=detail,
+                    retryable=isinstance(exc, PublicationError) and exc.retryable,
                 ),
-            ]
-            update["residual_risks"] = [
-                *state.get("residual_risks", []),
-                "Draft PR creation did not complete; a remote branch may require human cleanup.",
-            ]
+            ],
+            "workflow_failures": [
+                *state.get("workflow_failures", []),
+                WorkflowFailure(category="PUBLICATION_FAILURE", code=code, detail=detail),
+            ],
+            "residual_risks": [*state.get("residual_risks", []), detail],
+            "audit_events": self._event(state, "PUBLICATION_FAILED", code, detail),
+        }
+
+    async def persist_delivery_evidence(self, state: RemediationState) -> dict[str, object]:
+        if "publication_journal" not in state:
+            return {}
+        try:
+            manifest = await self.artifact_store.write_bundle(
+                ArtifactWriteRequest(run_id=state["run_id"], files=self._candidate_artifacts(state))
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            update = self._publication_failure(state, "EVIDENCE", exc)
+            update["evidence_persisted"] = False
             return update
-        update.update(
-            {
-                "draft_pr": created.metadata,
-                "final_status": FinalStatus.DRAFT_PR_CREATED,
-            }
-        )
-        return update
+        return {"artifact_manifest": manifest, "evidence_persisted": True}
 
     async def cleanup(self, state: RemediationState) -> dict[str, object]:
         workspace = state.get("workspace")
@@ -1264,6 +1822,11 @@ class WorkflowNodes:
         eligible = (
             self.incident_memory_writes_enabled
             and state.get("locally_verified", False)
+            and state.get("evidence_persisted", False)
+            and (
+                not self.github_writes_enabled
+                or bool(state.get("publication_journal") and state["publication_journal"].verified)
+            )
             and state.get("repair_outcome") is ValidationOutcome.PASSED
             and state.get("final_status") in {FinalStatus.DRAFT_PR_PREPARED, FinalStatus.DRAFT_PR_CREATED}
             and state.get("cleanup_result") is not None
@@ -1360,9 +1923,12 @@ class WorkflowNodes:
         manifest = state.get("artifact_manifest")
         try:
             await self.audit_sink.write(AuditWriteRequest(run_id=state["run_id"], jsonl=self.audit.to_jsonl(events)))
-            manifest = await self.artifact_store.write_bundle(
+            written = await self.artifact_store.write_bundle(
                 ArtifactWriteRequest(run_id=state["run_id"], files=artifact_files)
             )
+            retained = {item.name: item for item in manifest.artifacts} if manifest else {}
+            retained.update({item.name: item for item in written.artifacts})
+            manifest = ArtifactManifest(run_id=state["run_id"], artifacts=list(retained.values()))
         except (OSError, RuntimeError, ValueError) as exc:
             errors.append(
                 ErrorRecord(
@@ -1371,6 +1937,8 @@ class WorkflowNodes:
                     message=self.audit.redactor.redact(str(exc)),
                 )
             )
+            if state["final_status"] in {FinalStatus.DRAFT_PR_CREATED, FinalStatus.DRAFT_PR_PREPARED}:
+                state = cast(RemediationState, {**state, "final_status": FinalStatus.HUMAN_ACTION_REQUIRED})
 
         audit_ref: ArtifactRef | None = None
         if manifest:
@@ -1381,6 +1949,7 @@ class WorkflowNodes:
             "artifact_manifest": manifest,
             "errors": errors,
             "final_handoff": handoff,
+            "final_status": state["final_status"],
         }
 
     def _build_handoff(
@@ -1424,7 +1993,20 @@ class WorkflowNodes:
         )
 
     def _approval_interrupt(self, state: RemediationState) -> dict[str, object]:
+        if "execution_binding" not in state or state["execution_binding"] != self._execution_binding(state):
+            return self._verification_blocked(
+                state, ["REVALIDATION_REQUIRED: workflow, base, policy, contract or validation assets changed."]
+            )
         request = state["approval_request"]
+        candidate = (
+            self.policy.digest_text(state["remediation_plan"].model_dump_json())
+            if request.kind == "PLAN"
+            else state["patch_policy"].scope_digest
+        )
+        if request.scope_digest != self._approval_scope(state, request.kind, candidate):
+            return self._verification_blocked(
+                state, ["REVALIDATION_REQUIRED: approval scope no longer matches its immutable inputs."]
+            )
         raw = interrupt(request.model_dump(mode="json"))
         decision = ApprovalDecisionV1.model_validate(raw)
         if decision.approval_id != request.approval_id or decision.scope_digest != request.scope_digest:
@@ -1454,7 +2036,7 @@ class WorkflowNodes:
             approval_id=str(uuid4()),
             case_id=state["case_id"],
             kind=kind,
-            scope_digest=scope_digest,
+            scope_digest=self._approval_scope(state, kind, scope_digest),
             summary=summary,
             reasons=[summary],
             requested_at=datetime.now(UTC),
@@ -1689,6 +2271,24 @@ class WorkflowNodes:
                 verification_method="AGENTCORE_CONTROL_PLANE",
                 error_code="RELEASE_PROVENANCE_MISSING",
             )
+        if "edit_proposal" in state:
+            files["edit-proposal.json"] = state["edit_proposal"].model_dump_json(indent=2)
+        if "execution_binding" in state:
+            files["execution-binding.json"] = state["execution_binding"].model_dump_json(indent=2)
+        if "publication_journal" in state:
+            files["publication-journal.json"] = state["publication_journal"].model_dump_json(indent=2)
+        if "compiled_contract" in state:
+            files["compiled-contract.json"] = state["compiled_contract"].model_dump_json(indent=2)
+        files["capability-report.json"] = json.dumps(
+            [r.model_dump(mode="json") for r in state.get("capability_reports", [])], indent=2
+        )
+        files["diagnosis-handoff.json"] = state["handoff"].model_dump_json(indent=2)
+        files["edit-receipts.json"] = json.dumps(
+            [r.model_dump(mode="json") for r in state.get("edit_receipts", [])], indent=2
+        )
+        files["workflow-failures.json"] = json.dumps(
+            [f.model_dump(mode="json") for f in state.get("workflow_failures", [])], indent=2
+        )
         files["release-provenance.json"] = provenance.model_dump_json(indent=2)
         files["verification-brief.json"] = self._verification_brief_json(state)
         if state.get("current_diff"):
@@ -1706,6 +2306,8 @@ class WorkflowNodes:
 
     @staticmethod
     def _verification_brief(state: RemediationState) -> VerificationBriefV1:
+        if "sealed_verification_brief" in state:
+            return state["sealed_verification_brief"]
         plan = state.get("remediation_plan")
         return VerificationBriefV1(
             run_id=state["run_id"],
@@ -1731,6 +2333,7 @@ class WorkflowNodes:
             if plan
             else [],
             limitations=[
+                *(state["compiled_contract"].limitations if state.get("compiled_contract") else []),
                 *state.get("verification_gaps", [])[:49],
                 *((f"Unresolved plan requirement: {item}" for item in plan.unresolved_requirements) if plan else ()),
                 "Local tests do not establish deployed health or the absence of pre-existing product security issues.",
