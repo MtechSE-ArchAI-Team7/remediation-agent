@@ -151,10 +151,11 @@ make test-sandbox-integration  # builds image and clean offline bundle; runs Doc
 AIOS_AWS_REGION=ap-southeast-1 AIOS_BEHAVIORAL_BUNDLE=/path/to/qualified/bundle make test-code-interpreter-live
 ```
 
-The hosted image packages a separate Linux/amd64 dependency bundle for Code Interpreter, independently of AgentCore
-Runtime's architecture. `CODE_INTERPRETER_PLATFORM` can be overridden at image build time after qualification. This is
-an environment assumption checked at execution, not a claim that all managed environments support this bundle. The live
-qualification is excluded from default tests and must pass in the actual configured environment before release.
+The hosted image packages a separate Linux/arm64 dependency bundle for Code Interpreter, independently of AgentCore
+Runtime's architecture. That default matches the managed `aws.codeinterpreter.v1` environment qualified in
+`ap-southeast-1` on 2026-10-06. `CODE_INTERPRETER_PLATFORM` can be overridden at image build time only after qualification
+in the target environment. Runtime platform and file-digest checks fail closed on drift. The live qualification is excluded
+from default tests and must pass in the actual configured environment before release.
 [AWS's preinstalled libraries](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-preinstalled-libraries.html)
 do not list Express or sqlite3 among the Node packages. The packaged native dependencies are necessary. Code Interpreter's
 managed isolation is not Docker's `--network none`; its system sandbox allows limited AWS-service networking. Custom public
