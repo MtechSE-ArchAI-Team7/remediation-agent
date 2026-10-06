@@ -759,5 +759,6 @@ authorization, and audit-grade reviewer identity.
 
 Validation record for behavioral hardening (2026-10-06): local format/lint/strict typing, default tests, package build,
 Bandit and real Docker integration passed. Live Code Interpreter qualification is implemented but was not run; it is a
-release prerequisite for this new profile. `make security` failed at pip-audit with 18 advisories in the unchanged service
-lock (`langgraph-sdk==0.4.2`, `PyJWT==2.13.0`, `urllib3==2.7.0`). This change does not claim an all-green security audit.
+release prerequisite for this new profile. The first `make security` run found 18 advisories in the service lock. The
+release follow-up upgraded `langgraph-sdk` to 0.4.5, `PyJWT` to 2.15.1, and `urllib3` to 2.8.0; the subsequent Bandit and
+pip-audit checks passed.
