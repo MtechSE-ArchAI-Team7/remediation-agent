@@ -11,6 +11,7 @@ from langchain_core.tools import StructuredTool
 from remediation_agent.adapters.mcp import (
     GITHUB_MCP_ENDPOINT,
     INSPECTION_MCP_TOOL_NAMES,
+    AgentCoreGatewayInspectionTools,
     GitHubRemoteMcpInspectionTools,
     _mcp_failure_code,
 )
@@ -74,6 +75,41 @@ def test_registration_rejects_missing_extra_duplicate_and_changed_schemas() -> N
     wrong_schema = _fixture_tool("search_code", GetFileContentsArgs)
     with pytest.raises(RuntimeError, match="unexpected argument schema"):
         GitHubRemoteMcpInspectionTools._validate_tools([tree, read, wrong_schema])
+
+
+def test_agentcore_registration_requires_exact_namespaced_read_tools() -> None:
+    tree = _fixture_tool("GitHubInspection___get_repository_tree", GetRepositoryTreeArgs)
+    read = _fixture_tool("GitHubInspection___get_file_contents", GetFileContentsArgs)
+    search = _fixture_tool("GitHubInspection___search_code", SearchCodeArgs)
+
+    AgentCoreGatewayInspectionTools._validate_tools([tree, read, search])
+
+    with pytest.raises(RuntimeError, match="unexpected inspection tool set"):
+        AgentCoreGatewayInspectionTools._validate_tools(
+            [tree, read, search, _fixture_tool("GitHubInspection___create_or_update_file", SearchCodeArgs)]
+        )
+
+    wrong_schema = _fixture_tool("GitHubInspection___search_code", GetFileContentsArgs)
+    with pytest.raises(RuntimeError, match="unexpected argument schema"):
+        AgentCoreGatewayInspectionTools._validate_tools([tree, read, wrong_schema])
+
+
+def test_agentcore_provider_keeps_lockdown_headers_and_maps_upstream_names() -> None:
+    policy_path = Path(__file__).parents[2] / "config" / "policies" / "reference.json"
+    provider = AgentCoreGatewayInspectionTools(
+        "https://aios-remediation-tool-gateway-abcdefghij.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp",
+        "ap-southeast-1",
+        PolicyEngine(load_policy(policy_path)),
+    )
+
+    assert provider._headers() == {  # noqa: SLF001 - security contract test
+        "X-MCP-Tools": "get_repository_tree,get_file_contents,search_code",
+        "X-MCP-Readonly": "true",
+        "X-MCP-Lockdown": "true",
+    }
+    assert provider._upstream_tool_name("get_file_contents") == "GitHubInspection___get_file_contents"  # noqa: SLF001
+    with pytest.raises(ValueError, match="unsupported inspection tool"):
+        provider._upstream_tool_name("create_or_update_file")  # noqa: SLF001
 
 
 @pytest.mark.parametrize(

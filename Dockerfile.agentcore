@@ -1,3 +1,13 @@
+ARG CODE_INTERPRETER_PLATFORM=linux/amd64
+FROM --platform=${CODE_INTERPRETER_PLATFORM} node:20.19.5-bookworm AS validation-build
+WORKDIR /build
+COPY validation/ecommerce/package.json validation/ecommerce/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund && \
+    npm rebuild sqlite3 bcrypt --build-from-source --nodedir=/usr/local
+COPY scripts/seal_validation_bundle.py /build/seal_validation_bundle.py
+RUN python3 seal_validation_bundle.py /build /bundle /usr/local/bin/node && \
+    NODE_PATH=/bundle/node_modules /bundle/node -e "require('express'); require('sqlite3'); require('bcrypt')"
+
 FROM ghcr.io/astral-sh/uv:python3.12-trixie-slim AS builder
 
 WORKDIR /app
@@ -24,6 +34,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --system --uid 10001 --create-home remediation
 COPY --from=builder --chown=10001:10001 /app /app
+COPY --from=validation-build --chown=10001:10001 /bundle /app/validation/ecommerce
+ENV AIOS_BEHAVIORAL_BUNDLE=/app/validation/ecommerce
 USER 10001:10001
 
 EXPOSE 9000

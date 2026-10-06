@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS node-runtime
+FROM node:20.19.5-bookworm-slim AS node-runtime
 
 FROM python:3.12-slim-bookworm
 

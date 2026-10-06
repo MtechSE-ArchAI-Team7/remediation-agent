@@ -17,6 +17,7 @@ from remediation_agent.domain.models import (
     DownstreamDeliveryReceiptV1,
     ExplainabilityTraceV1,
     RemediationHandoffV1,
+    VerificationBriefV1,
 )
 from remediation_agent.evaluation import (
     EvaluationJudgeSuiteV1,
@@ -32,6 +33,7 @@ def main() -> None:
     output = Path(__file__).parents[1] / "config" / "schemas"
     output.mkdir(parents=True, exist_ok=True)
     schemas = {
+        "verification-brief-v1.schema.json": VerificationBriefV1.model_json_schema(),
         "diagnosis-handoff-v1.schema.json": DiagnosisHandoffV1.model_json_schema(),
         "approval-decision-v1.schema.json": ApprovalDecisionV1.model_json_schema(),
         "approval-request-v1.schema.json": ApprovalRequest.model_json_schema(),

@@ -25,6 +25,8 @@ from remediation_agent.ports.models import (
     ArtifactReadResult,
     ArtifactWriteRequest,
     AuditWriteRequest,
+    BehavioralTaskExecution,
+    BehavioralTaskRequest,
     BranchRequest,
     BranchResult,
     CommitRequest,
@@ -103,6 +105,8 @@ class SandboxExecutor(Protocol):
     async def restore_base(self, workspace: WorkspaceRef) -> None: ...
 
     async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution: ...
+
+    async def run_behavior(self, request: BehavioralTaskRequest) -> BehavioralTaskExecution: ...
 
     async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest: ...
 

@@ -13,7 +13,7 @@ from remediation_agent.adapters.checkpoint import postgres_checkpointer
 from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
 from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, DisabledIncidentMemory
-from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
+from remediation_agent.adapters.mcp import AgentCoreGatewayInspectionTools, GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
@@ -36,7 +36,7 @@ from remediation_agent.config import Settings
 from remediation_agent.domain.models import ApprovalDecisionV1, DiagnosisHandoffV1, RemediationRunView
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
-from remediation_agent.ports.protocols import IncidentMemoryPort
+from remediation_agent.ports.protocols import IncidentMemoryPort, InspectionToolProvider
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
 from remediation_agent.tools.catalog import OPERATIONAL_TOOL_CATALOG, operational_tool_counts
 from remediation_agent.workflow.graph import build_graph
@@ -82,8 +82,18 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
                 author_email=settings.git_author_email,
                 credential_provider=credential_provider,
             )
-            inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
-            sandbox = DockerSandboxExecutor(settings.workspace_root, settings.sandbox_image)
+            inspection_tools: InspectionToolProvider
+            if settings.inspection_mcp_mode == "agentcore_gateway":
+                if settings.aws_region is None:
+                    raise ValueError("AIOS_AWS_REGION is required for AgentCore inspection gateway mode")
+                inspection_tools = AgentCoreGatewayInspectionTools(
+                    settings.inspection_gateway_endpoint(), settings.aws_region, policy
+                )
+            else:
+                inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
+            sandbox = DockerSandboxExecutor(
+                settings.workspace_root, settings.sandbox_image, behavioral_bundle=settings.behavioral_bundle
+            )
             pr_provider = DraftPullRequestProvider(
                 token=github_token,
                 writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,

@@ -2,23 +2,64 @@
   "policy_id": "aios-remediation-agentcore-ecommerce-demo-v1",
   "version": "1.0",
   "repositories": {
-    "allowed_providers": ["GITHUB"],
+    "allowed_providers": [
+      "GITHUB"
+    ],
     "allowed_url_patterns": [
       "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
     ]
   },
   "paths": {
-    "autonomous": ["server.js", "lib/**", "tests/**"],
+    "autonomous": [
+      "server.js",
+      "public/app.js",
+      "lib/**",
+      "tests/**"
+    ],
     "approval_required": [
-      ".github/workflows/**", "Dockerfile", "docker/**", "compose.yaml", "pyproject.toml", "uv.lock",
-      "requirements*.txt", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-      "migrations/**", "**/migrations/**", "**/auth/**", "**/*auth*.py", "**/security/**", "**/iam/**",
-      "*iam*.json", "*.tf", "**/*.tf", "k8s/**", "**/k8s/**", "kubernetes/**", "**/kubernetes/**",
-      "helm/**", "**/helm/**", "**/Chart.yaml"
+      ".github/workflows/**",
+      "Dockerfile",
+      "docker/**",
+      "compose.yaml",
+      "pyproject.toml",
+      "uv.lock",
+      "requirements*.txt",
+      "package.json",
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "migrations/**",
+      "**/migrations/**",
+      "**/auth/**",
+      "**/*auth*.py",
+      "**/security/**",
+      "**/iam/**",
+      "*iam*.json",
+      "*.tf",
+      "**/*.tf",
+      "k8s/**",
+      "**/k8s/**",
+      "kubernetes/**",
+      "**/kubernetes/**",
+      "helm/**",
+      "**/helm/**",
+      "**/Chart.yaml"
     ],
     "forbidden": [
-      ".git", ".git/**", ".env", ".env.*", "**/.env", "**/.env.*", "*.pem", "**/*.pem",
-      "*.key", "**/*.key", "credentials*", "**/credentials*", "secrets/**", "**/secrets/**"
+      ".git",
+      ".git/**",
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*",
+      "*.pem",
+      "**/*.pem",
+      "*.key",
+      "**/*.key",
+      "credentials*",
+      "**/credentials*",
+      "secrets/**",
+      "**/secrets/**"
     ]
   },
   "limits": {
@@ -37,14 +78,20 @@
     "max_mcp_tool_timeout_seconds": 30,
     "max_task_timeout_seconds": 120,
     "max_task_output_bytes": 1048576,
-    "max_validation_tasks_per_attempt": 2,
+    "max_validation_tasks_per_attempt": 6,
     "max_model_output_tokens": 4096,
     "max_active_runs": 2
   },
-  "default_validation_tasks": ["javascript_syntax", "average_regression"],
+  "default_validation_tasks": [
+    "javascript_syntax"
+  ],
   "validation_tasks": {
     "javascript_syntax": {
-      "argv": ["node", "--check", "server.js"],
+      "argv": [
+        "node",
+        "--check",
+        "server.js"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 60,
@@ -52,18 +99,182 @@
       "retryable": false
     },
     "average_regression": {
-      "argv": ["node", "--test", "tests/calculate-average.test.js"],
+      "argv": [
+        "node",
+        "--test",
+        "tests/calculate-average.test.js"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 60,
       "output_limit_bytes": 262144,
-      "retryable": false
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/calculate-average.test.js"
+      ]
+    },
+    "discount_regression": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/discount.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/discount.test.js"
+      ]
+    },
+    "checkout_regression": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/checkout.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/checkout.test.js"
+      ]
+    },
+    "shipping_regression": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/shipping.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/shipping.test.js"
+      ]
+    },
+    "purchase_regression": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/purchase.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "ecommerce_purchase",
+      "test_paths": [],
+      "required_test_ids": [
+        "purchase_below_stock",
+        "purchase_equal_stock",
+        "purchase_above_stock",
+        "purchase_invalid_inputs",
+        "purchase_form_encoding",
+        "purchase_unknown_product",
+        "purchase_persistence",
+        "purchase_concurrent"
+      ],
+      "required_evidence_paths": [
+        "server.js",
+        "schema.sql",
+        "seed.sql",
+        "public/app.js",
+        "package.json"
+      ],
+      "request_contract": {
+        "method": "POST",
+        "path": "/purchase",
+        "content_type": "application/json",
+        "field_types": {
+          "productId": "safe-integer",
+          "quantity": "positive-safe-integer"
+        },
+        "example_body": "{\"productId\":1,\"quantity\":1}",
+        "expected_responses": [
+          "200: {success: true, remaining: number}",
+          "400: {error: \"Insufficient inventory\"} for insufficient stock or unknown product",
+          "400: {error: \"Invalid product ID or quantity\"} for invalid fields and form encoding"
+        ],
+        "state_changes": [
+          "Persist decremented inventory in SQLite; never oversell."
+        ],
+        "prerequisites": [
+          "Disposable ecommerce.db initialized from schema.sql and seed.sql; product 1 starts with inventory 10."
+        ],
+        "evidence_paths": [
+          "server.js",
+          "schema.sql",
+          "seed.sql",
+          "public/app.js",
+          "package.json"
+        ]
+      }
     }
   },
   "mandatory_tasks": [
     {
-      "path_patterns": ["server.js", "lib/**", "tests/**"],
-      "task_names": ["javascript_syntax", "average_regression"]
+      "path_patterns": [
+        "server.js"
+      ],
+      "task_names": [
+        "javascript_syntax"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/calculate-average.test.js"
+      ],
+      "task_names": [
+        "average_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/discount.test.js"
+      ],
+      "task_names": [
+        "discount_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/checkout.test.js"
+      ],
+      "task_names": [
+        "checkout_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/shipping.test.js"
+      ],
+      "task_names": [
+        "shipping_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/purchase.test.js"
+      ],
+      "task_names": [
+        "purchase_regression"
+      ]
     }
   ],
   "artifacts": {
@@ -71,6 +282,10 @@
     "write_audit_jsonl": true,
     "include_full_diff": true
   },
-  "github": {"writes_enabled": true},
-  "incident_memory": {"writes_enabled": true}
+  "github": {
+    "writes_enabled": true
+  },
+  "incident_memory": {
+    "writes_enabled": true
+  }
 }

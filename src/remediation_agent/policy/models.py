@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from remediation_agent.domain.models import NonEmptyStr, StrictModel
+from remediation_agent.domain.models import NonEmptyStr, RequestContract, StrictModel
 
 
 class PathRules(StrictModel):
@@ -51,6 +52,29 @@ class Limits(StrictModel):
 
 
 class ValidationTaskConfig(StrictModel):
+    kind: Literal["STATIC", "BEHAVIORAL"] = "STATIC"
+    profile: Literal["pytest", "node_test", "ecommerce_purchase"] | None = None
+    test_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)
+    required_test_ids: list[NonEmptyStr] = Field(default_factory=list, max_length=40)
+    required_evidence_paths: list[NonEmptyStr] = Field(default_factory=list, max_length=20)
+    request_contract: RequestContract | None = None
+
+    @model_validator(mode="after")
+    def behavioral_configuration(self) -> ValidationTaskConfig:
+        if self.kind == "BEHAVIORAL" and self.profile is None:
+            raise ValueError("behavioral tasks require a trusted profile")
+        if self.kind == "STATIC" and self.profile is not None:
+            raise ValueError("static tasks cannot declare behavioral profiles")
+        if self.profile in {"pytest", "node_test"} and not self.test_paths:
+            raise ValueError("behavioral test paths must be explicit")
+        for name in self.test_paths:
+            path = PurePosixPath(name)
+            if path.is_absolute() or ".." in path.parts or not path.parts or "\x00" in name or "\\" in name:
+                raise ValueError("unsafe behavioral test path")
+            if path.parts[0] not in {"tests", "test"}:
+                raise ValueError("behavioral overlays must remain in test directories")
+        return self
+
     argv: list[NonEmptyStr] = Field(min_length=1, max_length=50)
     cwd: NonEmptyStr = "."
     environment: dict[str, str] = Field(default_factory=dict, max_length=50)

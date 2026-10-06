@@ -9,13 +9,16 @@ import httpx
 import pytest
 from botocore.credentials import Credentials  # type: ignore[import-untyped]
 
-from remediation_agent.adapters.agentcore_gateway import AgentCoreGatewaySigV4Auth
+from remediation_agent.adapters.agentcore_gateway import AgentCoreGatewaySigV4Auth, AgentCoreMcpGatewaySigV4Auth
 
 _BASE_URL = (
     "https://llm-gateway-with-inbound-auth-u8utldecju.gateway.bedrock-agentcore."
     "ap-southeast-1.amazonaws.com/inference/v1"
 )
 _RESPONSES_URL = _BASE_URL + "/responses"
+_MCP_BASE_URL = (
+    "https://aios-remediation-tool-gateway-abcdefghij.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp"
+)
 
 
 class _CredentialsProvider:
@@ -144,5 +147,43 @@ def test_sigv4_rejects_a_spoofed_host_header() -> None:
 
     with pytest.raises(ValueError, match="target is not permitted"):
         list(auth.auth_flow(request))
+
+    assert provider.calls == 0
+
+
+def test_mcp_sigv4_signs_only_the_exact_gateway_mcp_path() -> None:
+    provider = _CredentialsProvider(iter([Credentials("AKID", "secret", "session-token")]))
+    auth = AgentCoreMcpGatewaySigV4Auth(
+        base_url=_MCP_BASE_URL,
+        region_name="ap-southeast-1",
+        credential_provider=provider,
+    )
+    request = httpx.Request("POST", _MCP_BASE_URL, content=b'{"jsonrpc":"2.0"}')
+
+    signed = list(auth.auth_flow(request))[0]
+
+    assert signed.headers["Authorization"].startswith("AWS4-HMAC-SHA256 Credential=AKID/")
+    assert signed.headers["X-Amz-Security-Token"] == "session-token"
+
+
+@pytest.mark.parametrize(
+    ("method", "url"),
+    [
+        ("GET", _MCP_BASE_URL),
+        ("POST", _MCP_BASE_URL + "/"),
+        ("POST", _MCP_BASE_URL + "?redirect=true"),
+        ("POST", "https://example.test/mcp"),
+    ],
+)
+def test_mcp_sigv4_rejects_alternate_methods_hosts_paths_and_queries(method: str, url: str) -> None:
+    provider = _CredentialsProvider(iter([Credentials("AKID", "secret")]))
+    auth = AgentCoreMcpGatewaySigV4Auth(
+        base_url=_MCP_BASE_URL,
+        region_name="ap-southeast-1",
+        credential_provider=provider,
+    )
+
+    with pytest.raises(ValueError, match="not permitted"):
+        list(auth.auth_flow(httpx.Request(method, url, content=b"{}")))
 
     assert provider.calls == 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -18,7 +19,7 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
         patch_for(new="value = safe_int_v2(raw)"),
         patch_for(new="value = safe_int_v3(raw)"),
     ]
-    service, model, _, sandbox, pr, _, _ = build_test_service(
+    service, model, _, sandbox, pr, _, audit = build_test_service(
         scripted_responses(patch=initial, revisions=revisions),
         task_outcomes={"unit_tests": [ValidationOutcome.FAILED] * 3},
     )
@@ -38,6 +39,73 @@ async def test_repair_loop_stops_exactly_at_configured_maximum() -> None:
         "rationale": "Bounded fix.",
         "proposed_validation_tasks": [],
     }
+    audit_events = [json.loads(line) for line in audit.requests[-1].jsonl.splitlines()]
+    failed_task_event = next(
+        event
+        for event in audit_events
+        if event["event_type"] == "VALIDATION_TASK_EXECUTED" and event["result_code"] == "FAILED"
+    )
+    assert "failure=fake unit_tests: FAILED" in failed_task_event["detail"]
+
+
+async def test_patch_apply_mismatch_restores_base_and_generates_bounded_revision() -> None:
+    initial = patch_for(new="value = safe_int_v1(raw)")
+    revision = patch_for(new="value = safe_int_v2(raw)")
+    service, model, _, sandbox, pr, _, _ = build_test_service(
+        scripted_responses(patch=initial, revisions=[revision]),
+        apply_failures=["git apply failed: error: patch failed: src/app.py:1"],
+    )
+
+    result = await service.start(diagnosis_handoff())
+
+    assert result.status is FinalStatus.DRAFT_PR_PREPARED
+    assert result.result is not None
+    assert len(sandbox.applied_patches) == 2
+    assert sandbox.restores == 1
+    assert len(pr.requests) == 1
+    assert result.result.validation_attempts[0].outcome is ValidationOutcome.ERROR
+    assert result.result.validation_attempts[0].results[0].task_name == "patch_apply"
+    revision_requests = [request for request in model.requests if request.operation.value == "REVISION"]
+    assert len(revision_requests) == 1
+    assert "git apply failed" in str(revision_requests[0].payload["revision_context"])
+
+
+async def test_patch_apply_mismatch_stops_at_configured_attempt_limit() -> None:
+    initial = patch_for(new="value = safe_int_v1(raw)")
+    revisions = [
+        patch_for(new="value = safe_int_v2(raw)"),
+        patch_for(new="value = safe_int_v3(raw)"),
+    ]
+    service, _, _, sandbox, pr, _, _ = build_test_service(
+        scripted_responses(patch=initial, revisions=revisions),
+        apply_failures=["git apply failed: patch does not apply"] * 3,
+    )
+
+    result = await service.start(diagnosis_handoff())
+
+    assert result.status is FinalStatus.VALIDATION_FAILED
+    assert result.result is not None
+    assert len(result.result.validation_attempts) == 3
+    assert all(attempt.outcome is ValidationOutcome.ERROR for attempt in result.result.validation_attempts)
+    assert len(sandbox.applied_patches) == 3
+    assert sandbox.restores == 2
+    assert pr.requests == []
+    assert any("Patch application failed" in risk for risk in result.result.residual_risks)
+
+
+async def test_non_applicability_patch_error_remains_terminal() -> None:
+    service, model, _, sandbox, pr, _, _ = build_test_service(
+        scripted_responses(revisions=[patch_for(new="value = safe_int_v2(raw)")]),
+        apply_failures=["applied workspace diff does not match the preflighted file scope"],
+    )
+
+    result = await service.start(diagnosis_handoff())
+
+    assert result.status is FinalStatus.INTERNAL_ERROR
+    assert len(sandbox.applied_patches) == 1
+    assert sandbox.restores == 0
+    assert pr.requests == []
+    assert all(request.operation.value != "REVISION" for request in model.requests)
 
 
 async def test_plan_approval_interrupt_can_resume_same_run() -> None:

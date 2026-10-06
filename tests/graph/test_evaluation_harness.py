@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from remediation_agent.evaluation import ExpectedRoute, load_evaluation_suite_result
-from scripts.run_evaluation import run_deterministic
+from remediation_agent.evaluation import (
+    ExpectedRoute,
+    load_evaluation_suite,
+    load_evaluation_suite_result,
+)
+from scripts.run_evaluation import _run_deterministic_case, run_deterministic
 
 
 async def test_ten_case_evaluation_exercises_routes_and_controls(tmp_path: Path) -> None:
@@ -31,3 +35,20 @@ async def test_ten_case_evaluation_exercises_routes_and_controls(tmp_path: Path)
         "EVAL-10",
     }
     assert all(record["backend"] == "FAKE" for trial in result.trials for record in trial.validation_executions)
+
+
+async def test_live_agentcore_policy_covers_every_agent2_benchmark_route() -> None:
+    root = Path(__file__).parents[2]
+    suite = load_evaluation_suite(root / "config/evaluation/suite-v2.json")
+    live_cases = [
+        case.model_copy(update={"policy_path": "config/policies/agentcore-demo.json"}) for case in suite.cases
+    ]
+    live_suite = suite.model_copy(update={"cases": live_cases})
+
+    trials = [await _run_deterministic_case(live_suite, case) for case in live_cases]
+
+    assert all(trial.passed for trial in trials), {
+        trial.case_id: [gate.name for gate in trial.hard_gates if not gate.passed]
+        for trial in trials
+        if not trial.passed
+    }

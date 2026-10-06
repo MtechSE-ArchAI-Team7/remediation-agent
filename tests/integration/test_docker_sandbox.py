@@ -148,7 +148,8 @@ def _fixture_repository(root: Path) -> tuple[Path, str]:
     (repository / "tests" / "test_app.py").write_text(
         "from src.app import parse_int\n\n\n"
         "def test_invalid_input_returns_none() -> None:\n"
-        '    assert parse_int("invalid") is None\n',
+        '    try:\n        actual = parse_int("invalid")\n    except ValueError:\n        actual = "uncaught-error"\n'
+        "    assert actual is None\n",
         encoding="utf-8",
     )
     _git(repository, "add", "src/app.py", "tests/test_app.py")
@@ -301,15 +302,30 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         "+        return -1\n"
     )
     passing_patch = failing_patch.replace("+        return -1\n", "+        return None\n")
-    model = FakeStructuredModel(
-        scripted_responses(
-            target_path="src/app.py",
-            plan_summary="Return a typed absence for invalid integer input.",
-            patch=failing_patch,
-            revisions=[passing_patch],
-            tasks=["unit_tests"],
-        )
+    responses = scripted_responses(
+        target_path="src/app.py",
+        plan_summary="Return a typed absence for invalid integer input.",
+        patch=failing_patch,
+        revisions=[passing_patch],
+        tasks=["unit_tests"],
     )
+    from remediation_agent.domain.enums import ModelOperation
+    from remediation_agent.domain.models import RemediationPlan
+
+    plan = responses[ModelOperation.PLANNING][0]
+    assert isinstance(plan, RemediationPlan)
+    responses[ModelOperation.PLANNING] = [
+        plan.model_copy(
+            update={
+                "verification": [
+                    plan.verification[0].model_copy(
+                        update={"test_ids": ["tests/test_app.py::test_invalid_input_returns_none"]}
+                    )
+                ]
+            }
+        )
+    ]
+    model = FakeStructuredModel(responses)
     nodes = WorkflowNodes(
         policy=policy,
         model=model,
@@ -359,6 +375,9 @@ async def test_full_workflow_restores_base_and_passes_revised_patch(
         "result.json",
         "rollback.json",
         "validation.json",
+        "validation-execution.json",
+        "incident-memory.json",
+        "verification-brief.json",
     }
     run_directory = artifact_root / result.run_id
     assert all((run_directory / name).is_file() for name in artifact_names)

@@ -6,7 +6,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from remediation_agent.domain.enums import FinalStatus, ValidationOutcome
+from remediation_agent.domain.enums import FinalStatus, ValidationOutcome, WorkspaceStatus
 from remediation_agent.workflow.nodes import WorkflowNodes
 from remediation_agent.workflow.state import RemediationState
 
@@ -53,10 +53,12 @@ def build_graph(
     )
     repair_builder.add_conditional_edges(
         "apply_patch",
-        _continue_if_pending,
-        {"continue": "select_validation_tasks", "end": END},
+        _after_patch_application,
+        {"continue": "select_validation_tasks", "retry": "restore_base", "end": END},
     )
-    repair_builder.add_edge("select_validation_tasks", "run_validation")
+    repair_builder.add_conditional_edges(
+        "select_validation_tasks", _continue_if_pending, {"continue": "run_validation", "end": END}
+    )
     repair_builder.add_edge("run_validation", "evaluate_validation")
     repair_builder.add_conditional_edges(
         "evaluate_validation",
@@ -143,6 +145,19 @@ def _continue_if_pending(state: RemediationState) -> str:
     return "continue" if state["final_status"] is FinalStatus.PENDING else "end"
 
 
+def _after_patch_application(state: RemediationState) -> str:
+    if state["final_status"] is not FinalStatus.PENDING:
+        return "end"
+    if state.get("workspace_status") is WorkspaceStatus.PATCHED:
+        return "continue"
+    if (
+        state.get("validation_outcome") is ValidationOutcome.ERROR
+        and state["attempt_counter"] < state["max_validation_attempts"]
+    ):
+        return "retry"
+    return "end"
+
+
 def _after_validation(state: RemediationState) -> str:
     if (
         state["validation_outcome"] is not ValidationOutcome.PASSED
@@ -154,4 +169,8 @@ def _after_validation(state: RemediationState) -> str:
 
 
 def _after_evidence(state: RemediationState) -> str:
-    return "pr" if state.get("repair_outcome") is ValidationOutcome.PASSED else "cleanup"
+    return (
+        "pr"
+        if state.get("repair_outcome") is ValidationOutcome.PASSED and state.get("locally_verified", False)
+        else "cleanup"
+    )

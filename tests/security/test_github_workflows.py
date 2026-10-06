@@ -132,15 +132,27 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert "AIOS_GITHUB_REPOSITORY: $repository" in script
     assert 'current_repository="$(jq -r' in script
     assert '"$current_repository" == "$TARGET_GITHUB_REPOSITORY"' in script
+    assert '"$account_id" != "$EXPECTED_AWS_ACCOUNT_ID"' in script
+    assert "Refusing AgentCore deployment in unexpected AWS account" in script
+    assert 'has("filesystemConfigurations")' in script
+    assert "The AWS CLI is too old to preserve AgentCore filesystem configurations." in script
+    assert "Verify deployed runtime invariants" in {cast(str, step.get("name")) for step in steps}
+    assert script.count('filesystemConfigurations == [{"sessionStorage":{"mountPath":"/mnt/workspace"}}]') >= 3
+    assert script.count('.environmentVariables.AIOS_WORKSPACE_ROOT == "/mnt/workspace/runs"') >= 3
+    assert "The AgentCore rollback version is missing the required workspace mount." in script
     assert script.count("--arg repository") == 1
     target_bindings = 0
+    account_bindings = 0
     for step in steps:
         environment = step.get("env")
         if not isinstance(environment, dict):
             continue
         assert "GITHUB_REPOSITORY" not in environment
+        if environment.get("EXPECTED_AWS_ACCOUNT_ID") == "734849394833":
+            account_bindings += 1
         if environment.get("TARGET_GITHUB_REPOSITORY") == "${{ inputs.github-repository }}":
             target_bindings += 1
+    assert account_bindings == 2
     assert target_bindings == 2
     assert "create-agent-runtime" not in script
     assert "delete-agent-runtime" not in script

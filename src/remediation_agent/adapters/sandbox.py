@@ -24,6 +24,8 @@ from remediation_agent.domain.models import (
     WorkspaceRef,
 )
 from remediation_agent.ports.models import (
+    BehavioralTaskExecution,
+    BehavioralTaskRequest,
     PatchApplyRequest,
     PatchApplyResult,
     SandboxExecutionProfile,
@@ -41,9 +43,12 @@ class SandboxError(RuntimeError):
 class DockerSandboxExecutor:
     """Apply patches with Git and run only configured argv inside a locked-down container."""
 
-    def __init__(self, workspace_root: Path, image: str) -> None:
+    def __init__(
+        self, workspace_root: Path, image: str, *, behavioral_bundle: Path = Path("/app/validation/ecommerce")
+    ) -> None:
         self.workspace_root = workspace_root.resolve()
         self.image = image
+        self.behavioral_bundle = behavioral_bundle
         self._active_containers: dict[str, str] = {}
 
     def execution_profile(self) -> SandboxExecutionProfile:
@@ -72,6 +77,11 @@ class DockerSandboxExecutor:
         root = self._workspace(workspace)
         await self._run(self._git_argv(root, "reset", "--hard", workspace.base_commit), cwd=root, timeout=60.0)
         await self._run(self._git_argv(root, "clean", "-fdx"), cwd=root, timeout=60.0)
+
+    async def run_behavior(self, request: BehavioralTaskRequest) -> BehavioralTaskExecution:
+        from remediation_agent.adapters.behavioral import run_behavioral_pair
+
+        return await run_behavioral_pair(self, request)
 
     async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
         root = self._workspace(request.workspace)
@@ -112,7 +122,7 @@ class DockerSandboxExecutor:
             "--tmpfs",
             _CONTAINER_TMPFS,
             "--volume",
-            f"{root}:/workspace:rw",
+            f"{root}:/workspace:{'ro' if request.task.kind == 'BEHAVIORAL' else 'rw'}",
             "--volume",
             f"{root / '.git'}:/workspace/.git:ro",
             "--workdir",

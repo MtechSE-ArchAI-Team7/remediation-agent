@@ -151,6 +151,18 @@ class PolicyEngine:
             if decision is not PolicyDecision.DENY:
                 decision = PolicyDecision.REQUIRE_APPROVAL
 
+        if any(item.scope == "POST_DEPLOYMENT" for item in plan.verification):
+            findings.append(
+                RiskFinding(
+                    code="POST_DEPLOYMENT_VERIFICATION",
+                    level=RiskLevel.MEDIUM,
+                    summary="Deferred acceptance checks require Agent 4 verification after deployment.",
+                )
+            )
+            if decision is not PolicyDecision.DENY:
+                decision = PolicyDecision.REQUIRE_APPROVAL
+                level = self._higher_level(level, RiskLevel.MEDIUM)
+
         if level is RiskLevel.PROHIBITED:
             decision = PolicyDecision.DENY
         elif level in {RiskLevel.HIGH, RiskLevel.MEDIUM} and decision is PolicyDecision.ALLOW:

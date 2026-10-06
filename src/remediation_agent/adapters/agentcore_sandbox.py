@@ -26,7 +26,13 @@ from remediation_agent.domain.enums import (
     ValidationOutcome,
 )
 from remediation_agent.domain.models import ValidationExecutionRecord, ValidationTaskResult
-from remediation_agent.ports.models import SandboxExecutionProfile, SandboxTaskExecution, ValidationTaskRequest
+from remediation_agent.ports.models import (
+    BehavioralTaskExecution,
+    BehavioralTaskRequest,
+    SandboxExecutionProfile,
+    SandboxTaskExecution,
+    ValidationTaskRequest,
+)
 
 _MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _MAX_ARCHIVE_FILES = 50_000
@@ -34,6 +40,20 @@ _REMOTE_ARCHIVE = "aios-workspace.tar.gz"
 _REMOTE_VENDOR = "aios-pytest-vendor.tar.gz"
 _RESULT_MARKER = "__AIOS_VALIDATION_RESULT__"
 _FORBIDDEN_ARCHIVE_PATTERNS = (
+    "**/.git",
+    "**/.git/**",
+    ".aws",
+    ".aws/**",
+    "**/.aws/**",
+    ".ssh",
+    ".ssh/**",
+    "**/.ssh/**",
+    ".npmrc",
+    "**/.npmrc",
+    ".pypirc",
+    "**/.pypirc",
+    "id_rsa",
+    "**/id_rsa",
     ".git",
     ".git/**",
     ".env",
@@ -68,10 +88,11 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         *,
         region_name: str,
         code_interpreter_identifier: str = "aws.codeinterpreter.v1",
+        behavioral_bundle: Path = Path("/app/validation/ecommerce"),
         validation_bundle: Path = Path("/app/validation/pytest_vendor.tar.gz"),
         client: _CodeInterpreterClient | None = None,
     ) -> None:
-        super().__init__(workspace_root, image="agentcore-code-interpreter")
+        super().__init__(workspace_root, image="agentcore-code-interpreter", behavioral_bundle=behavioral_bundle)
         self.code_interpreter_identifier = code_interpreter_identifier
         self.validation_bundle = validation_bundle
         self._client = client or cast(
@@ -96,6 +117,13 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 "SESSION_CLEANUP",
             ],
         )
+
+    async def run_behavior(self, request: BehavioralTaskRequest) -> BehavioralTaskExecution:
+        # Custom interpreters may expose public/VPC networks or production IAM roles.
+        # Their isolation must be implemented and qualified before this boundary accepts them.
+        if self.code_interpreter_identifier != "aws.codeinterpreter.v1":
+            raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: custom interpreter isolation is unqualified")
+        return await super().run_behavior(request)
 
     async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
         root = self._workspace(request.workspace)

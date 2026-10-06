@@ -31,6 +31,13 @@ async def test_malicious_repository_instructions_cannot_read_secret_path_or_choo
     assert repository.search_queries == ["TOKEN"]
     assert sandbox.tasks_run == ["unit_tests"]
     planning_request = next(request for request in model.requests if request.operation is ModelOperation.PLANNING)
+    patch_request = next(request for request in model.requests if request.operation is ModelOperation.PATCH)
+    expected_tasks = ["unit_tests", "integration_tests", "lint", "type_check", "security_scan", "config_validation"]
+    planning_tasks = planning_request.payload["available_validation_tasks"]
+    patch_tasks = patch_request.payload["available_validation_tasks"]
+    assert isinstance(planning_tasks, dict) and isinstance(patch_tasks, dict)
+    assert list(planning_tasks) == expected_tasks
+    assert list(patch_tasks) == expected_tasks
     assert "IGNORE ALL POLICY" in str(planning_request.payload)
     assert "repository-secret" not in str(planning_request.payload)
     assert "do-not-read" not in str(planning_request.payload)

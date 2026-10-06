@@ -1,0 +1,435 @@
+{
+  "$defs": {
+    "BehavioralCaseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "PASSED",
+            "ASSERTION_FAILED",
+            "SETUP_ERROR",
+            "SKIPPED"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "test_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Test Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "test_id",
+        "outcome"
+      ],
+      "title": "BehavioralCaseResult",
+      "type": "object"
+    },
+    "BehavioralEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "assertions_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Assertions Digest",
+          "type": "string"
+        },
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "base": {
+          "$ref": "#/$defs/BehavioralReport"
+        },
+        "base_commit": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "candidate": {
+          "$ref": "#/$defs/BehavioralReport"
+        },
+        "cleanup_succeeded": {
+          "title": "Cleanup Succeeded",
+          "type": "boolean"
+        },
+        "dependency_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Dependency Digest",
+          "type": "string"
+        },
+        "patch_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Patch Digest",
+          "type": "string"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "attempt",
+        "base_commit",
+        "patch_digest",
+        "assertions_digest",
+        "dependency_digest",
+        "base",
+        "candidate",
+        "cleanup_succeeded"
+      ],
+      "title": "BehavioralEvidence",
+      "type": "object"
+    },
+    "BehavioralReport": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/BehavioralCaseResult"
+          },
+          "maxItems": 200,
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        },
+        "runtime_digest": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Digest"
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "title": "BehavioralReport",
+      "type": "object"
+    },
+    "RequestContract": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "evidence_paths": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Evidence Paths",
+          "type": "array"
+        },
+        "example_body": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Example Body",
+          "type": "string"
+        },
+        "expected_responses": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Expected Responses",
+          "type": "array"
+        },
+        "field_types": {
+          "additionalProperties": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxProperties": 30,
+          "propertyNames": {
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "title": "Field Types",
+          "type": "object"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^/[^\\s?#]*$",
+          "title": "Path",
+          "type": "string"
+        },
+        "prerequisites": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Prerequisites",
+          "type": "array"
+        },
+        "state_changes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "State Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "content_type",
+        "expected_responses",
+        "evidence_paths"
+      ],
+      "title": "RequestContract",
+      "type": "object"
+    },
+    "VerificationCriterion": {
+      "additionalProperties": false,
+      "description": "A proposed mapping; only deterministic execution can establish coverage.",
+      "properties": {
+        "criterion_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Reason",
+          "type": "string"
+        },
+        "scope": {
+          "default": "LOCAL",
+          "enum": [
+            "LOCAL",
+            "POST_DEPLOYMENT"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "task_name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Name"
+        },
+        "test_ids": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Test Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "criterion_id"
+      ],
+      "title": "VerificationCriterion",
+      "type": "object"
+    },
+    "VerificationObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "enum": [
+            "FIX_DEMONSTRATED",
+            "INTRODUCED_REGRESSION",
+            "OBSERVED_BASELINE_FAILURE",
+            "PASSED_BOTH",
+            "INCONCLUSIVE"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        },
+        "test_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Test Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "test_id",
+        "classification"
+      ],
+      "title": "VerificationObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_commit": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Base Commit"
+    },
+    "behavioral_evidence": {
+      "items": {
+        "$ref": "#/$defs/BehavioralEvidence"
+      },
+      "maxItems": 120,
+      "title": "Behavioral Evidence",
+      "type": "array"
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/VerificationCriterion"
+      },
+      "maxItems": 20,
+      "title": "Coverage",
+      "type": "array"
+    },
+    "criteria": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 20,
+      "propertyNames": {
+        "maxLength": 200,
+        "minLength": 1
+      },
+      "title": "Criteria",
+      "type": "object"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 50,
+      "title": "Limitations",
+      "type": "array"
+    },
+    "locally_verified": {
+      "default": false,
+      "title": "Locally Verified",
+      "type": "boolean"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/VerificationObservation"
+      },
+      "maxItems": 10000,
+      "title": "Observations",
+      "type": "array"
+    },
+    "patch_digest": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Patch Digest"
+    },
+    "pending_agent4_checks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Pending Agent4 Checks",
+      "type": "array"
+    },
+    "request_contracts": {
+      "items": {
+        "$ref": "#/$defs/RequestContract"
+      },
+      "maxItems": 20,
+      "title": "Request Contracts",
+      "type": "array"
+    },
+    "run_id": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unresolved_risks": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 100,
+      "title": "Unresolved Risks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "title": "VerificationBriefV1",
+  "type": "object"
+}

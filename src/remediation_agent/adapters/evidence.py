@@ -35,6 +35,16 @@ class SecretRedactor:
             result = pattern.sub("[REDACTED]", result)
         return result
 
+    def redact_data(self, value: object) -> object:
+        """Redact values before JSON encoding so replacement never corrupts structure."""
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, dict):
+            return {key: self.redact_data(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self.redact_data(item) for item in value]
+        return value
+
 
 class AuditTrail:
     """Create a hash-chained in-state audit trail."""
@@ -132,7 +142,15 @@ class LocalArtifactStore:
                 raise ValueError(f"artifact path escapes run directory: {name}")
             target.parent.mkdir(parents=True, exist_ok=True)
             redacted = self.redactor.redact(content)
-            target.write_text(redacted, encoding="utf-8")
+            if name == "verification-brief.json":
+                try:
+                    with target.open("x", encoding="utf-8") as output:
+                        output.write(redacted)
+                except FileExistsError:
+                    if target.read_text(encoding="utf-8") != redacted:
+                        raise ValueError("verification brief is immutable within a run") from None
+            else:
+                target.write_text(redacted, encoding="utf-8")
             target.chmod(0o600)
             refs.append(
                 ArtifactRef(

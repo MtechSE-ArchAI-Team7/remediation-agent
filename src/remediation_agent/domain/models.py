@@ -201,12 +201,90 @@ class InspectionToolCallRecord(StrictModel):
     result_digest: NonEmptyStr
 
 
+class VerificationCriterion(StrictModel):
+    """A proposed mapping; only deterministic execution can establish coverage."""
+
+    criterion_id: IdentifierStr
+    scope: Literal["LOCAL", "POST_DEPLOYMENT"] = "LOCAL"
+    task_name: IdentifierStr | None = None
+    test_ids: list[IdentifierStr] = Field(default_factory=list, max_length=40)
+    reason: str = Field(default="", max_length=2000)
+
+
+class RequestContract(StrictModel):
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+    path: str = Field(min_length=1, max_length=500, pattern=r"^/[^\s?#]*$")
+    content_type: str = Field(min_length=1, max_length=100)
+    field_types: dict[IdentifierStr, IdentifierStr] = Field(default_factory=dict, max_length=30)
+    example_body: str = Field(default="", max_length=4000)
+    expected_responses: list[str] = Field(min_length=1, max_length=20)
+    state_changes: list[str] = Field(default_factory=list, max_length=20)
+    prerequisites: list[str] = Field(default_factory=list, max_length=20)
+    evidence_paths: list[RepositoryPathStr] = Field(min_length=1, max_length=20)
+
+
+class BehavioralCaseResult(StrictModel):
+    test_id: IdentifierStr
+    outcome: Literal["PASSED", "ASSERTION_FAILED", "SETUP_ERROR", "SKIPPED"]
+    detail: str = Field(default="", max_length=2000)
+
+
+class BehavioralReport(StrictModel):
+    cases: list[BehavioralCaseResult] = Field(min_length=1, max_length=200)
+    runtime_digest: IdentifierStr | None = None
+
+    @model_validator(mode="after")
+    def unique_tests(self) -> BehavioralReport:
+        if len({case.test_id for case in self.cases}) != len(self.cases):
+            raise ValueError("duplicate test IDs in behavioral report")
+        return self
+
+
+class BehavioralEvidence(StrictModel):
+    task_name: IdentifierStr
+    attempt: int = Field(ge=1)
+    base_commit: IdentifierStr
+    patch_digest: IdentifierStr
+    assertions_digest: IdentifierStr
+    dependency_digest: IdentifierStr
+    base: BehavioralReport
+    candidate: BehavioralReport
+    cleanup_succeeded: bool
+
+
+class VerificationObservation(StrictModel):
+    task_name: IdentifierStr
+    test_id: IdentifierStr
+    classification: Literal[
+        "FIX_DEMONSTRATED", "INTRODUCED_REGRESSION", "OBSERVED_BASELINE_FAILURE", "PASSED_BOTH", "INCONCLUSIVE"
+    ]
+
+
+class VerificationBriefV1(StrictModel):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: IdentifierStr
+    base_commit: str | None = None
+    patch_digest: str | None = None
+    criteria: dict[IdentifierStr, str] = Field(default_factory=dict, max_length=20)
+    coverage: list[VerificationCriterion] = Field(default_factory=list, max_length=20)
+    request_contracts: list[RequestContract] = Field(default_factory=list, max_length=20)
+    behavioral_evidence: list[BehavioralEvidence] = Field(default_factory=list, max_length=120)
+    locally_verified: bool = False
+    pending_agent4_checks: list[str] = Field(default_factory=list, max_length=20)
+    limitations: list[str] = Field(default_factory=list, max_length=50)
+    unresolved_risks: list[str] = Field(default_factory=list, max_length=100)
+    observations: list[VerificationObservation] = Field(default_factory=list, max_length=10000)
+
+
 class RemediationPlan(StrictModel):
     summary: NonEmptyStr
     steps: list[NonEmptyStr] = Field(min_length=1, max_length=20)
     target_paths: list[NonEmptyStr] = Field(min_length=1, max_length=20)
     proposed_validation_tasks: list[NonEmptyStr] = Field(min_length=1, max_length=10)
+    verification: list[VerificationCriterion] = Field(default_factory=list, max_length=20)
+    request_contracts: list[RequestContract] = Field(default_factory=list, max_length=20)
     rollback_strategy: NonEmptyStr
+    unresolved_requirements: list[str] = Field(default_factory=list, max_length=20)
     evidence_ids: list[NonEmptyStr] = Field(min_length=1)
 
 

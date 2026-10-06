@@ -12,6 +12,7 @@ from remediation_agent.domain.enums import ModelOperation, ValidationBackend
 from remediation_agent.domain.models import (
     ArtifactManifest,
     ArtifactRef,
+    BehavioralEvidence,
     CleanupResult,
     DraftPrMetadata,
     DraftPrPayload,
@@ -152,9 +153,21 @@ class SandboxExecutionProfile(StrictModel):
     enforced_controls: list[NonEmptyStr] = Field(min_length=1, max_length=20)
 
 
+class BehavioralTaskRequest(ValidationTaskRequest):
+    patch_digest: NonEmptyStr
+
+
+class BehavioralTaskExecution(StrictModel):
+    evidence: BehavioralEvidence
+    executions: list[SandboxTaskExecution] = Field(min_length=1, max_length=2)
+
+
 class SandboxTaskExecution(StrictModel):
     result: ValidationTaskResult
     execution: ValidationExecutionRecord
+
+
+BehavioralTaskExecution.model_rebuild()
 
 
 class ModelRequest(StrictModel):

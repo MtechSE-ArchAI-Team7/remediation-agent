@@ -47,7 +47,7 @@ OPERATIONAL_TOOL_CATALOG: Final[tuple[OperationalToolDescriptor, ...]] = (
     _tool(
         "mcp.get_repository_tree",
         "get_repository_tree",
-        "GitHubRemoteMcpInspectionTools",
+        "GitHubRemoteMcpInspectionTools / AgentCoreGatewayInspectionTools",
         Category.INSPECTION,
         Mode.MODEL_MCP,
         Effect.READ_ONLY,
@@ -61,7 +61,7 @@ OPERATIONAL_TOOL_CATALOG: Final[tuple[OperationalToolDescriptor, ...]] = (
     _tool(
         "mcp.get_file_contents",
         "get_file_contents",
-        "GitHubRemoteMcpInspectionTools",
+        "GitHubRemoteMcpInspectionTools / AgentCoreGatewayInspectionTools",
         Category.INSPECTION,
         Mode.MODEL_MCP,
         Effect.READ_ONLY,
@@ -75,7 +75,7 @@ OPERATIONAL_TOOL_CATALOG: Final[tuple[OperationalToolDescriptor, ...]] = (
     _tool(
         "mcp.search_code",
         "search_code",
-        "GitHubRemoteMcpInspectionTools",
+        "GitHubRemoteMcpInspectionTools / AgentCoreGatewayInspectionTools",
         Category.INSPECTION,
         Mode.MODEL_MCP,
         Effect.READ_ONLY,

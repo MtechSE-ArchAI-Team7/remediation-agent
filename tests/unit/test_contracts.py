@@ -35,6 +35,9 @@ from tests.conftest import diagnosis_handoff
 
 _OPENAI_CREDENTIAL_REFERENCE = "arn:aws:secretsmanager:ap-southeast-1:734849394833:secret:openai"
 _GATEWAY_ARN = "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju"
+_INSPECTION_GATEWAY_ARN = (
+    "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/aios-remediation-tool-gateway-abcdefghij"
+)
 
 
 def test_diagnosis_handoff_is_strict_and_versioned() -> None:
@@ -76,6 +79,17 @@ def test_ecommerce_demo_handoff_is_pinned_to_the_deployed_commit() -> None:
         "http://aios-ecommerce.ap-southeast-1.elasticbeanstalk.com/calculate-average/10/0"
     )
     assert "tests/calculate-average.test.js" in handoff.acceptance_criteria[3]
+
+
+def test_all_agent2_evaluation_handoffs_match_the_v1_contract() -> None:
+    handoff_root = Path(__file__).parents[2] / "config" / "evaluation" / "handoffs"
+
+    handoffs = [
+        DiagnosisHandoffV1.model_validate_json(path.read_text(encoding="utf-8"))
+        for path in sorted(handoff_root.glob("case-*.json"))
+    ]
+
+    assert [handoff.case_id for handoff in handoffs] == [f"EVAL-{number:02d}" for number in range(1, 11)]
 
 
 def test_diagnosis_rejects_unknown_evidence_reference() -> None:
@@ -261,6 +275,62 @@ def test_openai_gateway_settings_fail_closed(tmp_path: Path, overrides: dict[str
     values.update(overrides)
     with pytest.raises(ValidationError, match=message):
         Settings.model_validate(values)
+
+
+def test_inspection_gateway_settings_are_explicit_and_derive_exact_mcp_endpoint(tmp_path: Path) -> None:
+    direct = Settings(policy_file=tmp_path / "policy.json", llm_provider="fake", _env_file=None)  # type: ignore[call-arg]
+    gateway = Settings(
+        policy_file=tmp_path / "policy.json",
+        llm_provider="fake",
+        aws_region="ap-southeast-1",
+        inspection_mcp_mode="agentcore_gateway",
+        inspection_gateway_arn=_INSPECTION_GATEWAY_ARN,
+        _env_file=None,
+    )  # type: ignore[call-arg]
+
+    assert direct.inspection_mcp_mode == "github_direct"
+    assert gateway.inspection_gateway_endpoint() == (
+        "https://aios-remediation-tool-gateway-abcdefghij.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"inspection_gateway_arn": None}, "AIOS_INSPECTION_GATEWAY_ARN is required"),
+        ({"aws_region": None}, "AIOS_AWS_REGION is required"),
+        ({"inspection_gateway_arn": "not-an-arn"}, "valid AWS AgentCore gateway ARN"),
+        (
+            {
+                "inspection_gateway_arn": (
+                    "arn:aws:bedrock-agentcore:us-east-1:734849394833:gateway/aios-remediation-tool-gateway-abcdefghij"
+                )
+            },
+            "Region must match",
+        ),
+    ],
+)
+def test_inspection_gateway_settings_fail_closed(tmp_path: Path, overrides: dict[str, object], message: str) -> None:
+    values: dict[str, object] = {
+        "policy_file": tmp_path / "policy.json",
+        "llm_provider": "fake",
+        "aws_region": "ap-southeast-1",
+        "inspection_mcp_mode": "agentcore_gateway",
+        "inspection_gateway_arn": _INSPECTION_GATEWAY_ARN,
+    }
+    values.update(overrides)
+    with pytest.raises(ValidationError, match=message):
+        Settings.model_validate(values)
+
+
+def test_direct_inspection_rejects_stale_gateway_arn(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="requires AIOS_INSPECTION_MCP_MODE"):
+        Settings(
+            policy_file=tmp_path / "policy.json",
+            llm_provider="fake",
+            inspection_gateway_arn=_INSPECTION_GATEWAY_ARN,
+            _env_file=None,
+        )  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize("missing", ["github_token", "github_repository"])

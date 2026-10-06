@@ -13,6 +13,7 @@ from botocore.awsrequest import AWSRequest  # type: ignore[import-untyped]
 
 _SERVICE = "bedrock-agentcore"
 _RESPONSES_PATH = "/inference/v1/responses"
+_MCP_PATH = "/mcp"
 
 
 class _FrozenCredentials(Protocol):
@@ -38,8 +39,8 @@ class _Boto3CredentialProvider:
         return credentials  # type: ignore[no-any-return]
 
 
-class AgentCoreGatewaySigV4Auth(httpx.Auth):
-    """Sign only the one configured gateway Responses endpoint with fresh AWS credentials."""
+class _AgentCoreGatewaySigV4Auth(httpx.Auth):
+    """Sign one exact AgentCore Gateway endpoint with fresh AWS credentials."""
 
     requires_request_body = True
 
@@ -48,6 +49,8 @@ class AgentCoreGatewaySigV4Auth(httpx.Auth):
         *,
         base_url: str,
         region_name: str,
+        expected_base_path: str,
+        expected_request_path: str,
         credential_provider: _CredentialProvider | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
@@ -55,13 +58,14 @@ class AgentCoreGatewaySigV4Auth(httpx.Auth):
             raise ValueError("AgentCore gateway base URL must use an unqualified HTTPS origin")
         if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
             raise ValueError("AgentCore gateway base URL contains forbidden URL components")
-        if parsed.path.rstrip("/") != "/inference/v1":
-            raise ValueError("AgentCore gateway base URL must end in /inference/v1")
+        if parsed.path.rstrip("/") != expected_base_path:
+            raise ValueError(f"AgentCore gateway base URL must end in {expected_base_path}")
         expected_suffix = f".gateway.bedrock-agentcore.{region_name}.amazonaws.com"
         if not parsed.hostname.endswith(expected_suffix):
             raise ValueError("AgentCore gateway host does not match the configured AWS Region")
         self._origin = f"https://{parsed.hostname}"
         self._region_name = region_name
+        self._expected_request_path = expected_request_path
         self._credential_provider = credential_provider or _Boto3CredentialProvider(region_name)
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
@@ -98,5 +102,43 @@ class AgentCoreGatewaySigV4Auth(httpx.Auth):
             or request.headers.get("host") != expected_host
         ):
             raise ValueError("AgentCore gateway request target is not permitted")
-        if parsed.path != _RESPONSES_PATH or parsed.query or parsed.fragment:
+        if parsed.path != self._expected_request_path or parsed.query or parsed.fragment:
             raise ValueError("AgentCore gateway request path is not permitted")
+
+
+class AgentCoreGatewaySigV4Auth(_AgentCoreGatewaySigV4Auth):
+    """Sign only the configured OpenAI-compatible Responses endpoint."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        region_name: str,
+        credential_provider: _CredentialProvider | None = None,
+    ) -> None:
+        super().__init__(
+            base_url=base_url,
+            region_name=region_name,
+            expected_base_path="/inference/v1",
+            expected_request_path=_RESPONSES_PATH,
+            credential_provider=credential_provider,
+        )
+
+
+class AgentCoreMcpGatewaySigV4Auth(_AgentCoreGatewaySigV4Auth):
+    """Sign only the configured MCP endpoint."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        region_name: str,
+        credential_provider: _CredentialProvider | None = None,
+    ) -> None:
+        super().__init__(
+            base_url=base_url,
+            region_name=region_name,
+            expected_base_path=_MCP_PATH,
+            expected_request_path=_MCP_PATH,
+            credential_provider=credential_provider,
+        )

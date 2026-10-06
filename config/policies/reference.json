@@ -2,7 +2,9 @@
   "policy_id": "reference-v1",
   "version": "1.0",
   "repositories": {
-    "allowed_providers": ["GITHUB"],
+    "allowed_providers": [
+      "GITHUB"
+    ],
     "allowed_url_patterns": [
       "https://github.com/MtechSE-ArchAI-Team7/**"
     ]
@@ -89,23 +91,51 @@
   ],
   "validation_tasks": {
     "unit_tests": {
-      "argv": ["python", "-m", "pytest", "-q"],
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-q"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 300,
       "output_limit_bytes": 1048576,
-      "retryable": false
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "pytest",
+      "test_paths": [
+        "tests"
+      ]
     },
     "integration_tests": {
-      "argv": ["python", "-m", "pytest", "-m", "integration", "-q"],
+      "argv": [
+        "python",
+        "-m",
+        "pytest",
+        "-m",
+        "integration",
+        "-q"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 300,
       "output_limit_bytes": 1048576,
-      "retryable": false
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "pytest",
+      "test_paths": [
+        "tests"
+      ]
     },
     "lint": {
-      "argv": ["python", "-m", "ruff", "check", "."],
+      "argv": [
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 120,
@@ -113,7 +143,11 @@
       "retryable": false
     },
     "type_check": {
-      "argv": ["python", "-m", "mypy"],
+      "argv": [
+        "python",
+        "-m",
+        "mypy"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 180,
@@ -121,7 +155,14 @@
       "retryable": false
     },
     "security_scan": {
-      "argv": ["python", "-m", "bandit", "-q", "-r", "src"],
+      "argv": [
+        "python",
+        "-m",
+        "bandit",
+        "-q",
+        "-r",
+        "src"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 180,
@@ -129,7 +170,12 @@
       "retryable": false
     },
     "config_validation": {
-      "argv": ["python", "-m", "json.tool", "config/service.json"],
+      "argv": [
+        "python",
+        "-m",
+        "json.tool",
+        "config/service.json"
+      ],
       "cwd": ".",
       "environment": {},
       "timeout_seconds": 60,
@@ -139,12 +185,26 @@
   },
   "mandatory_tasks": [
     {
-      "path_patterns": ["src/**", "tests/**", "*.py"],
-      "task_names": ["unit_tests"]
+      "path_patterns": [
+        "src/**",
+        "tests/**",
+        "*.py"
+      ],
+      "task_names": [
+        "unit_tests"
+      ]
     },
     {
-      "path_patterns": ["config/**", "*.json", "*.yaml", "*.yml", "*.toml"],
-      "task_names": ["config_validation"]
+      "path_patterns": [
+        "config/**",
+        "*.json",
+        "*.yaml",
+        "*.yml",
+        "*.toml"
+      ],
+      "task_names": [
+        "config_validation"
+      ]
     }
   ],
   "artifacts": {

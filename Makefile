@@ -1,4 +1,4 @@
-.PHONY: sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted evaluate-judge evaluate-memory evaluate-memory-hosted evaluate-memory-judge memory-seed assessment-report build docker-build agentcore-docker-build sandbox-build db-up db-init db-down
+.PHONY: validation-bundle sync lint format format-check typecheck test test-model-live test-mcp test-mcp-live test-tool-gateway-live test-integration test-sandbox-integration test-code-interpreter-live security schemas openapi tool-catalog evaluate evaluate-hosted evaluate-judge evaluate-memory evaluate-memory-hosted evaluate-memory-judge memory-seed assessment-report build docker-build agentcore-docker-build sandbox-build db-up db-init db-down
 
 UV_CACHE_DIR ?= /tmp/aios-remediation-uv-cache
 export UV_CACHE_DIR
@@ -30,14 +30,17 @@ test-mcp:
 test-mcp-live:
 	uv run pytest -m live_mcp tests/mcp/test_repository_mcp.py
 
+test-tool-gateway-live:
+	AIOS_RUN_AGENTCORE_TOOL_GATEWAY_LIVE=1 uv run pytest -m live_mcp tests/integration/test_agentcore_tool_gateway_live.py
+
 test-integration:
 	uv run pytest -m integration
 
-test-sandbox-integration: sandbox-build
-	uv run pytest -m integration tests/integration/test_docker_sandbox.py
+test-sandbox-integration: sandbox-build validation-bundle
+	uv run pytest -m integration tests/integration/test_docker_sandbox.py tests/integration/test_purchase_behavior.py
 
 test-code-interpreter-live:
-	AIOS_RUN_CODE_INTERPRETER_LIVE=1 uv run pytest -m live_code_interpreter tests/integration/test_agentcore_code_interpreter_live.py
+	AIOS_RUN_CODE_INTERPRETER_LIVE=1 uv run pytest -m live_code_interpreter tests/integration/test_agentcore_code_interpreter_live.py tests/integration/test_purchase_behavior.py
 
 security:
 	uv run bandit -q -r src
@@ -97,3 +100,8 @@ db-init:
 
 db-down:
 	docker compose down
+
+# Export a host-platform bundle for local Docker qualification; hosted image builds its own Linux bundle.
+validation-bundle:
+	rm -rf .artifacts/validation/ecommerce
+	docker buildx build -f docker/validation-bundle.Dockerfile --target validation-export --output type=local,dest=.artifacts/validation/ecommerce .

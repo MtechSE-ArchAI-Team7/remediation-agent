@@ -9,6 +9,7 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from typing import Literal
 from urllib.parse import urlsplit
 
 from langchain_core.messages import AIMessage, BaseMessage
@@ -28,6 +29,9 @@ from remediation_agent.domain.enums import (
 )
 from remediation_agent.domain.models import (
     ArtifactManifest,
+    BehavioralCaseResult,
+    BehavioralEvidence,
+    BehavioralReport,
     CleanupResult,
     DraftPrMetadata,
     GetFileContentsArgs,
@@ -51,6 +55,8 @@ from remediation_agent.ports.models import (
     ArtifactReadResult,
     ArtifactWriteRequest,
     AuditWriteRequest,
+    BehavioralTaskExecution,
+    BehavioralTaskRequest,
     BranchRequest,
     BranchResult,
     CommitRequest,
@@ -535,8 +541,10 @@ class FakeSandboxExecutor:
         cleanup_succeeds: bool = True,
         repository: FakeRepository | None = None,
         tampered_diff: str | None = None,
+        apply_failures: Sequence[str] | None = None,
     ) -> None:
         self._outcomes = {name: deque(values) for name, values in (task_outcomes or {}).items()}
+        self._apply_failures = deque(apply_failures or ())
         self.applied_patches: list[str] = []
         self.restores = 0
         self.tasks_run: list[str] = []
@@ -554,6 +562,8 @@ class FakeSandboxExecutor:
 
     async def apply_patch(self, request: PatchApplyRequest) -> PatchApplyResult:
         self.applied_patches.append(request.unified_diff)
+        if self._apply_failures:
+            raise RuntimeError(self._apply_failures.popleft())
         if self.repository:
             self.repository.current_diff_value = request.unified_diff
         return PatchApplyResult(applied=True, detail="Fake patch applied.")
@@ -592,6 +602,29 @@ class FakeSandboxExecutor:
                 outcome=result.outcome,
                 duration_ms=result.duration_ms,
             ),
+        )
+
+    async def run_behavior(self, request: BehavioralTaskRequest) -> BehavioralTaskExecution:
+        result = await self.run_task(request)
+        outcome: Literal["PASSED", "ASSERTION_FAILED"] = (
+            "PASSED" if result.result.outcome is ValidationOutcome.PASSED else "ASSERTION_FAILED"
+        )
+        ids = request.task.required_test_ids or ["regression"]
+        return BehavioralTaskExecution(
+            evidence=BehavioralEvidence(
+                task_name=request.task_name,
+                attempt=request.attempt,
+                base_commit=request.workspace.base_commit,
+                patch_digest=request.patch_digest,
+                assertions_digest=_digest("fake-assertions"),
+                dependency_digest=_digest("fake-dependencies"),
+                base=BehavioralReport(
+                    cases=[BehavioralCaseResult(test_id=name, outcome="ASSERTION_FAILED") for name in ids]
+                ),
+                candidate=BehavioralReport(cases=[BehavioralCaseResult(test_id=name, outcome=outcome) for name in ids]),
+                cleanup_succeeded=True,
+            ),
+            executions=[result],
         )
 
     async def collect_artifacts(self, workspace: WorkspaceRef) -> ArtifactManifest:

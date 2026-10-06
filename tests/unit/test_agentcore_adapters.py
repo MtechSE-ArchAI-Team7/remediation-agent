@@ -504,3 +504,31 @@ async def test_code_interpreter_rejects_workspace_symlinks_before_cloud_call(tmp
         )
 
     assert fake.invocations == []
+
+
+async def test_behavioral_validation_refuses_unqualified_custom_interpreter(tmp_path: Path) -> None:
+    from remediation_agent.ports.models import BehavioralTaskRequest
+
+    fake = _FakeCodeInterpreter()
+    sandbox = AgentCoreCodeInterpreterSandbox(
+        tmp_path,
+        region_name="ap-southeast-1",
+        client=fake,
+        code_interpreter_identifier="custom-public-interpreter",
+    )
+    with pytest.raises(SandboxError, match="custom interpreter isolation is unqualified"):
+        await sandbox.run_behavior(
+            BehavioralTaskRequest(
+                workspace=WorkspaceRef(workspace_id="proof", path=str(tmp_path / "snapshot"), base_commit="a" * 40),
+                task_name="purchase_regression",
+                patch_digest="sha256:fixture",
+                task=ValidationTaskConfig(
+                    argv=["node"],
+                    kind="BEHAVIORAL",
+                    profile="ecommerce_purchase",
+                    timeout_seconds=60,
+                    output_limit_bytes=4096,
+                ),
+            )
+        )
+    assert not fake.invocations

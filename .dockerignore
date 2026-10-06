@@ -17,3 +17,6 @@ pip-audit.json
 .env
 .env.*
 demo-ui
+.artifacts
+.workspaces
+validation/ecommerce/node_modules

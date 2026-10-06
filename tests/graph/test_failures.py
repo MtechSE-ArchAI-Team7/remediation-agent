@@ -61,6 +61,43 @@ async def test_deferred_workflow_never_creates_workspace_or_calls_model() -> Non
     assert not sandbox.destroyed
 
 
+@pytest.mark.parametrize(
+    "remediation_type",
+    [
+        RemediationType.ACCOUNT_UNLOCK,
+        RemediationType.PASSWORD_RESET,
+        RemediationType.ACCESS_PROVISIONING,
+        RemediationType.PRIVILEGED_ACCESS,
+        RemediationType.PRODUCTION_CHANGE,
+    ],
+)
+async def test_human_only_agent2_scenarios_return_typed_terminal_status(
+    remediation_type: RemediationType,
+) -> None:
+    service, model, repository, sandbox, _, _, _ = build_test_service({})
+
+    result = await service.start(diagnosis_handoff(remediation_type=remediation_type))
+
+    assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
+    assert not repository.created
+    assert not model.requests
+    assert not sandbox.destroyed
+
+
+@pytest.mark.parametrize("remediation_type", [RemediationType.SOFTWARE_REQUEST, RemediationType.OTHER])
+async def test_unsupported_agent2_scenarios_return_typed_terminal_status(
+    remediation_type: RemediationType,
+) -> None:
+    service, model, repository, sandbox, _, _, _ = build_test_service({})
+
+    result = await service.start(diagnosis_handoff(remediation_type=remediation_type))
+
+    assert result.status is FinalStatus.UNSUPPORTED_REMEDIATION_TYPE
+    assert not repository.created
+    assert not model.requests
+    assert not sandbox.destroyed
+
+
 async def test_disallowed_repository_fails_closed_before_inspection() -> None:
     responses = scripted_responses()
     service, model, repository, _, _, _, _ = build_test_service(responses)

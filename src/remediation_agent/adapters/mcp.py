@@ -27,6 +27,7 @@ from mcp.types import (
 )
 from pydantic import Field
 
+from remediation_agent.adapters.agentcore_gateway import AgentCoreMcpGatewaySigV4Auth
 from remediation_agent.adapters.evidence import SecretRedactor
 from remediation_agent.domain.enums import InspectionToolStatus, PolicyDecision, RepositoryProvider
 from remediation_agent.domain.models import (
@@ -45,6 +46,8 @@ GITHUB_MCP_ENDPOINT = "https://api.githubcopilot.com/mcp/"
 INSPECTION_MCP_TOOL_NAMES = frozenset({"get_repository_tree", "get_file_contents", "search_code"})
 COMMIT_PINNED_MCP_TOOL_NAMES = frozenset({"get_repository_tree", "get_file_contents"})
 _GITHUB_MCP_TOOL_HEADER = "get_repository_tree,get_file_contents,search_code"
+_AGENTCORE_GATEWAY_TARGET_NAME = "GitHubInspection"
+_AGENTCORE_GATEWAY_TOOL_PREFIX = f"{_AGENTCORE_GATEWAY_TARGET_NAME}___"
 
 _EXPECTED_ARGUMENTS = {
     "get_repository_tree": {"owner", "repo", "tree_sha", "recursive", "path_filter"},
@@ -111,7 +114,9 @@ class GitHubRemoteMcpInspectionTools:
     def __init__(self, token: str, policy: PolicyEngine) -> None:
         if not token:
             raise ValueError("GitHub MCP token must not be empty")
-        self._token = token
+        self._authorization_token: str | None = token
+        self._endpoint = GITHUB_MCP_ENDPOINT
+        self._http_auth: httpx.Auth | None = None
         self.policy = policy
         self.redactor = SecretRedactor()
         self.startup_timeout_seconds = policy.config.limits.max_mcp_tool_timeout_seconds
@@ -127,12 +132,13 @@ class GitHubRemoteMcpInspectionTools:
         try:
             async with httpx.AsyncClient(
                 headers=self._headers(),
+                auth=self._http_auth,
                 timeout=float(self.startup_timeout_seconds),
                 verify=True,
                 follow_redirects=False,
                 trust_env=False,
             ) as http_client:
-                async with streamable_http_client(GITHUB_MCP_ENDPOINT, http_client=http_client) as (read, write, _):
+                async with streamable_http_client(self._endpoint, http_client=http_client) as (read, write, _):
                     async with ClientSession(read, write) as client:
                         async with asyncio.timeout(self.startup_timeout_seconds):
                             await client.initialize()
@@ -149,8 +155,10 @@ class GitHubRemoteMcpInspectionTools:
             raise RuntimeError(f"GitHub MCP session failed: {_mcp_failure_code(exc)}") from exc
 
     def _headers(self) -> dict[str, str]:
+        if self._authorization_token is None:
+            raise RuntimeError("GitHub MCP authorization token is unavailable")
         return {
-            "Authorization": f"Bearer {self._token}",
+            "Authorization": f"Bearer {self._authorization_token}",
             "X-MCP-Tools": _GITHUB_MCP_TOOL_HEADER,
             "X-MCP-Readonly": "true",
             "X-MCP-Lockdown": "true",
@@ -224,7 +232,7 @@ class GitHubRemoteMcpInspectionTools:
             if path_filter is not None:
                 arguments["path_filter"] = path_filter
             try:
-                result = await client.call_tool("get_repository_tree", arguments)
+                result = await client.call_tool(self._upstream_tool_name("get_repository_tree"), arguments)
                 response = self._normalize_tree(result, target, requested_path)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 response = self._failed("GITHUB_MCP_TOOL_FAILED", type(exc).__name__)
@@ -259,7 +267,7 @@ class GitHubRemoteMcpInspectionTools:
                 "fields": _SAFE_DIRECTORY_FIELDS,
             }
             try:
-                result = await client.call_tool("get_file_contents", arguments)
+                result = await client.call_tool(self._upstream_tool_name("get_file_contents"), arguments)
                 response = self._normalize_file_or_directory(result, requested_path)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 response = self._failed("GITHUB_MCP_TOOL_FAILED", type(exc).__name__)
@@ -288,7 +296,7 @@ class GitHubRemoteMcpInspectionTools:
             if order is not None:
                 arguments["order"] = order
             try:
-                result = await client.call_tool("search_code", arguments)
+                result = await client.call_tool(self._upstream_tool_name("search_code"), arguments)
                 response = self._normalize_search(result, target, workspace, query)
             except (OSError, RuntimeError, TypeError, ValueError) as exc:
                 response = self._failed("GITHUB_MCP_TOOL_FAILED", type(exc).__name__)
@@ -319,6 +327,10 @@ class GitHubRemoteMcpInspectionTools:
                 response_format="content_and_artifact",
             ),
         ]
+
+    @staticmethod
+    def _upstream_tool_name(name: str) -> str:
+        return name
 
     def _target_rejection(self, owner: str, repo: str, target: _GitHubTarget) -> InspectionToolResponse | None:
         if owner != target.owner or repo != target.repo:
@@ -526,6 +538,50 @@ class GitHubRemoteMcpInspectionTools:
             error_code=code,
             detail=self.redactor.redact(detail),
         )
+
+
+class AgentCoreGatewayInspectionTools(GitHubRemoteMcpInspectionTools):
+    """Expose the same bounded GitHub tools through one IAM-authenticated AgentCore Gateway."""
+
+    def __init__(
+        self,
+        gateway_endpoint: str,
+        region_name: str,
+        policy: PolicyEngine,
+    ) -> None:
+        self._authorization_token = None
+        self._endpoint = gateway_endpoint
+        self._http_auth = AgentCoreMcpGatewaySigV4Auth(
+            base_url=gateway_endpoint,
+            region_name=region_name,
+        )
+        self.policy = policy
+        self.redactor = SecretRedactor()
+        self.startup_timeout_seconds = policy.config.limits.max_mcp_tool_timeout_seconds
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "X-MCP-Tools": _GITHUB_MCP_TOOL_HEADER,
+            "X-MCP-Readonly": "true",
+            "X-MCP-Lockdown": "true",
+        }
+
+    @staticmethod
+    def _validate_tools(tools: Sequence[BaseTool]) -> None:
+        expected_names = {_AGENTCORE_GATEWAY_TOOL_PREFIX + name for name in INSPECTION_MCP_TOOL_NAMES}
+        by_name = {tool.name: tool for tool in tools}
+        if len(tools) != len(expected_names) or set(by_name) != expected_names:
+            raise RuntimeError("AgentCore Gateway exposed an unexpected inspection tool set")
+        for native_name, expected_arguments in _EXPECTED_ARGUMENTS.items():
+            gateway_name = _AGENTCORE_GATEWAY_TOOL_PREFIX + native_name
+            if set(by_name[gateway_name].args) != expected_arguments:
+                raise RuntimeError(f"AgentCore Gateway tool has an unexpected argument schema: {native_name}")
+
+    @staticmethod
+    def _upstream_tool_name(name: str) -> str:
+        if name not in INSPECTION_MCP_TOOL_NAMES:
+            raise ValueError("unsupported inspection tool name")
+        return _AGENTCORE_GATEWAY_TOOL_PREFIX + name
 
 
 def _truncate_utf8(value: str, max_bytes: int) -> tuple[str, bool]:

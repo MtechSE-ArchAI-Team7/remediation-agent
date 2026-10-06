@@ -263,6 +263,100 @@
       "title": "RepositoryRules",
       "type": "object"
     },
+    "RequestContract": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "evidence_paths": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Evidence Paths",
+          "type": "array"
+        },
+        "example_body": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Example Body",
+          "type": "string"
+        },
+        "expected_responses": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Expected Responses",
+          "type": "array"
+        },
+        "field_types": {
+          "additionalProperties": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxProperties": 30,
+          "propertyNames": {
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "title": "Field Types",
+          "type": "object"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^/[^\\s?#]*$",
+          "title": "Path",
+          "type": "string"
+        },
+        "prerequisites": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Prerequisites",
+          "type": "array"
+        },
+        "state_changes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "State Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "content_type",
+        "expected_responses",
+        "evidence_paths"
+      ],
+      "title": "RequestContract",
+      "type": "object"
+    },
     "ValidationTaskConfig": {
       "additionalProperties": false,
       "properties": {
@@ -290,15 +384,79 @@
           "title": "Environment",
           "type": "object"
         },
+        "kind": {
+          "default": "STATIC",
+          "enum": [
+            "STATIC",
+            "BEHAVIORAL"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
         "output_limit_bytes": {
           "exclusiveMinimum": 0,
           "title": "Output Limit Bytes",
           "type": "integer"
         },
+        "profile": {
+          "anyOf": [
+            {
+              "enum": [
+                "pytest",
+                "node_test",
+                "ecommerce_purchase"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile"
+        },
+        "request_contract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestContract"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "required_evidence_paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Required Evidence Paths",
+          "type": "array"
+        },
+        "required_test_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Required Test Ids",
+          "type": "array"
+        },
         "retryable": {
           "default": false,
           "title": "Retryable",
           "type": "boolean"
+        },
+        "test_paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Test Paths",
+          "type": "array"
         },
         "timeout_seconds": {
           "exclusiveMinimum": 0,

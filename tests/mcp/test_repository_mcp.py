@@ -385,6 +385,7 @@ async def test_session_uses_streamable_http_and_closes(
     assert observed["url"] == GITHUB_MCP_ENDPOINT
     assert observed["http_arguments"] == {
         "headers": _provider()._headers(),  # noqa: SLF001 - transport security contract
+        "auth": None,
         "timeout": 30.0,
         "verify": True,
         "follow_redirects": False,

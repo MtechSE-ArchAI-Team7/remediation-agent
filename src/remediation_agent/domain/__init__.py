@@ -9,7 +9,7 @@ from remediation_agent.domain.enums import (
     RiskLevel,
     ValidationOutcome,
 )
-from remediation_agent.domain.models import DiagnosisHandoffV1, RemediationHandoffV1
+from remediation_agent.domain.models import DiagnosisHandoffV1, RemediationHandoffV1, VerificationBriefV1
 
 __all__ = [
     "ApprovalStatus",
@@ -21,4 +21,5 @@ __all__ = [
     "RemediationType",
     "RiskLevel",
     "ValidationOutcome",
+    "VerificationBriefV1",
 ]

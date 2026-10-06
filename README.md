@@ -44,7 +44,7 @@ flowchart LR
     Intake --> Analysis["Analysis workflow subgraph"]
     Analysis --> Workspace["Create immutable-base workspace"]
     Workspace --> Memory["Retrieve advisory incident summaries"]
-    Memory --> Inspect["Model ↔ GitHub hosted MCP inspection loop"]
+    Memory --> Inspect["Model ↔ GitHub MCP inspection (direct or AgentCore Gateway)"]
     Inspect --> Plan["Create structured remediation plan"]
     Plan --> Risk["Policy and risk assessment"]
     Risk -->|sensitive| Approval["Checkpointed approval interrupt"]
@@ -52,11 +52,16 @@ flowchart LR
     Approval -->|approved| Repair
     Approval -->|rejected| Evidence["Evidence and final result"]
     Repair --> Apply["Preflight and apply full patch"]
-    Apply --> Validate["Run configured task names"]
+    Apply --> Coverage["Check criterion coverage and capabilities"]
+    Coverage -->|complete| Validate["Same assertions on isolated base and candidate"]
+    Coverage -->|gap| Human["Human action required"]
+    Human --> Evidence
     Validate -->|failed; attempts remain| Reset["Restore immutable base"]
     Reset --> Repair
     Validate -->|passed or exhausted| Evidence
-    Evidence --> Draft["Prepare draft-PR payload"]
+    Validate -->|setup gap or no reproduction| Human
+    Evidence -->|behavior demonstrated| Draft["Prepare draft-PR payload"]
+    Evidence -->|blocked or failed| Cleanup
     Draft --> Cleanup["Destroy disposable workspace"]
     Cleanup --> Store["Admit eligible incident summary"]
     Store --> Artifact["Authoritative remediation handoff"]
@@ -68,18 +73,99 @@ The lifecycle is:
 1. Validate the versioned handoff, evidence references, remediation type, and repository policy.
 2. Create and checkpoint a disposable workspace at the immutable base commit.
 3. Optionally retrieve up to three recent, high-confidence incident summaries from a host-derived repository namespace. These untrusted suggestions are supplied only to inspection and never become current evidence or authority.
-4. Start a run-scoped Streamable HTTP session with GitHub's fixed hosted MCP endpoint. The model adaptively calls one bounded tree, file-read, search, or local finish tool per round through `ToolNode`.
+4. Start a run-scoped Streamable HTTP session through either the default fixed GitHub endpoint or the optional
+   IAM-authenticated AgentCore Gateway. The model adaptively calls one bounded tree, file-read, search, or local finish
+   tool per round through `ToolNode`.
 5. Require at least one successful commit-pinned tree or file call, reconstruct a typed `InspectionPlan` from validated call history, then close the transient session. Search results are locator hints and are not persisted as planning evidence.
 6. Ask the model for a structured remediation plan and risk observations; deterministic policy owns the final decision.
 7. Interrupt for approval when the plan or exact patch crosses an approval boundary.
 8. Ask the model for a complete unified patch, parse and preflight it, and apply it only inside a disposable workspace.
-9. Resolve proposed validation names through operator policy and run their fixed argument arrays in Docker locally or Code Interpreter when hosted.
-10. Evaluate results deterministically. Failed attempts restart from the immutable base and stop at the configured limit.
+9. Build a verification contract from Agent 2's acceptance criteria and select named tasks from that contract and
+   operator policy, independently of which test files the patch changes. Static checks never establish behavioral
+   coverage. Run identical focused assertions against isolated base and candidate snapshots. Every local criterion
+   must have executed coverage, and at least one mapped assertion must fail on the base and pass on the candidate.
+10. Evaluate results deterministically. Missing capabilities, skipped/missing tests, setup failures, incompatible
+    request contracts, and unreproduced diagnoses return `HUMAN_ACTION_REQUIRED`. Executed assertion failures and
+    ordinary Git applicability mismatches consume the same
+    bounded repair-attempt budget, restart from the immutable base, and stop at the configured limit. Applicability
+    retries never relax patch anchoring with `--unidiff-zero`.
 11. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
 12. After successful cleanup, optionally store only a bounded `AUTO_VALIDATED` incident summary when both write gates permit it. Storage failure never changes a successful remediation result.
 
 Model output never decides whether validation passed, lowers policy severity, supplies executable command strings, or
 calls workspace mutation, sandbox, Git, GitHub, artifact, approval, checkpoint, credential, or cleanup operations.
+
+## Behavioral verification and Agent 4 handoff
+
+Agent 2's `DiagnosisHandoffV1` supplies the diagnosis, evidence and acceptance criteria. Agent 3 never retrieves Jira
+content to define its tests. Criterion IDs combine their position and content digest (`AC-01-…`); every criterion is
+mapped exactly once in the structured plan. `LOCAL` is the default. `POST_DEPLOYMENT` requires an explicit reason and
+plan approval, remains pending in the brief, and never counts as a local pass. At least one local reproduction is
+required. Missing or contradictory requirements block the run instead of inventing an endpoint or narrowing scope.
+
+Operator task metadata distinguishes `STATIC` from `BEHAVIORAL`. Behavioral tasks use a fixed `pytest`, `node_test`,
+or `ecommerce_purchase` profile, explicit test paths/IDs, and any required inspection paths/request contract. The host
+constructs the runner arguments; model-visible capabilities omit executable argv and environment values. The contract,
+pinned source evidence, base SHA and capabilities reach planning, risk, patch and revision. Tests changed by a patch
+still require the existing exact-diff approval. Regression assertion digests cannot change during a repair loop.
+
+Unknown tasks, missing/zero/skipped tests, malformed reports, setup/import errors, unsupported dependencies, inconsistent
+test identities and failed cleanup cannot qualify. Reports come from the executor and trusted reporters. A passing base
+with a passing candidate is insufficient reproduction. Genuine candidate assertions enter the existing clean-base repair
+loop; exhaustion returns `VALIDATION_FAILED`. Both blocked and exhausted runs retain patch/failure evidence and clean up
+without preparing a PR or storing successful incident memory. Old completed v1 records remain readable; an old in-flight
+run lacking behavioral evidence cannot use its previous validation pass to prepare a PR.
+
+`verification-brief.json` is exported as `VerificationBriefV1`, linked through the existing digest-verified artifact
+manifest. It records every criterion, request examples and fixtures, base/candidate reports, assertion/dependency digests,
+limitations, unresolved risks and pending Agent 4 checks. A readable version appears in the PR. Observations distinguish
+fixed assertions, introduced regressions and baseline failures; an observed baseline failure does not automatically prove
+that it is unrelated. Risk approval is recorded separately and never erases findings. Unrelated headers/cookies findings
+do not expand the patch; mandatory operator security tasks still apply. Agent 4 remains independent. Both v1 handoff
+wire formats are unchanged.
+
+### Offline purchase profile and qualification
+
+The purchase profile runs the repository's `server.js` and `lib/` with its actual Express middleware, initialization SQL
+and native sqlite3 driver over loopback, with a fresh disposable `ecommerce.db` per case. It requires inspection of
+`server.js`, `schema.sql`, `seed.sql`, `public/app.js`, and `package.json`. Its published contract is **POST `/purchase`**,
+`application/json`, numeric safe-integer `productId` and positive safe-integer `quantity`; it rejects string fields and
+form encoding. `/checkout` is a different route. If Agent 2 requires a different contract, this profile is incompatible:
+add/review an appropriate operator profile instead of changing expectations to get a pass.
+
+Eight fixed cases exercise below/equal/above stock, invalid and malformed JSON/string inputs, form rejection, unknown
+products, persisted decrements, restart persistence, and concurrent purchases without overselling. Existing response
+shapes are asserted. Fixtures initialize product 1 to stock 10 and run only in disposable copies. Databases and logs never
+enter the reviewed diff. Child process groups are terminated on timeout, container/session cleanup is required, and source,
+test and runner digests are checked. Docker mounts behavioral source and trusted assets read-only; only temporary fixture
+files are writable. Resource limits, non-root execution, no external network, credential exclusion and output caps remain.
+
+Dependencies resolve **only at operator build time**, from `validation/ecommerce/package-lock.json`. The dedicated build
+packages Node and native dependencies, seals every file in a manifest, and smoke-loads Express/sqlite3/bcrypt. Runtime checks
+verify platform and all file digests before execution. A mismatched ABI/library, absent asset, unexpected file or startup
+failure becomes a capability gap. There is no package installation or syntax fallback during a remediation run.
+
+```bash
+make test-sandbox-integration  # builds image and clean offline bundle; runs Docker + purchase qualification
+# Explicitly opt-in, with operator credentials and an already-built compatible Linux bundle:
+AIOS_AWS_REGION=ap-southeast-1 AIOS_BEHAVIORAL_BUNDLE=/path/to/qualified/bundle make test-code-interpreter-live
+```
+
+The hosted image packages a separate Linux/amd64 dependency bundle for Code Interpreter, independently of AgentCore
+Runtime's architecture. `CODE_INTERPRETER_PLATFORM` can be overridden at image build time after qualification. This is
+an environment assumption checked at execution, not a claim that all managed environments support this bundle. The live
+qualification is excluded from default tests and must pass in the actual configured environment before release.
+[AWS's preinstalled libraries](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-preinstalled-libraries.html)
+do not list Express or sqlite3 among the Node packages. The packaged native dependencies are necessary. Code Interpreter's
+managed isolation is not Docker's `--network none`; its system sandbox allows limited AWS-service networking. Custom public
+or VPC interpreters are not qualified by this profile. Never attach production resources or credentials to validation.
+
+Generated tests remain reviewable, untrusted code. Structured reporting proves execution and reproduction, not semantic
+correctness of arbitrary generated assertions. The purchase suite's operator-owned assertions supply independent coverage.
+The legacy application dependency versions are pinned for compatibility and are not a recommendation for production use;
+updating application dependencies or repairing unrelated security findings is a separately scoped change. Native/runtime
+compatibility, bundle provenance and provider isolation require operator qualification. No Agent 4, UI or deployment changes
+are needed to consume the supplemental brief.
 
 ## Capabilities and tool boundary
 
@@ -95,11 +181,11 @@ keeps a versioned presentation snapshot of this response and updates it alongsid
 
 | Capability | Typed boundary | Current implementation and controls |
 |---|---|---|
-| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects only to GitHub's hosted read-only MCP endpoint. Repository identity, immutable SHA, paths, search scope, schemas, redaction, and output bounds are enforced by the host adapter. |
+| Repository inspection | `InspectionToolProvider` / `RepositoryInspectionPort` | `GitHubRemoteMcpInspectionTools` connects directly by default; `AgentCoreGatewayInspectionTools` optionally signs the exact derived `/mcp` Gateway endpoint with fresh SigV4 credentials. Both expose only the same three native names and preserve repository identity, immutable SHA, path, search, schema, redaction, output, and call-budget controls. |
 | Workspace and Git mutation | `RepositoryWorkspacePort` | `LocalGitRepository` creates the immutable-base workspace and performs diff, branch, commit, and push operations using fixed argument arrays. These operations are never model-callable. |
 | Patch and validation | `SandboxExecutor` | `DockerSandboxExecutor` is used locally; `AgentCoreCodeInterpreterSandbox` retains the patch boundary and validates a sanitized copy in an isolated managed session. |
 | Structured model inference | `StructuredModel` | Provider adapters normalize one inspection tool call per turn and return Pydantic-validated plan, risk, patch, and revision objects with bounded retries and recorded metadata. |
-| Pull-request handling | `PullRequestProvider` | A deterministic draft payload is always prepared; authenticated GitHub draft creation is separately gated and merge is unavailable. |
+| Pull-request handling | `PullRequestProvider` | A deterministic draft payload is prepared only after qualifying behavioral evidence; authenticated GitHub draft creation is separately gated and merge is unavailable. |
 | Evidence and audit | `ArtifactStore`, `ArtifactReader`, `AuditSink` | Local files or immutable digest-addressed S3 objects hold redacted artifacts and hash-chained audit events. Preview reads are manifest-selected, session-scoped, bounded, and digest-verified. |
 | Resume and approval state | LangGraph checkpointer | Interrupt state is keyed by the run UUID and encrypted before PostgreSQL or AgentCore Memory persistence. |
 | Advisory incident history | `IncidentMemoryPort` | Disabled, fake, and AgentCore adapters retrieve/store bounded summaries in a host-derived namespace. It is not model-callable and cannot alter policy, validation, or evidence. |
@@ -286,6 +372,8 @@ The runtime fails closed when required settings are absent.
 | `AIOS_LLM_PROVIDER` | `bedrock`, `openai`, or `deepseek`; `fake` is test-injection only |
 | `AIOS_LLM_MODEL` | Provider-compatible model or Bedrock inference-profile ID |
 | `AIOS_AWS_REGION` | Required for Bedrock and OpenAI IAM-gateway mode |
+| `AIOS_INSPECTION_MCP_MODE` | `github_direct` by default; use `agentcore_gateway` for the optional shared inspection Gateway |
+| `AIOS_INSPECTION_GATEWAY_ARN` | Required only in inspection Gateway mode; the exact regional HTTPS `/mcp` endpoint is derived from this ARN |
 | `AIOS_OPENAI_AUTH_MODE` | `api_key` by default; use `aws_iam_gateway` for the authenticated AgentCore gateway |
 | `AIOS_OPENAI_GATEWAY_ARN` | Required only in IAM-gateway mode; the HTTPS inference URL is derived from this ARN |
 | `OPENAI_API_KEY`, `AIOS_OPENAI_SECRET_ARN` | Direct OpenAI credential for local development or hosted rollback; both are forbidden in IAM-gateway mode |
@@ -293,6 +381,7 @@ The runtime fails closed when required settings are absent.
 | `DEEPSEEK_API_KEY` | Provider credential for the optional local DeepSeek adapter |
 | `AIOS_POSTGRES_DSN` | PostgreSQL checkpoint DSN |
 | `AIOS_CHECKPOINT_ENCRYPTION_KEY` | Exactly 16, 24, or 32 UTF-8 bytes for AES checkpoint encryption |
+| `AIOS_BEHAVIORAL_BUNDLE` | Sealed offline native dependency directory; local default `.artifacts/validation/ecommerce`, hosted image `/app/validation/ecommerce` |
 | `AIOS_SANDBOX_IMAGE` | Restricted validation image; defaults to `aios-remediation-sandbox:local` |
 | `AIOS_GITHUB_WRITES_ENABLED` | Application-side gate for branch/push/draft creation; defaults to `false` |
 | `AIOS_GITHUB_REPOSITORY` | Required `owner/repository` target when GitHub writes are enabled; it must match the handoff URL |
@@ -326,7 +415,7 @@ The presentation UI preloads one `DiagnosisHandoffV1` for the deployed division-
 Beanstalk and treats the deployment URL only as upstream evidence; Agent 3 never deploys or mutates that environment.
 
 The reviewed demo policies allow changes only to `server.js`, dependency-free calculation helpers under `lib/`, and
-regression tests under `tests/`. Every candidate must pass `node --check server.js` and
+regression tests under `tests/`. The division-by-zero contract selects `node --check server.js` and
 `node --test tests/calculate-average.test.js` without network access or package installation. The expected remediation
 extracts the average calculation into dependency-free logic, returns a typed client error for a zero divisor, preserves
 valid division, and adds the named built-in `node:test` regression file. Package manifests remain approval-required.
@@ -490,6 +579,8 @@ explicitly opt-in, uses the AWS credential provider chain, and makes one bounded
 configured authenticated gateway. `make test-mcp-live` is also opt-in and requires `AIOS_GITHUB_TOKEN`,
 `AIOS_LIVE_GITHUB_MCP_REPOSITORY_URL`, and
 `AIOS_LIVE_GITHUB_MCP_COMMIT_SHA` for an immutable public fixture; it is excluded from the default suite.
+`make test-tool-gateway-live` uses the same repository/commit variables plus `AIOS_INSPECTION_GATEWAY_ARN`; it signs
+with the AWS credential provider chain, requires the enforced Gateway to expose exactly three tools, and calls each one.
 `make test-code-interpreter-live` is separately opt-in. It runs harmless `node --check` and built-in `node:test`
 commands in fresh Code Interpreter sessions and asserts the backend, hashed-session evidence, and cleanup.
 
@@ -564,6 +655,8 @@ Configure these non-secret environment variables during that initial provisionin
 AIOS_LLM_PROVIDER=openai
 AIOS_LLM_MODEL=kei-openai-target/gpt-5.6-terra
 AIOS_AWS_REGION=ap-southeast-1
+AIOS_INSPECTION_MCP_MODE=agentcore_gateway
+AIOS_INSPECTION_GATEWAY_ARN=<inspection-gateway-arn>
 AIOS_OPENAI_AUTH_MODE=aws_iam_gateway
 AIOS_OPENAI_GATEWAY_ARN=arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:gateway/llm-gateway-with-inbound-auth-u8utldecju
 AIOS_POLICY_FILE=/app/config/policies/agentcore-demo.json
@@ -581,13 +674,18 @@ AIOS_CODE_INTERPRETER_IDENTIFIER=aws.codeinterpreter.v1
 Configure managed session storage exactly as
 `[{"sessionStorage":{"mountPath":"/mnt/workspace"}}]`. The hosted process performs a bounded create/remove probe below
 `/mnt/workspace/runs` during startup and fails with `WORKSPACE_ROOT_UNAVAILABLE` before model work when the mount is not
-writable. The release workflow adds the mount to older runtimes whose filesystem configuration is absent and preserves
-it on deployment and rollback. Store a two-field runtime JSON secret containing `github_token` and
+writable. `UpdateAgentRuntime` replaces omitted optional configuration, so direct or ad hoc updates that omit
+`filesystemConfigurations` remove the mount even when the runtime remains control-plane `READY`. Use the guarded
+release workflow rather than a raw update command. It pins the deployment account, rejects AWS clients that cannot
+represent filesystem configuration, adds the mount to older runtimes, preserves it on deployment and rollback, and
+verifies the exact new version's account and workspace invariants before probing it. Store a two-field runtime JSON
+secret containing `github_token` and
 an exact 32-byte UTF-8 `checkpoint_encryption_key`. In IAM-gateway mode, do not set `OPENAI_API_KEY`,
 `AIOS_OPENAI_SECRET_ARN`, or `AIOS_OPENAI_BASE_URL`. Grant the runtime execution role
-`bedrock-agentcore:InvokeGateway` only on the configured gateway ARN. The transport obtains fresh credentials from the
-AWS provider chain for every request, replaces the SDK placeholder bearer header with SigV4, disables redirects, and
-rejects every host or path except the derived gateway origin and `/inference/v1/responses`.
+`bedrock-agentcore:InvokeGateway` only on each configured gateway ARN. Both transports obtain fresh credentials from
+the AWS provider chain for every request and disable redirects. The model transport rejects every host or path except
+the derived origin and `/inference/v1/responses`; the inspection transport independently permits only the exact derived
+origin and `/mcp`.
 
 Direct mode remains available for local development and emergency rollback: set `AIOS_OPENAI_AUTH_MODE=api_key` and
 provide either `OPENAI_API_KEY` locally or `AIOS_OPENAI_SECRET_ARN` in AgentCore. The hosted secret must contain exactly
@@ -639,8 +737,10 @@ bundle.
 The service never exposes a generic shell to the model. Hosted MCP inspection and patch paths reject absolute paths,
 traversal, NULs, forbidden files, unsupported diff features, binary changes, external resources, and symlink components.
 Repository content remains untrusted and may contain prompt injection; the native tool allowlist, exact repository/SHA
-binding, search-as-locator rule, deterministic guards, and bounded context limit its authority. Autonomous and absolute
-file/diff limits are enforced before patch application.
+binding, search-as-locator rule, deterministic guards, and bounded context limit its authority. In optional Gateway
+mode, IAM inbound authentication and three explicit Cedar permits add an external default-deny layer; the application
+still fails closed on namespaced discovery or schema drift and never delegates mutation authority. Autonomous and
+absolute file/diff limits are enforced before patch application.
 
 The Docker executor uses no shell, no network, no Docker socket, a non-root UID, dropped capabilities,
 `no-new-privileges`, a read-only root filesystem, resource limits, timeouts, capped output, and one writable workspace
@@ -655,3 +755,9 @@ Docker daemon trust, mutable image provenance, local artifact durability, locato
 remain residual risks that deployments must address. The shared public run index intentionally has no per-user
 ownership or reviewer authorization for the demo. A production queue requires authenticated server-side ownership,
 authorization, and audit-grade reviewer identity.
+
+
+Validation record for behavioral hardening (2026-10-06): local format/lint/strict typing, default tests, package build,
+Bandit and real Docker integration passed. Live Code Interpreter qualification is implemented but was not run; it is a
+release prerequisite for this new profile. `make security` failed at pip-audit with 18 advisories in the unchanged service
+lock (`langgraph-sdk==0.4.2`, `PyJWT==2.13.0`, `urllib3==2.7.0`). This change does not claim an all-green security audit.

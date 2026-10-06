@@ -31,7 +31,7 @@ def test_demo_policy_is_exactly_scoped_and_reference_writes_stay_disabled() -> N
     assert demo.repositories.allowed_url_patterns == [
         "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
     ]
-    assert demo.default_validation_tasks == ["javascript_syntax", "average_regression"]
+    assert demo.default_validation_tasks == ["javascript_syntax"]
 
 
 def test_demo_policy_is_bounded_to_the_ecommerce_scenario() -> None:
@@ -74,6 +74,33 @@ def test_demo_policy_selects_only_fixed_node_validation_tasks() -> None:
         "--test",
         "tests/calculate-average.test.js",
     ]
+
+
+def test_agentcore_policy_does_not_run_average_regression_for_unrelated_server_change() -> None:
+    policy = PolicyEngine(load_policy(Path(__file__).parents[2] / "config" / "policies" / "agentcore-demo.json"))
+
+    assert policy.select_validation_tasks(["seed", "start"], ["server.js"]) == ["javascript_syntax"]
+    scenarios = {
+        "tests/calculate-average.test.js": "average_regression",
+        "tests/discount.test.js": "discount_regression",
+        "tests/checkout.test.js": "checkout_regression",
+        "tests/shipping.test.js": "shipping_regression",
+        "tests/purchase.test.js": "purchase_regression",
+    }
+    for path, task in scenarios.items():
+        assert policy.select_validation_tasks([], ["server.js", path]) == ["javascript_syntax", task]
+
+
+def test_live_demo_validation_catalog_covers_the_agent2_benchmark() -> None:
+    policy_root = Path(__file__).parents[2] / "config" / "policies"
+    live = load_policy(policy_root / "agentcore-demo.json")
+    local = load_policy(policy_root / "demo.json")
+    benchmark = load_policy(policy_root / "evaluation-benchmark.json")
+
+    assert set(benchmark.validation_tasks).issubset(live.validation_tasks)
+    assert set(benchmark.validation_tasks).issubset(local.validation_tasks)
+    assert "purchase_regression" in live.validation_tasks
+    assert "public/app.js" in live.paths.autonomous
 
 
 @pytest.mark.parametrize(

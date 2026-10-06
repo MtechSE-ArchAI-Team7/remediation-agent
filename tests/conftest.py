@@ -35,11 +35,13 @@ from remediation_agent.domain.models import (
     RemediationPlan,
     RepositoryRef,
     RiskAssessment,
+    VerificationCriterion,
 )
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.protocols import HandoffDeliveryPort, IncidentMemoryPort, InspectionToolProvider
 from remediation_agent.service import RemediationService
+from remediation_agent.verification import acceptance_ids
 from remediation_agent.workflow.graph import build_graph
 from remediation_agent.workflow.nodes import WorkflowNodes
 
@@ -106,6 +108,13 @@ def scripted_responses(
                 steps=["Implement the smallest evidence-backed change.", "Preserve and extend tests."],
                 target_paths=target_paths or [target_path],
                 proposed_validation_tasks=configured_tasks,
+                verification=[
+                    VerificationCriterion(
+                        criterion_id=next(iter(acceptance_ids(diagnosis_handoff()))),
+                        task_name="unit_tests",
+                        test_ids=["regression"],
+                    )
+                ],
                 rollback_strategy="Revert the proposed commit.",
                 evidence_ids=["evidence-1"],
             )
@@ -130,6 +139,7 @@ def build_test_service(
     task_outcomes: dict[str, list[ValidationOutcome]] | None = None,
     cleanup_succeeds: bool = True,
     tampered_diff: str | None = None,
+    apply_failures: list[str] | None = None,
     tool_turns: list[AIMessage] | None = None,
     inspection_tool_provider: InspectionToolProvider | None = None,
     max_inspection_rounds: int | None = None,
@@ -182,6 +192,7 @@ def build_test_service(
         cleanup_succeeds=cleanup_succeeds,
         repository=repository,
         tampered_diff=tampered_diff,
+        apply_failures=apply_failures,
     )
     pr_provider = FakePullRequestProvider()
     artifacts = MemoryArtifactStore()

@@ -25,8 +25,10 @@ async def test_subprocess_output_is_streamed_with_combined_cap(tmp_path: Path) -
     assert truncated
 
 
+@pytest.mark.parametrize("behavioral", [False, True])
 async def test_docker_task_argv_enforces_isolation_and_read_only_git(
     tmp_path: Path,
+    behavioral: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace_root = tmp_path / "workspaces"
@@ -52,6 +54,9 @@ async def test_docker_task_argv_enforces_isolation_and_read_only_git(
             workspace=WorkspaceRef(workspace_id="run", path=str(workspace_path), base_commit="a" * 40),
             task_name="unit_tests",
             task=ValidationTaskConfig(
+                kind="BEHAVIORAL" if behavioral else "STATIC",
+                profile="pytest" if behavioral else None,
+                test_paths=["tests"] if behavioral else [],
                 argv=["python", "-m", "pytest", "-q"],
                 timeout_seconds=30,
                 output_limit_bytes=4_096,
@@ -61,6 +66,7 @@ async def test_docker_task_argv_enforces_isolation_and_read_only_git(
     assert execution.result.exit_code == 0
     assert execution.execution.backend == "DOCKER"
     assert ["--network", "none"] == captured[captured.index("--network") : captured.index("--network") + 2]
+    assert f"{workspace_path}:/workspace:{'ro' if behavioral else 'rw'}" in captured
     assert "--read-only" in captured
     assert ["--cap-drop", "ALL"] == captured[captured.index("--cap-drop") : captured.index("--cap-drop") + 2]
     assert "no-new-privileges" in captured

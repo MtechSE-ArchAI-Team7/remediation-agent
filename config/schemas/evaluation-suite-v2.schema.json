@@ -381,6 +381,14 @@
           "title": "Proposed Validation Tasks",
           "type": "array"
         },
+        "request_contracts": {
+          "items": {
+            "$ref": "#/$defs/RequestContract"
+          },
+          "maxItems": 20,
+          "title": "Request Contracts",
+          "type": "array"
+        },
         "rollback_strategy": {
           "minLength": 1,
           "title": "Rollback Strategy",
@@ -410,6 +418,22 @@
           "minItems": 1,
           "title": "Target Paths",
           "type": "array"
+        },
+        "unresolved_requirements": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Unresolved Requirements",
+          "type": "array"
+        },
+        "verification": {
+          "items": {
+            "$ref": "#/$defs/VerificationCriterion"
+          },
+          "maxItems": 20,
+          "title": "Verification",
+          "type": "array"
         }
       },
       "required": [
@@ -421,6 +445,100 @@
         "evidence_ids"
       ],
       "title": "RemediationPlan",
+      "type": "object"
+    },
+    "RequestContract": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "evidence_paths": {
+          "items": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Evidence Paths",
+          "type": "array"
+        },
+        "example_body": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Example Body",
+          "type": "string"
+        },
+        "expected_responses": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Expected Responses",
+          "type": "array"
+        },
+        "field_types": {
+          "additionalProperties": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxProperties": 30,
+          "propertyNames": {
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "title": "Field Types",
+          "type": "object"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "title": "Method",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^/[^\\s?#]*$",
+          "title": "Path",
+          "type": "string"
+        },
+        "prerequisites": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Prerequisites",
+          "type": "array"
+        },
+        "state_changes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "State Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "method",
+        "path",
+        "content_type",
+        "expected_responses",
+        "evidence_paths"
+      ],
+      "title": "RequestContract",
       "type": "object"
     },
     "RiskAssessment": {
@@ -505,6 +623,62 @@
       ],
       "title": "ValidationOutcome",
       "type": "string"
+    },
+    "VerificationCriterion": {
+      "additionalProperties": false,
+      "description": "A proposed mapping; only deterministic execution can establish coverage.",
+      "properties": {
+        "criterion_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Reason",
+          "type": "string"
+        },
+        "scope": {
+          "default": "LOCAL",
+          "enum": [
+            "LOCAL",
+            "POST_DEPLOYMENT"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "task_name": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task Name"
+        },
+        "test_ids": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Test Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "criterion_id"
+      ],
+      "title": "VerificationCriterion",
+      "type": "object"
     }
   },
   "additionalProperties": false,

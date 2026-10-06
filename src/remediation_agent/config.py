@@ -61,11 +61,14 @@ class Settings(BaseSettings):
     checkpoint_encryption_key: SecretStr | None = None
     artifact_root: Path = Path(".artifacts")
     workspace_root: Path = Path(".workspaces")
+    behavioral_bundle: Path = Path(".artifacts/validation/ecommerce")
     sandbox_image: str = "aios-remediation-sandbox:local"
 
     github_token: SecretStr | None = None
     github_repository: str | None = None
     github_writes_enabled: bool = False
+    inspection_mcp_mode: Literal["github_direct", "agentcore_gateway"] = "github_direct"
+    inspection_gateway_arn: str | None = None
     git_author_name: str = Field(default="AIOS Remediation Agent", min_length=1, max_length=200)
     git_author_email: str = Field(
         default="aios-remediation@users.noreply.github.com",
@@ -110,6 +113,7 @@ class Settings(BaseSettings):
         "checkpoint_encryption_key",
         "github_token",
         "github_repository",
+        "inspection_gateway_arn",
         "agentcore_memory_id",
         "incident_memory_id",
         "incident_memory_strategy_id",
@@ -174,6 +178,14 @@ class Settings(BaseSettings):
             raise ValueError("AIOS_GITHUB_TOKEN is required when GitHub writes are enabled")
         if self.github_writes_enabled and self.github_repository is None:
             raise ValueError("AIOS_GITHUB_REPOSITORY is required when GitHub writes are enabled")
+        if self.inspection_mcp_mode == "agentcore_gateway":
+            if self.aws_region is None:
+                raise ValueError("AIOS_AWS_REGION is required for AgentCore inspection gateway mode")
+            if self.inspection_gateway_arn is None:
+                raise ValueError("AIOS_INSPECTION_GATEWAY_ARN is required in AgentCore inspection gateway mode")
+            self._validated_inspection_gateway_parts()
+        elif self.inspection_gateway_arn is not None:
+            raise ValueError("AIOS_INSPECTION_GATEWAY_ARN requires AIOS_INSPECTION_MCP_MODE=agentcore_gateway")
         if self.agent4_delivery_enabled and (self.agent4_runtime_arn is None or self.agent4_region is None):
             raise ValueError(
                 "AIOS_AGENT4_RUNTIME_ARN and AIOS_AGENT4_REGION are required when Agent 4 delivery is enabled"
@@ -223,6 +235,23 @@ class Settings(BaseSettings):
         region = match.group("region")
         if region != self.aws_region:
             raise ValueError("AIOS_OPENAI_GATEWAY_ARN Region must match AIOS_AWS_REGION")
+        return region, match.group("gateway_id")
+
+    def inspection_gateway_endpoint(self) -> str:
+        """Derive the sole MCP endpoint permitted for repository inspection."""
+
+        region, gateway_id = self._validated_inspection_gateway_parts()
+        return f"https://{gateway_id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp"
+
+    def _validated_inspection_gateway_parts(self) -> tuple[str, str]:
+        if self.inspection_gateway_arn is None:
+            raise ValueError("AIOS_INSPECTION_GATEWAY_ARN is required in AgentCore inspection gateway mode")
+        match = _AGENTCORE_GATEWAY_ARN.fullmatch(self.inspection_gateway_arn)
+        if match is None:
+            raise ValueError("AIOS_INSPECTION_GATEWAY_ARN must be a valid AWS AgentCore gateway ARN")
+        region = match.group("region")
+        if region != self.aws_region:
+            raise ValueError("AIOS_INSPECTION_GATEWAY_ARN Region must match AIOS_AWS_REGION")
         return region, match.group("gateway_id")
 
     def require_persistent_checkpointing(self) -> tuple[str, str]:

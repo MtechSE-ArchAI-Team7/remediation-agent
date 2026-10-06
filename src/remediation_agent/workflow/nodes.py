@@ -61,12 +61,14 @@ from remediation_agent.domain.models import (
     ValidationAttempt,
     ValidationExecutionRecord,
     ValidationTaskResult,
+    VerificationBriefV1,
 )
 from remediation_agent.explainability import build_explainability_trace
 from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.ports.models import (
     ArtifactWriteRequest,
     AuditWriteRequest,
+    BehavioralTaskRequest,
     BranchRequest,
     CommitRequest,
     DraftPrRequest,
@@ -95,6 +97,7 @@ from remediation_agent.prompts import (
     RISK_SYSTEM_PROMPT,
 )
 from remediation_agent.tools import FINISH_INSPECTION_TOOL_NAME, finish_inspection
+from remediation_agent.verification import acceptance_ids, coverage_gaps, evidence_gaps, observations
 from remediation_agent.workflow.state import RemediationState
 
 _SUPPORTED_TYPES = {RemediationType.CODE, RemediationType.CONFIGURATION}
@@ -180,6 +183,9 @@ class WorkflowNodes:
             "inspection_tool_calls": [],
             "validation_execution_records": [],
             "validation_attempts": [],
+            "behavioral_evidence": [],
+            "verification_gaps": [],
+            "locally_verified": False,
             "model_calls": [],
             "errors": [],
             "residual_risks": [],
@@ -534,6 +540,12 @@ class WorkflowNodes:
                         "inspection_artifacts": [
                             item.model_dump(mode="json") for item in state["inspection_artifacts"]
                         ],
+                        "available_validation_tasks": {
+                            name: task.model_dump(mode="json", exclude={"argv", "environment"})
+                            for name, task in self.policy.config.validation_tasks.items()
+                        },
+                        "acceptance_criteria_by_id": acceptance_ids(state["handoff"]),
+                        "base_commit": state["workspace"].base_commit,
                     },
                 ),
                 RemediationPlan,
@@ -561,6 +573,14 @@ class WorkflowNodes:
                     payload={
                         "handoff": state["handoff"].model_dump(mode="json"),
                         "plan": state["remediation_plan"].model_dump(mode="json"),
+                        "inspection_artifacts": [
+                            item.model_dump(mode="json") for item in state["inspection_artifacts"]
+                        ],
+                        "base_commit": state["workspace"].base_commit,
+                        "available_validation_tasks": {
+                            name: task.model_dump(mode="json", exclude={"argv", "environment"})
+                            for name, task in self.policy.config.validation_tasks.items()
+                        },
                     },
                 ),
                 RiskAssessment,
@@ -571,6 +591,9 @@ class WorkflowNodes:
 
         update: dict[str, object] = {
             "risk_assessment": assessment,
+            "residual_risks": list(
+                dict.fromkeys([*state.get("residual_risks", []), *(item.summary for item in assessment.findings)])
+            ),
             "model_calls": [*state.get("model_calls", []), generated.record],
             "audit_events": self._event(
                 state,
@@ -581,7 +604,7 @@ class WorkflowNodes:
         }
         if assessment.decision is PolicyDecision.DENY:
             update["final_status"] = FinalStatus.UNSAFE_REMEDIATION
-            update["residual_risks"] = [assessment.rationale]
+            update["residual_risks"] = [*cast(list[str], update["residual_risks"]), assessment.rationale]
         elif assessment.decision is PolicyDecision.REQUIRE_APPROVAL:
             scope = self.policy.digest_text(state["remediation_plan"].model_dump_json())
             update["approval_request"] = self._approval_request(state, "PLAN", scope, assessment.rationale)
@@ -614,7 +637,16 @@ class WorkflowNodes:
                             item.model_dump(mode="json") for item in state.get("validation_attempts", [])
                         ],
                         "previous_patch": previous_patch.model_dump(mode="json") if previous_patch else None,
+                        "behavioral_evidence": [
+                            item.model_dump(mode="json") for item in state.get("behavioral_evidence", [])
+                        ],
                         "revision_context": state.get("revision_context", ""),
+                        "available_validation_tasks": {
+                            name: task.model_dump(mode="json", exclude={"argv", "environment"})
+                            for name, task in self.policy.config.validation_tasks.items()
+                        },
+                        "acceptance_criteria_by_id": acceptance_ids(state["handoff"]),
+                        "base_commit": state["workspace"].base_commit,
                     },
                 ),
                 PatchCandidate,
@@ -623,6 +655,7 @@ class WorkflowNodes:
             return self._failure(state, "PATCH_GENERATION_FAILED", "generate_patch", str(exc))
         return {
             "patch_candidate": generated.value,
+            "locally_verified": False,
             "model_calls": [*state.get("model_calls", []), generated.record],
             "audit_events": self._event(state, "PATCH_GENERATED", "OK", generated.value.rationale),
         }
@@ -670,7 +703,7 @@ class WorkflowNodes:
         if result.decision is PolicyDecision.DENY:
             update["final_status"] = FinalStatus.UNSAFE_REMEDIATION
             update["repair_outcome"] = ValidationOutcome.ERROR
-            update["residual_risks"] = result.reasons
+            update["residual_risks"] = [*state.get("residual_risks", []), *result.reasons]
         elif result.decision is PolicyDecision.REQUIRE_APPROVAL:
             approved_scopes = {
                 item.scope_digest
@@ -709,7 +742,43 @@ class WorkflowNodes:
             if applied_policy.changed_files != state["patch_policy"].changed_files:
                 raise RuntimeError("applied workspace diff does not match the preflighted file scope")
         except (OSError, RuntimeError, ValueError) as exc:
-            update = self._failure(state, "PATCH_APPLY_FAILED", "apply_patch", str(exc))
+            detail = self.audit.redactor.redact(str(exc))
+            if detail.startswith("git apply failed:"):
+                attempt_number = state.get("attempt_counter", 0) + 1
+                failure_result = ValidationTaskResult(
+                    task_name="patch_apply",
+                    outcome=ValidationOutcome.ERROR,
+                    duration_ms=0,
+                    stderr=detail,
+                )
+                attempt = ValidationAttempt(
+                    attempt=attempt_number,
+                    patch_digest=state["diff_digest"],
+                    results=[failure_result],
+                    outcome=ValidationOutcome.ERROR,
+                )
+                exhausted = attempt_number >= state["max_validation_attempts"]
+                update: dict[str, object] = {
+                    "attempt_counter": attempt_number,
+                    "current_validation_results": [failure_result],
+                    "validation_attempts": [*state.get("validation_attempts", []), attempt],
+                    "validation_outcome": ValidationOutcome.ERROR,
+                    "repair_outcome": ValidationOutcome.FAILED,
+                    "audit_events": self._event(
+                        state,
+                        "PATCH_APPLY_FAILED",
+                        "EXHAUSTED" if exhausted else "REVISE",
+                        detail,
+                    ),
+                }
+                if exhausted:
+                    update["final_status"] = FinalStatus.VALIDATION_FAILED
+                    update["residual_risks"] = [
+                        *state.get("residual_risks", []),
+                        "Patch application failed and the configured repair-attempt limit was exhausted.",
+                    ]
+                return update
+            update = self._failure(state, "PATCH_APPLY_FAILED", "apply_patch", detail)
             update["repair_outcome"] = ValidationOutcome.ERROR
             return update
         return {
@@ -722,40 +791,105 @@ class WorkflowNodes:
         }
 
     async def select_validation_tasks(self, state: RemediationState) -> dict[str, object]:
+        plan = state["remediation_plan"]
+        gaps = coverage_gaps(
+            state["handoff"],
+            plan,
+            self.policy.config,
+            {
+                item.locator
+                for item in state.get("inspection_artifacts", [])
+                if item.kind == "FILE" and not item.truncated
+            },
+        )
         proposed = [
-            *state["remediation_plan"].proposed_validation_tasks,
+            *plan.proposed_validation_tasks,
             *state["patch_candidate"].proposed_validation_tasks,
+            *(item.task_name for item in plan.verification if item.task_name),
         ]
+        unknown = sorted(set(proposed) - self.policy.config.validation_tasks.keys())
+        if unknown:
+            gaps.append(f"Unknown validation task names: {', '.join(unknown)}")
+        if gaps:
+            return self._verification_blocked(state, gaps)
         selected = self.policy.select_validation_tasks(proposed, state["changed_files"])
         return {
             "selected_validation_tasks": selected,
+            "verification_gaps": [],
             "audit_events": self._event(
-                state,
-                "VALIDATION_SELECTED",
-                "OK",
-                f"Selected operator-defined tasks: {', '.join(selected)}",
+                state, "VALIDATION_SELECTED", "OK", f"Selected operator-defined tasks: {', '.join(selected)}"
+            ),
+        }
+
+    def _verification_blocked(self, state: RemediationState, gaps: list[str]) -> dict[str, object]:
+        safe = [self.audit.redactor.redact(item)[:2000] for item in gaps][:50]
+        return {
+            "final_status": FinalStatus.HUMAN_ACTION_REQUIRED,
+            "repair_outcome": ValidationOutcome.NOT_RUN,
+            "locally_verified": False,
+            "verification_gaps": safe,
+            "residual_risks": list(dict.fromkeys([*state.get("residual_risks", []), *safe])),
+            "audit_events": self._event(
+                state, "VERIFICATION_INCOMPLETE", "HUMAN_ACTION_REQUIRED", "; ".join(safe)[:4000]
             ),
         }
 
     async def run_validation(self, state: RemediationState) -> dict[str, object]:
         results: list[ValidationTaskResult] = []
+        behavioral = list(state.get("behavioral_evidence", []))
+        gaps: list[str] = []
         execution_records = list(state.get("validation_execution_records", []))
         task_events = list(state.get("audit_events", []))
         attempt_number = state.get("attempt_counter", 0) + 1
         for name in state["selected_validation_tasks"]:
             task = self.policy.validation_task(name)
             try:
-                task_execution = await self.sandbox.run_task(
-                    ValidationTaskRequest(
-                        workspace=state["workspace"],
-                        task_name=name,
-                        task=task,
-                        attempt=attempt_number,
-                    )
+                request = ValidationTaskRequest(
+                    workspace=state["workspace"], task_name=name, task=task, attempt=attempt_number
                 )
-                result = task_execution.result
-                execution_records.append(task_execution.execution)
+                if task.kind == "BEHAVIORAL":
+                    pair = await self.sandbox.run_behavior(
+                        BehavioralTaskRequest(**request.model_dump(), patch_digest=state["diff_digest"])
+                    )
+                    if any(
+                        previous.task_name == name and previous.assertions_digest != pair.evidence.assertions_digest
+                        for previous in behavioral
+                    ):
+                        gaps.append(
+                            f"{name}: regression assertions changed between repair attempts; human review required."
+                        )
+                    behavioral.append(
+                        type(pair.evidence).model_validate(
+                            self.audit.redactor.redact_data(pair.evidence.model_dump(mode="json"))
+                        )
+                    )
+                    task_events = self._event_from(
+                        state,
+                        task_events,
+                        "BEHAVIORAL_PAIR_RECORDED",
+                        "EXECUTED",
+                        f"task={name}; base={pair.evidence.base_commit}; patch={pair.evidence.patch_digest}; "
+                        f"assertions={pair.evidence.assertions_digest}; dependencies={pair.evidence.dependency_digest}",
+                    )
+                    execution_records.extend(item.execution for item in pair.executions)
+                    result = pair.executions[-1].result
+                    outcomes = {case.outcome for case in pair.evidence.candidate.cases}
+                    if outcomes & {"SETUP_ERROR", "SKIPPED"}:
+                        gaps.append(f"{name}: behavioral tests were skipped or failed during setup.")
+                    if "ASSERTION_FAILED" in outcomes:
+                        result = result.model_copy(update={"outcome": ValidationOutcome.FAILED})
+                    for report in (pair.evidence.base, pair.evidence.candidate):
+                        if any(case.outcome in {"SETUP_ERROR", "SKIPPED"} for case in report.cases):
+                            gaps.append(f"{name}: paired execution has setup errors or skipped assertions.")
+                        if not set(task.required_test_ids).issubset(case.test_id for case in report.cases):
+                            gaps.append(f"{name}: required operator assertions are absent.")
+                else:
+                    task_execution = await self.sandbox.run_task(request)
+                    result = task_execution.result
+                    execution_records.append(task_execution.execution)
             except (OSError, RuntimeError, ValueError) as exc:
+                if task.kind == "BEHAVIORAL":
+                    gaps.append(f"{name}: behavioral capability unavailable: {exc}")
                 result = ValidationTaskResult(
                     task_name=name,
                     outcome=ValidationOutcome.ERROR,
@@ -783,17 +917,27 @@ class WorkflowNodes:
                         duration_ms=0,
                     )
                 )
+            result = result.model_copy(
+                update={
+                    "stdout": self.audit.redactor.redact(result.stdout),
+                    "stderr": self.audit.redactor.redact(result.stderr),
+                }
+            )
             results.append(result)
             record = execution_records[-1]
+            detail = (
+                f"task={record.task_name}; backend={record.backend}; executor={record.executor_id}; "
+                f"cleanup={record.cleanup_status}; input={record.input_digest}"
+            )
+            if result.outcome is not ValidationOutcome.PASSED:
+                failure_output = (result.stderr.strip() or result.stdout.strip() or str(result.outcome))[:1_000]
+                detail = f"{detail}; failure={failure_output}"
             task_events = self._event_from(
                 state,
                 task_events,
                 "VALIDATION_TASK_EXECUTED",
                 record.outcome,
-                (
-                    f"task={record.task_name}; backend={record.backend}; executor={record.executor_id}; "
-                    f"cleanup={record.cleanup_status}; input={record.input_digest}"
-                ),
+                detail,
             )
         try:
             post_validation_diff = await self.repository.current_diff(state["workspace"])
@@ -837,6 +981,8 @@ class WorkflowNodes:
         )
         return {
             "attempt_counter": attempt_number,
+            "behavioral_evidence": behavioral,
+            "verification_gaps": [self.audit.redactor.redact(item)[:2000] for item in gaps][:50],
             "current_validation_results": results,
             "validation_execution_records": execution_records,
             "validation_attempts": [*state.get("validation_attempts", []), attempt],
@@ -851,10 +997,22 @@ class WorkflowNodes:
         }
 
     async def evaluate_validation(self, state: RemediationState) -> dict[str, object]:
+        gaps = list(state.get("verification_gaps", []))
+        gaps.extend(
+            evidence_gaps(
+                state["remediation_plan"],
+                [item for item in state.get("behavioral_evidence", []) if item.attempt == state["attempt_counter"]],
+                state["diff_digest"],
+                state["workspace"].base_commit,
+            )
+        )
+        if gaps:
+            return self._verification_blocked(state, gaps)
         outcome = state["validation_outcome"]
         if outcome is ValidationOutcome.PASSED:
             return {
                 "repair_outcome": ValidationOutcome.PASSED,
+                "locally_verified": True,
                 "audit_events": self._event(state, "VALIDATION_EVALUATED", "PASS", "All required tasks passed."),
             }
         if state["attempt_counter"] >= state["max_validation_attempts"]:
@@ -925,14 +1083,27 @@ class WorkflowNodes:
             after_commit=["Create a reviewed revert commit for the proposed remediation commit."],
             limitations=["Production deployment and rollback execution are outside this agent's authority."],
         )
-        return {
+        update: dict[str, object] = {
             "rollback_instructions": rollback,
             "audit_events": self._event(state, "ROLLBACK_PREPARED", "OK", rollback.summary),
         }
+        if state.get("repair_outcome") is ValidationOutcome.PASSED and not state.get("locally_verified", False):
+            update.update(self._verification_blocked(state, ["Legacy run requires current behavioral revalidation."]))
+        return update
 
     async def prepare_pr(self, state: RemediationState) -> dict[str, object]:
-        if state.get("repair_outcome") is not ValidationOutcome.PASSED:
-            return {}
+        if state.get("repair_outcome") is not ValidationOutcome.PASSED or not state.get("locally_verified", False):
+            return self._verification_blocked(
+                state, ["PR preparation requires current behavioral verification evidence."]
+            )
+        gaps = evidence_gaps(
+            state["remediation_plan"],
+            [item for item in state.get("behavioral_evidence", []) if item.attempt == state.get("attempt_counter")],
+            state["diff_digest"],
+            state["workspace"].base_commit,
+        )
+        if gaps:
+            return self._verification_blocked(state, gaps)
         handoff = state["handoff"]
         branch = _branch_name(handoff.case_id, state["run_id"])
         payload = DraftPrPayload(
@@ -1019,6 +1190,7 @@ class WorkflowNodes:
 
         eligible = (
             self.incident_memory_writes_enabled
+            and state.get("locally_verified", False)
             and state.get("repair_outcome") is ValidationOutcome.PASSED
             and state.get("final_status") in {FinalStatus.DRAFT_PR_PREPARED, FinalStatus.DRAFT_PR_CREATED}
             and state.get("cleanup_result") is not None
@@ -1076,7 +1248,10 @@ class WorkflowNodes:
             model_provider=last_model.provider if last_model else "unknown",
             model_name=last_model.model if last_model else "unknown",
             evidence_ids=[item.evidence_id for item in state["handoff"].supporting_evidence],
-            evidence_digests=[item.digest for item in state["handoff"].supporting_evidence],
+            evidence_digests=[
+                *(item.digest for item in state["handoff"].supporting_evidence),
+                self.policy.digest_text(self._verification_brief_json(state)),
+            ],
             admission_type=MemoryAdmissionType.AUTO_VALIDATED,
             created_at=datetime.now(UTC),
         )
@@ -1402,6 +1577,7 @@ class WorkflowNodes:
                 redactor=self.audit.redactor,
             ).model_dump_json(indent=2),
         }
+        files["verification-brief.json"] = self._verification_brief_json(state)
         if state.get("current_diff"):
             files["patch.diff"] = state["current_diff"]
         if state.get("rollback_instructions"):
@@ -1409,6 +1585,44 @@ class WorkflowNodes:
         if state.get("draft_pr"):
             files["draft-pr.json"] = state["draft_pr"].model_dump_json(indent=2)
         return files
+
+    def _verification_brief_json(self, state: RemediationState) -> str:
+        return json.dumps(
+            self.audit.redactor.redact_data(self._verification_brief(state).model_dump(mode="json")), indent=2
+        )
+
+    @staticmethod
+    def _verification_brief(state: RemediationState) -> VerificationBriefV1:
+        plan = state.get("remediation_plan")
+        return VerificationBriefV1(
+            run_id=state["run_id"],
+            base_commit=state["workspace"].base_commit if state.get("workspace") else None,
+            patch_digest=state.get("diff_digest"),
+            criteria=acceptance_ids(state["handoff"]),
+            coverage=plan.verification if plan else [],
+            request_contracts=plan.request_contracts if plan else [],
+            behavioral_evidence=state.get("behavioral_evidence", []),
+            observations=observations(
+                [
+                    item
+                    for item in state.get("behavioral_evidence", [])
+                    if item.attempt == state.get("attempt_counter") and item.patch_digest == state.get("diff_digest")
+                ]
+            ),
+            locally_verified=state.get("locally_verified", False),
+            pending_agent4_checks=[
+                acceptance_ids(state["handoff"]).get(item.criterion_id, item.criterion_id)
+                for item in plan.verification
+                if item.scope == "POST_DEPLOYMENT"
+            ]
+            if plan
+            else [],
+            limitations=[
+                *state.get("verification_gaps", [])[:49],
+                "Local tests do not establish deployed health or the absence of pre-existing product security issues.",
+            ],
+            unresolved_risks=state.get("residual_risks", []),
+        )
 
     @staticmethod
     def _pr_body(state: RemediationState) -> str:
@@ -1426,7 +1640,30 @@ class WorkflowNodes:
             )
         validation = "\n".join(validation_lines)
         changed = "\n".join(f"- `{path}`" for path in state.get("changed_files", []))
-        residual = "\n".join(f"- {risk}" for risk in state.get("residual_risks", [])) or "- None identified"
+        residual = (
+            "\n".join(f"- {risk}" for risk in state.get("residual_risks", []))
+            or "- No additional recorded risks; deployed verification remains pending."
+        )
+        brief = WorkflowNodes._verification_brief(state)
+        verification = "\n".join(
+            f"- {item.criterion_id}: {brief.criteria.get(item.criterion_id, '')} — "
+            + (
+                f"locally verified by {item.task_name}: {', '.join(item.test_ids)}"
+                if item.scope == "LOCAL"
+                else f"PENDING Agent 4: {item.reason}"
+            )
+            for item in brief.coverage
+        )
+        for contract in brief.request_contracts:
+            verification += (
+                f"\n\n{contract.method} {contract.path}; Content-Type: {contract.content_type}\n"
+                f"Field types: {contract.field_types}\nExample body: `{contract.example_body}`\n"
+                f"Expected responses: {contract.expected_responses}\nState changes: {contract.state_changes}\n"
+                f"Fixture prerequisites: {contract.prerequisites}\nEvidence: {contract.evidence_paths}"
+            )
+        verification += "\n\n" + "\n".join(
+            f"- `{item.task_name}/{item.test_id}`: {item.classification}" for item in brief.observations
+        )
         approvals = (
             "\n".join(
                 f"- {item.status} by `{item.reviewer_id}` for `{item.scope_digest}`"
@@ -1453,6 +1690,9 @@ class WorkflowNodes:
             f"{changed}\n\n"
             "## Validation evidence\n\n"
             f"{validation}\n\n"
+            "## Verification brief\n\n"
+            f"{verification}\n\n"
+            "Detailed before/after evidence: `verification-brief.json` in the run artifact manifest.\n\n"
             "## Residual risks\n\n"
             f"{residual}\n\n"
             "## Policy controls\n\n"

@@ -2,23 +2,64 @@
   "policy_id": "aios-remediation-evaluation-benchmark-v2",
   "version": "2.0",
   "repositories": {
-    "allowed_providers": ["GITHUB"],
+    "allowed_providers": [
+      "GITHUB"
+    ],
     "allowed_url_patterns": [
       "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo.git"
     ]
   },
   "paths": {
-    "autonomous": ["server.js", "public/app.js", "lib/**", "tests/**"],
+    "autonomous": [
+      "server.js",
+      "public/app.js",
+      "lib/**",
+      "tests/**"
+    ],
     "approval_required": [
-      ".github/workflows/**", "Dockerfile", "docker/**", "compose.yaml", "pyproject.toml", "uv.lock",
-      "requirements*.txt", "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
-      "migrations/**", "**/migrations/**", "**/auth/**", "**/*auth*.py", "**/security/**", "**/iam/**",
-      "*iam*.json", "*.tf", "**/*.tf", "k8s/**", "**/k8s/**", "kubernetes/**", "**/kubernetes/**",
-      "helm/**", "**/helm/**", "**/Chart.yaml"
+      ".github/workflows/**",
+      "Dockerfile",
+      "docker/**",
+      "compose.yaml",
+      "pyproject.toml",
+      "uv.lock",
+      "requirements*.txt",
+      "package.json",
+      "package-lock.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "migrations/**",
+      "**/migrations/**",
+      "**/auth/**",
+      "**/*auth*.py",
+      "**/security/**",
+      "**/iam/**",
+      "*iam*.json",
+      "*.tf",
+      "**/*.tf",
+      "k8s/**",
+      "**/k8s/**",
+      "kubernetes/**",
+      "**/kubernetes/**",
+      "helm/**",
+      "**/helm/**",
+      "**/Chart.yaml"
     ],
     "forbidden": [
-      ".git", ".git/**", ".env", ".env.*", "**/.env", "**/.env.*", "*.pem", "**/*.pem",
-      "*.key", "**/*.key", "credentials*", "**/credentials*", "secrets/**", "**/secrets/**"
+      ".git",
+      ".git/**",
+      ".env",
+      ".env.*",
+      "**/.env",
+      "**/.env.*",
+      "*.pem",
+      "**/*.pem",
+      "*.key",
+      "**/*.key",
+      "credentials*",
+      "**/credentials*",
+      "secrets/**",
+      "**/secrets/**"
     ]
   },
   "limits": {
@@ -41,39 +82,143 @@
     "max_model_output_tokens": 4096,
     "max_active_runs": 1
   },
-  "default_validation_tasks": ["javascript_syntax"],
+  "default_validation_tasks": [
+    "javascript_syntax"
+  ],
   "validation_tasks": {
     "javascript_syntax": {
-      "argv": ["node", "--check", "server.js"], "cwd": ".", "environment": {},
-      "timeout_seconds": 60, "output_limit_bytes": 65536, "retryable": false
+      "argv": [
+        "node",
+        "--check",
+        "server.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 65536,
+      "retryable": false
     },
     "average_regression": {
-      "argv": ["node", "--test", "tests/calculate-average.test.js"], "cwd": ".", "environment": {},
-      "timeout_seconds": 60, "output_limit_bytes": 262144, "retryable": false
+      "argv": [
+        "node",
+        "--test",
+        "tests/calculate-average.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/calculate-average.test.js"
+      ]
     },
     "discount_regression": {
-      "argv": ["node", "--test", "tests/discount.test.js"], "cwd": ".", "environment": {},
-      "timeout_seconds": 60, "output_limit_bytes": 262144, "retryable": false
+      "argv": [
+        "node",
+        "--test",
+        "tests/discount.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/discount.test.js"
+      ]
     },
     "checkout_regression": {
-      "argv": ["node", "--test", "tests/checkout.test.js"], "cwd": ".", "environment": {},
-      "timeout_seconds": 60, "output_limit_bytes": 262144, "retryable": false
+      "argv": [
+        "node",
+        "--test",
+        "tests/checkout.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/checkout.test.js"
+      ]
     },
     "shipping_regression": {
-      "argv": ["node", "--test", "tests/shipping.test.js"], "cwd": ".", "environment": {},
-      "timeout_seconds": 60, "output_limit_bytes": 262144, "retryable": false
+      "argv": [
+        "node",
+        "--test",
+        "tests/shipping.test.js"
+      ],
+      "cwd": ".",
+      "environment": {},
+      "timeout_seconds": 60,
+      "output_limit_bytes": 262144,
+      "retryable": false,
+      "kind": "BEHAVIORAL",
+      "profile": "node_test",
+      "test_paths": [
+        "tests/shipping.test.js"
+      ]
     }
   },
   "mandatory_tasks": [
-    {"path_patterns": ["server.js"], "task_names": ["javascript_syntax"]},
-    {"path_patterns": ["tests/calculate-average.test.js"], "task_names": ["average_regression"]},
-    {"path_patterns": ["tests/discount.test.js"], "task_names": ["discount_regression"]},
-    {"path_patterns": ["tests/checkout.test.js", "public/app.js"], "task_names": ["checkout_regression"]},
-    {"path_patterns": ["tests/shipping.test.js"], "task_names": ["shipping_regression"]}
+    {
+      "path_patterns": [
+        "server.js"
+      ],
+      "task_names": [
+        "javascript_syntax"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/calculate-average.test.js"
+      ],
+      "task_names": [
+        "average_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/discount.test.js"
+      ],
+      "task_names": [
+        "discount_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/checkout.test.js",
+        "public/app.js"
+      ],
+      "task_names": [
+        "checkout_regression"
+      ]
+    },
+    {
+      "path_patterns": [
+        "tests/shipping.test.js"
+      ],
+      "task_names": [
+        "shipping_regression"
+      ]
+    }
   ],
   "artifacts": {
-    "retention_days": 7, "write_audit_jsonl": true, "include_full_diff": true
+    "retention_days": 7,
+    "write_audit_jsonl": true,
+    "include_full_diff": true
   },
-  "github": {"writes_enabled": false},
-  "incident_memory": {"writes_enabled": false}
+  "github": {
+    "writes_enabled": false
+  },
+  "incident_memory": {
+    "writes_enabled": false
+  }
 }

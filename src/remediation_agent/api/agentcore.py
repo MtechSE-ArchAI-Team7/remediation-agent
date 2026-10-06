@@ -26,7 +26,7 @@ from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterprete
 from remediation_agent.adapters.checkpoint import agentcore_memory_checkpointer
 from remediation_agent.adapters.credentials import GitHubAskpassCredentialProvider
 from remediation_agent.adapters.incident_memory import AgentCoreIncidentMemory, DisabledIncidentMemory
-from remediation_agent.adapters.mcp import GitHubRemoteMcpInspectionTools
+from remediation_agent.adapters.mcp import AgentCoreGatewayInspectionTools, GitHubRemoteMcpInspectionTools
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.repository import LocalGitRepository
@@ -176,13 +176,19 @@ def create_agentcore_app(
                 author_email=settings.git_author_email,
                 credential_provider=credential_provider,
             )
+            inspection_tools = (
+                AgentCoreGatewayInspectionTools(settings.inspection_gateway_endpoint(), region_name, policy)
+                if settings.inspection_mcp_mode == "agentcore_gateway"
+                else GitHubRemoteMcpInspectionTools(github_token, policy)
+            )
             nodes = WorkflowNodes(
                 policy=policy,
                 model=structured_model,
                 repository=repository,
-                inspection_tools=GitHubRemoteMcpInspectionTools(github_token, policy),
+                inspection_tools=inspection_tools,
                 sandbox=AgentCoreCodeInterpreterSandbox(
                     settings.workspace_root,
+                    behavioral_bundle=settings.behavioral_bundle,
                     region_name=region_name,
                     code_interpreter_identifier=settings.code_interpreter_identifier,
                     validation_bundle=settings.code_interpreter_bundle,

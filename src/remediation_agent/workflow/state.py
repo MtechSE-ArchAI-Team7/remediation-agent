@@ -10,6 +10,7 @@ from remediation_agent.domain.models import (
     ApprovalRequest,
     ArtifactManifest,
     AuditEvent,
+    BehavioralEvidence,
     CleanupResult,
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
@@ -70,6 +71,9 @@ class RemediationState(TypedDict, total=False):
     attempt_counter: int
     max_validation_attempts: int
     repair_outcome: ValidationOutcome
+    behavioral_evidence: list[BehavioralEvidence]
+    verification_gaps: list[str]
+    locally_verified: bool
     revision_context: str
 
     residual_risks: list[str]
