@@ -92,15 +92,15 @@ def test_qualification_transport_cannot_select_commands_paths_or_approvals() -> 
             RuntimeQualificationRequestV1.model_validate({**valid, **extra})
 
 
-def test_stop_permission_targets_only_the_endpoint_used_by_qualification() -> None:
+def test_stop_permission_targets_only_the_runtime_and_endpoint_used_by_qualification() -> None:
     policy = json.loads((ROOT / "config/operator/release-qualification-policy.json").read_text())
     grants = [s for s in policy["Statement"] if s["Action"] == "bedrock-agentcore:StopRuntimeSession"]
-    # AWS evaluates the endpoint resource, not its parent runtime. No wildcard can cover other endpoints.
+    # Hosted AWS checks both resources. No wildcard can cover other runtimes or endpoints.
     assert grants == [
         {
             "Sid": "StopOnlyQualificationRuntimeSessions",
             "Effect": "Allow",
             "Action": "bedrock-agentcore:StopRuntimeSession",
-            "Resource": ARN + "/runtime-endpoint/DEFAULT",
+            "Resource": [ARN, ARN + "/runtime-endpoint/DEFAULT"],
         }
     ]
