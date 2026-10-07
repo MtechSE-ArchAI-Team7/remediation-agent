@@ -70,7 +70,8 @@ Apply `config/operator/release-qualification-policy.json` only to the existing
 `ecr:GetAuthorizationToken` on `*` (AWS requires that scope), invocation of the configured IAM model gateway, and
 start/invoke/stop access to the system `aws.codeinterpreter.v1` sandbox. The role's existing main-branch OIDC trust and
 one-hour sessions remain unchanged. It also permits `bedrock-agentcore:StopRuntimeSession` only on
-`arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3`.
+`arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3/runtime-endpoint/DEFAULT`.
+AWS authorizes this operation against the selected endpoint; permission on the parent runtime ARN does not cover it.
 This API cannot restrict a session ID in IAM: the operator driver generates and records only its own trial sessions. This does not add runtime-agent authority or provision cloud resources.
 
 Each qualification job runs one case three times, with a 55-minute job limit and a one-hour OIDC session. Reports bind

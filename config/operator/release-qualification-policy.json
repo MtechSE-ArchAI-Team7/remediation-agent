@@ -38,7 +38,7 @@
       "Sid": "StopOnlyQualificationRuntimeSessions",
       "Effect": "Allow",
       "Action": "bedrock-agentcore:StopRuntimeSession",
-      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3"
+      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3/runtime-endpoint/DEFAULT"
     }
   ]
 }

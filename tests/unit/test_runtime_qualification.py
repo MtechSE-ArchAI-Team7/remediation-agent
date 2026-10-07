@@ -1,5 +1,6 @@
 """Real Git and persisted receipts across adapter restart; cloud execution is controlled here."""
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from remediation_agent.domain.models import ValidationStorageEvidence
 from remediation_agent.domain.runtime_qualification import RuntimeQualificationRequestV1
 from remediation_agent.policy.loader import load_policy
 from remediation_agent.ports.models import BehavioralTaskExecution, BehavioralTaskRequest
+from scripts.qualify_runtime import ARN
 from tests.unit.test_provenance import _adapter, _ControlClient, _detail
 
 ROOT = Path(__file__).parents[2]
@@ -88,3 +90,17 @@ def test_qualification_transport_cannot_select_commands_paths_or_approvals() -> 
     for extra in ({"command": "echo unsafe"}, {"path": "/mnt/workspace/runs"}, {"approve": True}, {"fixture": "other"}):
         with pytest.raises(ValidationError):
             RuntimeQualificationRequestV1.model_validate({**valid, **extra})
+
+
+def test_stop_permission_targets_only_the_endpoint_used_by_qualification() -> None:
+    policy = json.loads((ROOT / "config/operator/release-qualification-policy.json").read_text())
+    grants = [s for s in policy["Statement"] if s["Action"] == "bedrock-agentcore:StopRuntimeSession"]
+    # AWS evaluates the endpoint resource, not its parent runtime. No wildcard can cover other endpoints.
+    assert grants == [
+        {
+            "Sid": "StopOnlyQualificationRuntimeSessions",
+            "Effect": "Allow",
+            "Action": "bedrock-agentcore:StopRuntimeSession",
+            "Resource": ARN + "/runtime-endpoint/DEFAULT",
+        }
+    ]
