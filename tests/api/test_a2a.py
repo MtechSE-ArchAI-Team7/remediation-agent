@@ -22,6 +22,7 @@ from remediation_agent.api.a2a_contracts import (
     EXPLAINABILITY_TRACE_MEDIA_TYPE,
     PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
+    PUBLICATION_RETRY_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
 )
 from remediation_agent.api.a2a_executor import task_state_for_final_status
@@ -37,7 +38,49 @@ from remediation_agent.domain.models import (
     RemediationRunView,
 )
 from remediation_agent.service import RemediationService
-from tests.conftest import diagnosis_handoff
+from tests.conftest import build_test_service, diagnosis_handoff, scripted_responses
+
+
+async def test_publication_failure_can_resume_through_real_a2a_request_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    from remediation_agent.ports.models import CreatedDraftPr, DraftPrRequest, PublicationError
+
+    service, model, _, _, provider, _, _ = build_test_service(
+        scripted_responses(), github_writes_enabled=True, github_repository="MtechSE-ArchAI-Team7/example-service"
+    )
+    original = provider.create_draft
+
+    async def unavailable(_: DraftPrRequest) -> CreatedDraftPr:
+        raise PublicationError("GITHUB_HTTP_503", retryable=True)
+
+    monkeypatch.setattr(provider, "create_draft", unavailable)
+    app = create_a2a_app(model, service, probe_provider="bedrock")
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE),
+            )
+            task = response.json()["result"]["task"]
+            assert task["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+            assert task["metadata"]["aios_run"]["status"] == "HUMAN_ACTION_REQUIRED"
+            retry = task["status"]["message"]["parts"][0]
+            assert retry["mediaType"] == PUBLICATION_RETRY_MEDIA_TYPE
+            assert retry["data"]["run_id"] == task["id"]
+            calls = len(model.requests)
+            provider.create = True
+            monkeypatch.setattr(provider, "create_draft", original)
+            resumed = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(retry["data"], PUBLICATION_RETRY_MEDIA_TYPE, task_id=task["id"]),
+            )
+            complete = resumed.json()["result"]["task"]
+            assert complete["id"] == task["id"]
+            assert complete["status"]["state"] == "TASK_STATE_COMPLETED"
+            assert complete["metadata"]["aios_run"]["status"] == "DRAFT_PR_CREATED"
+            assert len(model.requests) == calls
+
 
 _SESSION_ID = "2db1f13e-7351-4a1f-a4c6-630646366d52"
 _HEADERS = {

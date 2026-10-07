@@ -799,6 +799,7 @@ class RemediationRunView(StrictModel):
     run_id: NonEmptyStr
     status: FinalStatus
     approval_request: ApprovalRequest | None = None
+    publication_retry: PublicationRetryRequestV1 | None = None
     result: RemediationHandoffV1 | None = None
     downstream_delivery: DownstreamDeliveryReceiptV1 | None = None
     explainability: ExplainabilityTraceV1 | None = None

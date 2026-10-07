@@ -302,6 +302,14 @@ class RemediationA2AExecutor(AgentExecutor):
             name="remediation_handoff_v1",
             last_chunk=True,
         )
+        if view.status is FinalStatus.HUMAN_ACTION_REQUIRED and view.publication_retry is not None:
+            # Terminal A2A tasks cannot receive another SendMessage. Only a typed,
+            # evidence-bound publication retry keeps this task available for operator input.
+            message = updater.new_agent_message(
+                [_data_part(view.publication_retry.model_dump(mode="json"), PUBLICATION_RETRY_MEDIA_TYPE)]
+            )
+            await updater.update_status(a2a_pb.TaskState.TASK_STATE_INPUT_REQUIRED, message, metadata=metadata)
+            return
         message = _status_message(updater, view.status.value)
         task_state = task_state_for_final_status(view.status)
         if task_state not in {

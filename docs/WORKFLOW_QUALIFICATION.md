@@ -42,6 +42,10 @@ An evidence upload failure blocks deployment even when the trials themselves pas
   `PublicationRetryRequestV1`. The operation reconciles remote state and never generates a new fix, silently rebases,
   force-pushes or accepts another PR. Changed base/assets/policy require a fresh diagnosis and validation.
 
+An eligible publication failure retains workflow status `HUMAN_ACTION_REQUIRED` but uses A2A `INPUT_REQUIRED`, with
+the exact `PublicationRetryRequestV1` in its status message. This permits retry on the same task; the A2A SDK rejects
+messages sent to terminal failed tasks. Other human-action outcomes remain terminal and cannot bypass revalidation.
+
 `verification-brief.json` is immutable validation evidence sealed before publication. `publication-journal.json`,
 `cleanup.json`, and the final handoff describe delivery/recovery outcomes. All artifacts are manifest-digested and redacted.
 Accepted risks remain visible; an approval is distinct from evidence resolving a risk.

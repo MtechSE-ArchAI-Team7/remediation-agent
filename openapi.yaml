@@ -1590,6 +1590,10 @@ components:
           anyOf:
           - $ref: '#/components/schemas/ApprovalRequest'
           - type: 'null'
+        publication_retry:
+          anyOf:
+          - $ref: '#/components/schemas/PublicationRetryRequestV1'
+          - type: 'null'
         result:
           anyOf:
           - $ref: '#/components/schemas/RemediationHandoffV1'

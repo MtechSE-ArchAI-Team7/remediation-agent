@@ -21,6 +21,7 @@ from remediation_agent.domain.models import (
     DiagnosisHandoffV1,
     DownstreamDeliveryReceiptV1,
     ErrorRecord,
+    PublicationRetryRequestV1,
     RemediationHandoffV1,
     RemediationRunView,
 )
@@ -259,10 +260,23 @@ class RemediationService:
             if approval_request is not None
             else state.get("final_status", FinalStatus.INTERNAL_ERROR)
         )
+        journal = state.get("publication_journal")
+        retry = (
+            PublicationRetryRequestV1(run_id=run_id, candidate_digest=journal.candidate_digest)
+            if status is FinalStatus.HUMAN_ACTION_REQUIRED
+            and journal is not None
+            and state.get("execution_binding") is not None
+            and state.get("locally_verified")
+            and state.get("evidence_persisted")
+            and journal.candidate_digest == state.get("diff_digest")
+            and any(f.category == "PUBLICATION_FAILURE" for f in state.get("workflow_failures", []))
+            else None
+        )
         return RemediationRunView(
             run_id=run_id,
             status=status,
             approval_request=approval_request,
+            publication_retry=retry,
             result=result,
             downstream_delivery=state.get("downstream_delivery"),
             explainability=build_explainability_trace(
