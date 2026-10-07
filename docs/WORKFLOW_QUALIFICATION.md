@@ -27,6 +27,10 @@ A failed trial stops the series. Three consecutive complete trials of each case 
 configuration and asset digests are required for release. Checkpoint routing benchmarks with fake models/sandboxes are
 useful unit evidence, not end-to-end qualification. Default tests remain independent of live credentials.
 
+The qualification container writes private evidence as its non-root runtime user. The workflow transfers ownership of
+only its dedicated output directory back to the GitHub runner before artifact upload, preserving private file modes.
+An evidence upload failure blocks deployment even when the trials themselves pass.
+
 ## Failure recovery
 
 - `SOURCE_MISMATCH` / `MALFORMED_PROPOSAL`: bounded edit correction uses the exact inspected line and whitespace.

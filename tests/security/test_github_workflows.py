@@ -96,6 +96,22 @@ def test_pull_requests_run_ci_without_release_jobs() -> None:
     assert "pull_request" not in str(jobs["deploy"]["if"])
 
 
+def test_qualification_transfers_private_container_evidence_before_upload() -> None:
+    job = _jobs(_load_workflow("qualify-agentcore-runtime.yaml"))["qualify"]
+    steps = cast(list[dict[str, object]], job["steps"])
+    transfer_index = next(
+        i for i, step in enumerate(steps) if step.get("name") == "Transfer private evidence to the artifact uploader"
+    )
+    upload_index = next(i for i, step in enumerate(steps) if step.get("uses") == "actions/upload-artifact@v4")
+    transfer = steps[transfer_index]
+    assert transfer_index < upload_index
+    assert transfer["if"] == "${{ always() }}"
+    script = cast(str, transfer["run"])
+    assert 'evidence="$RUNNER_TEMP/qualification-output"' in script
+    assert 'chown --recursive --no-dereference "$(id -u):$(id -g)" "$evidence"' in script
+    assert "chmod" not in script  # Private evidence stays private; only the owning CI identity changes.
+
+
 def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -> None:
     workflow = _load_workflow("image.yaml")
     triggers = _trigger(workflow)

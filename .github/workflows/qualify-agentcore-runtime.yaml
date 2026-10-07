@@ -52,7 +52,8 @@ jobs:
           immutable_image="${IMAGE_URI%:*}@${IMAGE_DIGEST}"
           docker pull "$immutable_image"
           mkdir -p "$RUNNER_TEMP/qualification-output"
-          chmod 0777 "$RUNNER_TEMP/qualification-output"
+          chmod 0700 "$RUNNER_TEMP/qualification-output"
+          sudo chown 10001:10001 "$RUNNER_TEMP/qualification-output"
           docker run --rm --env-file "$RUNNER_TEMP/qualification.env" \
             -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_DEFAULT_REGION \
             -e AIOS_QUALIFICATION_SOURCE_SHA="$SOURCE_SHA" \
@@ -60,6 +61,14 @@ jobs:
             --volume "$RUNNER_TEMP/qualification-output:/qualification-output" \
             "$immutable_image" python scripts/qualify_workflow.py \
             --backend code-interpreter --case "$CASE" --trials 3 --output /qualification-output
+      - name: Transfer private evidence to the artifact uploader
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/qualification-output"
+          if [ -d "$evidence" ]; then
+            sudo chown --recursive --no-dereference "$(id -u):$(id -g)" "$evidence"
+          fi
       - name: Retain bounded qualification evidence, including failed trials
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
