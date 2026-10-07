@@ -76,3 +76,8 @@ The operator driver requires explicit `AIOS_RUN_RUNTIME_QUALIFICATION=1`, exact 
 and an output directory. The guarded workflow supplies these values. A local process restart unit test is routing evidence;
 only an actual managed-runtime result with `managed_filesystem` and `process_restarted` true qualifies the release.
 The separate post-release native replay must still verify an actual GitHub draft and exact validated head SHA.
+
+The release trial also verifies task-name contracts before approval: prose in `proposed_validation_tasks` triggers the
+existing single planning correction; persistent unknown IDs block before patch generation. Edit proposals with unknown
+task IDs use the bounded edit correction loop before application. Unknown text is never heuristically treated as a task
+or as coverage. Explanations belong in plan steps; required tasks still come from the reviewed contract and policy.

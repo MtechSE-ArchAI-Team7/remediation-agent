@@ -82,7 +82,7 @@ def test_purchase_requires_matching_contract_and_complete_inspection(change: str
     task = policy.validation_tasks["purchase_regression"]
     contract = task.request_contract
     assert contract is not None
-    plan = scripted_responses()[ModelOperation.PLANNING][0]
+    plan = scripted_responses(tasks=["purchase_regression"])[ModelOperation.PLANNING][0]
     assert isinstance(plan, RemediationPlan)
     plan = plan.model_copy(
         update={
@@ -116,7 +116,7 @@ def test_approved_plan_limitations_do_not_replace_or_invalidate_complete_coverag
     task = policy.validation_tasks["purchase_regression"]
     contract = task.request_contract
     assert contract is not None
-    plan = scripted_responses()[ModelOperation.PLANNING][0]
+    plan = scripted_responses(tasks=["purchase_regression"])[ModelOperation.PLANNING][0]
     assert isinstance(plan, RemediationPlan)
     plan = plan.model_copy(
         update={
@@ -180,7 +180,7 @@ def test_contract_paraphrases_and_json_formatting_are_not_equality_gates(
             "state_changes": ["Inventory remains correct after a server restart."],
         }
     )
-    plan = scripted_responses()[ModelOperation.PLANNING][0]
+    plan = scripted_responses(tasks=["purchase_regression"])[ModelOperation.PLANNING][0]
     assert isinstance(plan, RemediationPlan)
     plan = plan.model_copy(
         update={

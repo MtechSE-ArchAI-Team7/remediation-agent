@@ -387,3 +387,41 @@ async def test_storage_failure_keeps_primary_evidence_and_never_repairs_or_publi
     assert storage[0]["failures"][0]["errno"] == 121 and storage[0]["duration_ms"] == 152
     assert storage[0]["cleanup"][0]["status"] == "FAILED"
     assert "patch.diff" in artifacts.requests[-1].files
+
+
+@pytest.mark.parametrize("corrected", [False, True])
+async def test_prose_task_names_are_corrected_before_patch_generation(corrected: bool) -> None:
+    responses = scripted_responses()
+    plan = responses[ModelOperation.PLANNING][0]
+    assert isinstance(plan, RemediationPlan)
+    prose = plan.model_copy(update={"proposed_validation_tasks": ["Run unit_tests and demonstrate the regression."]})
+    responses[ModelOperation.PLANNING] = [prose, plan if corrected else prose]
+    service, model, _, sandbox, pr, _, _ = build_test_service(responses)
+    result = await service.start(diagnosis_handoff())
+    planning = [r for r in model.requests if r.operation is ModelOperation.PLANNING]
+    assert len(planning) == 2 and "exact operator task IDs" in str(planning[1].payload["contract_errors"])
+    if corrected:
+        assert result.status is FinalStatus.DRAFT_PR_PREPARED and pr.requests
+    else:
+        assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED and not pr.requests and not sandbox.tasks_run
+        assert not any(r.operation is ModelOperation.PATCH for r in model.requests)
+
+
+async def test_patch_task_metadata_uses_edit_correction_before_application() -> None:
+    from remediation_agent.domain.models import PatchCandidate
+
+    responses = scripted_responses()
+    patch = responses[ModelOperation.PATCH][0]
+    assert isinstance(patch, PatchCandidate)
+    responses[ModelOperation.PATCH] = [
+        patch.model_copy(update={"proposed_validation_tasks": ["Run unit_tests."]}),
+        patch,
+    ]
+    service, model, _, sandbox, pr, artifacts, _ = build_test_service(responses)
+    result = await service.start(diagnosis_handoff())
+    assert result.status is FinalStatus.DRAFT_PR_PREPARED and pr.requests
+    requests = [r for r in model.requests if r.operation is ModelOperation.PATCH]
+    assert len(requests) == 2
+    assert "UNKNOWN_VALIDATION_TASK" in str(requests[1].payload["edit_failures"])
+    failures = json.loads(artifacts.requests[-1].files["workflow-failures.json"])
+    assert failures[0]["code"] == "UNKNOWN_VALIDATION_TASK"

@@ -944,6 +944,19 @@ class WorkflowNodes:
                 )
                 records.append(generated.record)
                 previous_patch = generated.value
+                unknown_tasks = sorted(
+                    set(generated.value.proposed_validation_tasks) - self.policy.config.validation_tasks.keys()
+                )
+                if unknown_tasks:
+                    raise EditConstructionError(
+                        WorkflowFailure(
+                            category="MALFORMED_PROPOSAL",
+                            code="UNKNOWN_VALIDATION_TASK",
+                            retryable=True,
+                            detail="proposed_validation_tasks requires exact operator task IDs, without prose: "
+                            + ", ".join(unknown_tasks)[:3000],
+                        )
+                    )
                 compiled = await self.repository.compile_edits(
                     EditCompileRequest(
                         workspace=state["workspace"],

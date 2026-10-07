@@ -32,6 +32,12 @@ def coverage_gaps(
     gaps: list[str] = [
         f"Implementation requirement unresolved: {requirement}" for requirement in plan.blocking_requirements
     ]
+    unknown_tasks = sorted(set(plan.proposed_validation_tasks) - policy.validation_tasks.keys())
+    if unknown_tasks:
+        gaps.append(
+            "proposed_validation_tasks must contain exact operator task IDs, without explanatory prose. "
+            "Unknown task names: " + ", ".join(unknown_tasks)
+        )
     expected = set(acceptance_ids(handoff))
     actual = [item.criterion_id for item in plan.verification]
     if set(actual) != expected or len(actual) != len(expected):
