@@ -1,0 +1,668 @@
+{
+  "$defs": {
+    "ArtifactManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRef"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "run_id": {
+          "minLength": 1,
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "ArtifactManifest",
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "minLength": 1,
+          "title": "Digest",
+          "type": "string"
+        },
+        "media_type": {
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "digest",
+        "media_type"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "BehavioralCaseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "PASSED",
+            "ASSERTION_FAILED",
+            "SETUP_ERROR",
+            "SKIPPED"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "test_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Test Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "test_id",
+        "outcome"
+      ],
+      "title": "BehavioralCaseResult",
+      "type": "object"
+    },
+    "BehavioralEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "assertions_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Assertions Digest",
+          "type": "string"
+        },
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "base": {
+          "$ref": "#/$defs/BehavioralReport"
+        },
+        "base_commit": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "candidate": {
+          "$ref": "#/$defs/BehavioralReport"
+        },
+        "cleanup_succeeded": {
+          "title": "Cleanup Succeeded",
+          "type": "boolean"
+        },
+        "dependency_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Dependency Digest",
+          "type": "string"
+        },
+        "patch_digest": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Patch Digest",
+          "type": "string"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "attempt",
+        "base_commit",
+        "patch_digest",
+        "assertions_digest",
+        "dependency_digest",
+        "base",
+        "candidate",
+        "cleanup_succeeded"
+      ],
+      "title": "BehavioralEvidence",
+      "type": "object"
+    },
+    "BehavioralReport": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/BehavioralCaseResult"
+          },
+          "maxItems": 200,
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        },
+        "runtime_digest": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Digest"
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "title": "BehavioralReport",
+      "type": "object"
+    },
+    "ReleaseProvenanceStatus": {
+      "enum": [
+        "LOCAL",
+        "VERIFIED",
+        "UNAVAILABLE",
+        "AMBIGUOUS"
+      ],
+      "title": "ReleaseProvenanceStatus",
+      "type": "string"
+    },
+    "ReleaseProvenanceV1": {
+      "additionalProperties": false,
+      "description": "Bounded release identity resolved by the operator-owned runtime adapter.",
+      "properties": {
+        "error_code": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Code"
+        },
+        "image_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Digest"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-[0-9]$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "release_id": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Release Id"
+        },
+        "runtime_arn": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Arn"
+        },
+        "runtime_id": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Id"
+        },
+        "runtime_version": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]{0,4}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Version"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_revision": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Revision"
+        },
+        "status": {
+          "$ref": "#/$defs/ReleaseProvenanceStatus"
+        },
+        "verification_method": {
+          "enum": [
+            "LOCAL",
+            "AGENTCORE_CONTROL_PLANE"
+          ],
+          "title": "Verification Method",
+          "type": "string"
+        },
+        "verified_at": {
+          "format": "date-time",
+          "title": "Verified At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "verified_at",
+        "verification_method"
+      ],
+      "title": "ReleaseProvenanceV1",
+      "type": "object"
+    },
+    "ValidationCleanupReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "diagnostic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationDiagnostic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resource": {
+          "enum": [
+            "SNAPSHOT",
+            "SCRATCH",
+            "SESSION"
+          ],
+          "title": "Resource",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ValidationCleanupStatus"
+        }
+      },
+      "required": [
+        "resource",
+        "resource_id",
+        "status"
+      ],
+      "title": "ValidationCleanupReceipt",
+      "type": "object"
+    },
+    "ValidationCleanupStatus": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "NOT_APPLICABLE",
+        "UNKNOWN"
+      ],
+      "title": "ValidationCleanupStatus",
+      "type": "string"
+    },
+    "ValidationDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errno"
+        },
+        "operation": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "resource": {
+          "enum": [
+            "WORKSPACE",
+            "SCRATCH",
+            "SNAPSHOT",
+            "SESSION",
+            "REPORT",
+            "ASSET"
+          ],
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "operation",
+        "resource"
+      ],
+      "title": "ValidationDiagnostic",
+      "type": "object"
+    },
+    "ValidationStorageEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "minimum": 1,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "cleanup": {
+          "items": {
+            "$ref": "#/$defs/ValidationCleanupReceipt"
+          },
+          "maxItems": 10,
+          "title": "Cleanup",
+          "type": "array"
+        },
+        "duration_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/ValidationDiagnostic"
+          },
+          "maxItems": 20,
+          "title": "Failures",
+          "type": "array"
+        },
+        "managed_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Managed Bytes",
+          "type": "integer"
+        },
+        "projected_files": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Projected Files",
+          "type": "integer"
+        },
+        "projected_scratch_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Projected Scratch Bytes",
+          "type": "integer"
+        },
+        "reports": {
+          "items": {
+            "$ref": "#/$defs/BehavioralReport"
+          },
+          "maxItems": 2,
+          "title": "Reports",
+          "type": "array"
+        },
+        "scratch_free_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Scratch Free Bytes",
+          "type": "integer"
+        },
+        "task_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Task Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_name",
+        "attempt"
+      ],
+      "title": "ValidationStorageEvidence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "artifact_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactManifest"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "asset_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Asset Digest",
+      "type": "string"
+    },
+    "candidate_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Candidate Digest",
+      "type": "string"
+    },
+    "cleanup_verified": {
+      "default": false,
+      "title": "Cleanup Verified",
+      "type": "boolean"
+    },
+    "completed_at": {
+      "format": "date-time",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BehavioralEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "failures": {
+      "items": {
+        "$ref": "#/$defs/ValidationDiagnostic"
+      },
+      "maxItems": 20,
+      "title": "Failures",
+      "type": "array"
+    },
+    "fixture": {
+      "enum": [
+        "ah54",
+        "ah56"
+      ],
+      "title": "Fixture",
+      "type": "string"
+    },
+    "fixture_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Fixture Digest",
+      "type": "string"
+    },
+    "git_integrity_verified": {
+      "default": false,
+      "title": "Git Integrity Verified",
+      "type": "boolean"
+    },
+    "managed_filesystem": {
+      "title": "Managed Filesystem",
+      "type": "boolean"
+    },
+    "policy_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Policy Digest",
+      "type": "string"
+    },
+    "process_restarted": {
+      "default": false,
+      "title": "Process Restarted",
+      "type": "boolean"
+    },
+    "qualification_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Qualification Id",
+      "type": "string"
+    },
+    "receipt_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Receipt Digest",
+      "type": "string"
+    },
+    "release": {
+      "$ref": "#/$defs/ReleaseProvenanceV1"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "PREPARED",
+        "PASSED",
+        "FAILED"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "storage": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ValidationStorageEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "qualification_id",
+    "fixture",
+    "status",
+    "release",
+    "policy_digest",
+    "asset_digest",
+    "fixture_digest",
+    "candidate_digest",
+    "receipt_digest",
+    "managed_filesystem",
+    "completed_at"
+  ],
+  "title": "RuntimeQualificationResultV1",
+  "type": "object"
+}

@@ -580,6 +580,60 @@
       "title": "ValidationCleanupStatus",
       "type": "string"
     },
+    "ValidationDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errno"
+        },
+        "operation": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "resource": {
+          "enum": [
+            "WORKSPACE",
+            "SCRATCH",
+            "SNAPSHOT",
+            "SESSION",
+            "REPORT",
+            "ASSET"
+          ],
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "operation",
+        "resource"
+      ],
+      "title": "ValidationDiagnostic",
+      "type": "object"
+    },
     "ValidationExecutionRecord": {
       "additionalProperties": false,
       "description": "Redacted proof of the deterministic boundary used for one validation task.",
@@ -591,6 +645,24 @@
         },
         "backend": {
           "$ref": "#/$defs/ValidationBackend"
+        },
+        "cleanup_attempts": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Cleanup Attempts",
+          "type": "integer"
+        },
+        "cleanup_diagnostic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationDiagnostic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "cleanup_status": {
           "$ref": "#/$defs/ValidationCleanupStatus"

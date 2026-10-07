@@ -487,6 +487,27 @@ jobs:
           echo "The bounded AgentCore Runtime probe failed after three attempts." >&2
           exit 1
 
+      - name: Qualify managed filesystem and cold session resume
+        env:
+          AIOS_RUN_RUNTIME_QUALIFICATION: "1"
+          SOURCE_REVISION: ${{ inputs.source-revision }}
+          IMAGE_DIGEST: ${{ inputs.image-digest }}
+          RUNTIME_VERSION: ${{ steps.release.outputs.runtime-version }}
+          RELEASE_ID: ${{ inputs.release-id }}
+        run: |
+          uv run python scripts/qualify_runtime.py \
+            --source "$SOURCE_REVISION" --image "$IMAGE_DIGEST" \
+            --version "$RUNTIME_VERSION" --release "$RELEASE_ID" \
+            --output "${RUNNER_TEMP}/runtime-qualification"
+
+      - name: Preserve hosted qualification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-filesystem-qualification
+          path: ${{ runner.temp }}/runtime-qualification
+          if-no-files-found: warn
+
       - name: Restore previous runtime image
         id: rollback
         if: ${{ failure() && steps.release.outputs.changed == 'true' }}

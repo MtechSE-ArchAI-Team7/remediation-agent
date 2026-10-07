@@ -52,6 +52,7 @@ async def test_preexisting_regression_is_visible_but_new_regression_blocks(
 
     async def with_regression(request: BehavioralTaskRequest) -> BehavioralTaskExecution:
         execution = await original(request)
+        assert execution.evidence is not None
         base = BehavioralReport(
             cases=[
                 BehavioralCaseResult(test_id="regression", outcome="ASSERTION_FAILED"),
@@ -118,7 +119,9 @@ async def test_false_reproduction_fails_closed(mode: str, monkeypatch: pytest.Mo
         if mode == "unsupported":
             raise ValueError("UNSUPPORTED_VALIDATION_ENVIRONMENT: absent native dependencies")
         execution = await original(request)
+        assert execution.evidence is not None
         evidence = execution.evidence
+        assert evidence is not None
         if mode == "base_passes":
             evidence = evidence.model_copy(update={"base": evidence.candidate})
         if mode in {"setup", "skipped", "missing"}:
@@ -302,6 +305,7 @@ async def test_revision_cannot_change_assertions_to_turn_a_failure_green(monkeyp
 
     async def altered(request: BehavioralTaskRequest) -> BehavioralTaskExecution:
         result = await original(request)
+        assert result.evidence is not None
         if request.attempt == 2:
             return result.model_copy(
                 update={"evidence": result.evidence.model_copy(update={"assertions_digest": "sha256:changed"})}
@@ -323,6 +327,7 @@ async def test_candidate_regression_without_base_reproduction_requires_human(mon
 
     async def altered(request: BehavioralTaskRequest) -> BehavioralTaskExecution:
         result = await original(request)
+        assert result.evidence is not None
         base = BehavioralReport(cases=[BehavioralCaseResult(test_id="regression", outcome="PASSED")])
         return result.model_copy(update={"evidence": result.evidence.model_copy(update={"base": base})})
 
@@ -330,3 +335,55 @@ async def test_candidate_regression_without_base_reproduction_requires_human(mon
     result = await service.start(diagnosis_handoff())
     assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
     assert not sandbox.restores and not pr.requests and sandbox.destroyed
+
+
+async def test_storage_failure_keeps_primary_evidence_and_never_repairs_or_publishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from remediation_agent.domain.enums import ValidationCleanupStatus
+    from remediation_agent.domain.models import (
+        ValidationCleanupReceipt,
+        ValidationDiagnostic,
+        ValidationStorageEvidence,
+    )
+
+    service, model, _, sandbox, pr, artifacts, _ = build_test_service(scripted_responses())
+
+    async def failure(request: BehavioralTaskRequest) -> BehavioralTaskExecution:
+        return BehavioralTaskExecution(
+            storage=ValidationStorageEvidence(
+                task_name=request.task_name,
+                attempt=1,
+                duration_ms=152,
+                failures=[
+                    ValidationDiagnostic(
+                        code="WORKSPACE_STORAGE_IO_ERROR",
+                        operation="stage_candidate",
+                        resource="SNAPSHOT",
+                        errno=121,
+                        detail="primary I/O failure",
+                    )
+                ],
+                cleanup=[
+                    ValidationCleanupReceipt(
+                        resource="SNAPSHOT",
+                        resource_id="owned",
+                        status=ValidationCleanupStatus.FAILED,
+                        attempts=3,
+                        diagnostic=ValidationDiagnostic(
+                            code="SNAPSHOT_CLEANUP_FAILED", operation="snapshot_cleanup", resource="SNAPSHOT", errno=121
+                        ),
+                    )
+                ],
+            )
+        )
+
+    monkeypatch.setattr(sandbox, "run_behavior", failure)
+    result = await service.start(diagnosis_handoff())
+    assert result.status is FinalStatus.HUMAN_ACTION_REQUIRED
+    assert not pr.requests and not sandbox.restores
+    assert not any(r.operation is ModelOperation.REVISION for r in model.requests)
+    storage = json.loads(artifacts.requests[-1].files["validation-storage.json"])
+    assert storage[0]["failures"][0]["errno"] == 121 and storage[0]["duration_ms"] == 152
+    assert storage[0]["cleanup"][0]["status"] == "FAILED"
+    assert "patch.diff" in artifacts.requests[-1].files

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from unidiff import PatchSet  # type: ignore[attr-defined]
 
+from remediation_agent.adapters.validation_storage import _TRANSIENT, ValidationScratch, diagnostic
 from remediation_agent.domain.enums import (
     ValidationBackend,
     ValidationCleanupStatus,
@@ -20,7 +21,9 @@ from remediation_agent.domain.models import (
     ArtifactManifest,
     CapabilityReportV1,
     CleanupResult,
+    ValidationCleanupReceipt,
     ValidationExecutionRecord,
+    ValidationSnapshotRef,
     ValidationTaskResult,
     WorkspaceRef,
 )
@@ -34,6 +37,7 @@ from remediation_agent.ports.models import (
     SandboxTaskExecution,
     ValidationTaskRequest,
 )
+from remediation_agent.ports.protocols import ArtifactStore
 
 _CONTAINER_TMPFS = "/tmp:rw,noexec,nosuid,size=64m"  # noqa: S108  # nosec B108
 
@@ -46,12 +50,22 @@ class DockerSandboxExecutor:
     """Apply patches with Git and run only configured argv inside a locked-down container."""
 
     def __init__(
-        self, workspace_root: Path, image: str, *, behavioral_bundle: Path = Path("/app/validation/ecommerce")
+        self,
+        workspace_root: Path,
+        image: str,
+        *,
+        behavioral_bundle: Path = Path("/app/validation/ecommerce"),
+        scratch_root: Path = Path("/tmp/aios-validation"),  # noqa: S108  # nosec B108
+        result_store: ArtifactStore | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
         self.image = image
         self.behavioral_bundle = behavioral_bundle
         self._active_containers: dict[str, str] = {}
+        self._destroyed_workspaces: set[str] = set()
+        self.scratch = ValidationScratch(scratch_root, self.workspace_root)
+        self.stage_host_bundle = True
+        self.result_store = result_store
 
     def execution_profile(self) -> SandboxExecutionProfile:
         return SandboxExecutionProfile(
@@ -80,6 +94,19 @@ class DockerSandboxExecutor:
         try:
             execution = await self.run_behavior(request.model_copy(update={"capability_only": True}))
             pair = execution.evidence
+            if pair is None or execution.storage is not None and execution.storage.failures:
+                detail = (
+                    "; ".join(f.code + ": " + f.detail for f in execution.storage.failures)
+                    if execution.storage
+                    else "No behavioral evidence"
+                )
+                return CapabilityReportV1(
+                    task_name=request.task_name,
+                    available=False,
+                    base_commit=request.workspace.base_commit,
+                    failure_code="CAPABILITY_UNAVAILABLE",
+                    detail=detail[:2000],
+                )
             ready = all(case.outcome in {"PASSED", "ASSERTION_FAILED"} for case in pair.base.cases)
             return CapabilityReportV1(
                 task_name=request.task_name,
@@ -128,7 +155,7 @@ class DockerSandboxExecutor:
         return await run_behavioral_pair(self, request)
 
     async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
-        root = self._workspace(request.workspace)
+        root = self.validation_root(request)
         unresolved_workdir = root / request.task.cwd
         cursor = root
         for part in Path(request.task.cwd).parts:
@@ -140,8 +167,9 @@ class DockerSandboxExecutor:
             raise SandboxError("validation cwd escapes or is absent from workspace")
         relative_workdir = workdir.relative_to(root).as_posix()
         container_workdir = "/workspace" if relative_workdir == "." else f"/workspace/{relative_workdir}"
-        container_name = f"aios-remediation-{request.workspace.workspace_id[:30]}-{uuid4().hex[:12]}"
-        self._active_containers[container_name] = request.workspace.workspace_id
+        identity = request.snapshot.workspace_id if request.snapshot is not None else request.workspace.workspace_id
+        container_name = f"aios-remediation-{identity[:30]}-{uuid4().hex[:12]}"
+        self._active_containers[container_name] = identity
         argv = [
             "docker",
             "run",
@@ -223,6 +251,28 @@ class DockerSandboxExecutor:
         )
         return self._task_execution(request, result, ValidationCleanupStatus.SUCCEEDED)
 
+    def validation_root(self, request: ValidationTaskRequest) -> Path:
+        snapshot = request.snapshot
+        if snapshot is None:
+            return self._workspace(request.workspace)
+        if (
+            snapshot.owner_workspace_id != request.workspace.workspace_id
+            or snapshot.base_commit != request.workspace.base_commit
+        ):
+            raise SandboxError("Validation snapshot owner or base mismatch")
+        return self.scratch.resolve(snapshot)
+
+    async def cleanup_snapshot(self, snapshot: ValidationSnapshotRef) -> ValidationCleanupReceipt:
+        root = self.scratch.resolve(snapshot, require_exists=False)
+        for name, owner in list(self._active_containers.items()):
+            if owner == snapshot.workspace_id:
+                if not await self._remove_container(name, root.parent):
+                    return ValidationCleanupReceipt(
+                        resource="SNAPSHOT", resource_id=snapshot.workspace_id, status=ValidationCleanupStatus.FAILED
+                    )
+                self._active_containers.pop(name, None)
+        return await self.scratch.cleanup_snapshot(snapshot)
+
     def _task_execution(
         self,
         request: ValidationTaskRequest,
@@ -252,18 +302,38 @@ class DockerSandboxExecutor:
 
     async def destroy(self, workspace: WorkspaceRef) -> CleanupResult:
         try:
-            root = self._workspace(workspace)
-            container_names = [
-                name for name, workspace_id in self._active_containers.items() if workspace_id == workspace.workspace_id
-            ]
-            for name in container_names:
-                if not await self._remove_container(name, root):
-                    raise SandboxError(f"could not remove active validation container: {name}")
-                self._active_containers.pop(name, None)
-            shutil.rmtree(root)
+            unresolved = Path(workspace.path)
+            root = unresolved.resolve()
+            if unresolved.is_symlink() or not root.is_relative_to(self.workspace_root) or root == self.workspace_root:
+                raise SandboxError("workspace cleanup target is unsafe")
+            if not root.exists() and workspace.path not in self._destroyed_workspaces:
+                raise SandboxError("workspace cleanup cannot confirm ownership of absent resource")
+            failures = []
+            for name, owner in list(self._active_containers.items()):
+                if owner != workspace.workspace_id:
+                    continue
+                if await self._remove_container(name, self.workspace_root):
+                    self._active_containers.pop(name, None)
+                else:
+                    failures.append(name)
+            if failures:
+                raise SandboxError("active validation processes could not be stopped")
+            for attempt in range(1, 4):
+                try:
+                    if root.exists():
+                        await asyncio.to_thread(shutil.rmtree, root)
+                    if root.exists():
+                        raise SandboxError("workspace remains after cleanup")
+                    self._destroyed_workspaces.add(workspace.path)
+                    return CleanupResult(succeeded=True, detail="Workspace destroyed and processes stopped.")
+                except OSError as exc:
+                    if exc.errno not in _TRANSIENT or attempt == 3:
+                        raise
+                    await asyncio.sleep(0.1 * attempt)
         except (OSError, RuntimeError) as exc:
-            return CleanupResult(succeeded=False, detail=f"Workspace cleanup failed: {exc}")
-        return CleanupResult(succeeded=True, detail="Workspace destroyed.")
+            problem = diagnostic(exc, "workspace_cleanup", "WORKSPACE")
+            return CleanupResult(succeeded=False, detail=f"{problem.code}: {problem.detail}")
+        return CleanupResult(succeeded=False, detail="Workspace cleanup was not confirmed.")
 
     def _workspace(self, workspace: WorkspaceRef) -> Path:
         unresolved = Path(workspace.path)

@@ -117,6 +117,7 @@ class RemediationService:
                 state["handoff"].repository,
                 state["workspace"],
                 recovery_is_safe=self._workspace_recovery_is_safe(state),
+                expected_diff=state.get("validation_baseline_digest", "sha256:" + hashlib.sha256(b"").hexdigest()),
             )
             if recovered != state["workspace"]:
                 await self.graph.aupdate_state(self._config(run_id), {"workspace": recovered})

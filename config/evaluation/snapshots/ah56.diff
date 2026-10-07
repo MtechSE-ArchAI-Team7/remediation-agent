@@ -1,0 +1,90 @@
+diff --git a/public/app.js b/public/app.js
+index 3d842fa..81a5b23 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -154,20 +154,30 @@ function removeFromCart(productId) {
+     showCart(); // Inefficient: reloads entire cart
+ }
+ 
+-// BUG 13: Async/await misuse
++// Submit the cart only after checkout persistence is confirmed.
+ async function checkout() {
+-    // No loading state
+-    // No error handling
+-    const response = fetch('/checkout', {
+-        method: 'POST',
+-        headers: { 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ cart, token: userToken })
+-    });
+-    
+-    // BUG: Not awaiting promise!
+-    alert('Order placed successfully!');
+-    cart = [];
+-    updateCartCount();
++    try {
++        const response = await fetch('/checkout', {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body: JSON.stringify({ cart, token: userToken })
++        });
++
++        if (!response.ok) {
++            return;
++        }
++
++        const data = await response.json();
++        if (data.message !== 'Order placed') {
++            return;
++        }
++
++        cart = [];
++        updateCartCount();
++        alert('Order placed successfully!');
++    } catch (error) {
++        // Keep the cart intact when checkout cannot be confirmed.
++    }
+ }
+ 
+ // VULNERABILITY 5: Eval usage (code injection)
+diff --git a/server.js b/server.js
+index b22d4c0..cedd08a 100644
+--- a/server.js
++++ b/server.js
+@@ -313,8 +313,35 @@ app.get('/products', (req, res) => {
+ 
+ // Accept checkout submissions from the cart
+ app.post('/checkout', (req, res) => {
+-  const { cart } = req.body;
+-  res.json({ message: 'Order placed', itemCount: cart ? cart.length : 0 });
++  const { cart } = req.body || {};
++
++  if (!Array.isArray(cart) || cart.length === 0 ||
++      !cart.every((item) => item && Number.isSafeInteger(item.id) && item.id >= 0)) {
++    return res.status(400).json({ error: 'Invalid cart' });
++  }
++
++  const productIds = cart.map((item) => item.id);
++  const placeholders = productIds.map(() => '?').join(', ');
++
++  db.all(`SELECT id, price FROM products WHERE id IN (${placeholders})`, productIds, (err, products) => {
++    if (err) {
++      return res.status(500).json({ error: 'Database error' });
++    }
++
++    const pricesById = new Map(products.map((product) => [product.id, product.price]));
++    if (pricesById.size !== new Set(productIds).size) {
++      return res.status(400).json({ error: 'Invalid cart' });
++    }
++
++    const total = productIds.reduce((sum, productId) => sum + pricesById.get(productId), 0);
++    db.run('INSERT INTO orders (total) VALUES (?)', [total], function (err) {
++      if (err) {
++        return res.status(500).json({ error: 'Database error' });
++      }
++
++      res.json({ message: 'Order placed', itemCount: cart.length });
++    });
++  });
+ });
+ 
+ app.listen(PORT, () => {

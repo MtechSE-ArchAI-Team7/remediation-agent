@@ -1782,6 +1782,45 @@ components:
       - NOT_APPLICABLE
       - UNKNOWN
       title: ValidationCleanupStatus
+    ValidationDiagnostic:
+      properties:
+        code:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Code
+        operation:
+          type: string
+          maxLength: 200
+          minLength: 1
+          title: Operation
+        resource:
+          type: string
+          enum:
+          - WORKSPACE
+          - SCRATCH
+          - SNAPSHOT
+          - SESSION
+          - REPORT
+          - ASSET
+          title: Resource
+        detail:
+          type: string
+          maxLength: 2000
+          title: Detail
+          default: ''
+        errno:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Errno
+      additionalProperties: false
+      type: object
+      required:
+      - code
+      - operation
+      - resource
+      title: ValidationDiagnostic
     ValidationError:
       properties:
         loc:
@@ -1844,6 +1883,16 @@ components:
           title: Enforced Controls
         cleanup_status:
           $ref: '#/components/schemas/ValidationCleanupStatus'
+        cleanup_attempts:
+          type: integer
+          maximum: 3.0
+          minimum: 0.0
+          title: Cleanup Attempts
+          default: 1
+        cleanup_diagnostic:
+          anyOf:
+          - $ref: '#/components/schemas/ValidationDiagnostic'
+          - type: 'null'
         outcome:
           $ref: '#/components/schemas/ValidationOutcome'
         duration_ms:

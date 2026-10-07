@@ -344,6 +344,10 @@ class FakeRepository:
         _ = workspace
         return DiffResult(unified_diff=self.current_diff_value, digest=_digest(self.current_diff_value))
 
+    async def verify_workspace(self, workspace: WorkspaceRef, expected_diff: str | None = None) -> None:
+        if expected_diff is not None and (await self.current_diff(workspace)).digest != expected_diff:
+            raise RuntimeError("WORKSPACE_INTEGRITY_FAILED: expected workspace digest changed")
+
     async def publication_check(self, request: PublicationCheckRequest) -> str:
         return request.expected_tree or _digest(self.current_diff_value)
 

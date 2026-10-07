@@ -26,14 +26,21 @@ from remediation_agent.domain.enums import (
     ValidationCleanupStatus,
     ValidationOutcome,
 )
-from remediation_agent.domain.models import ValidationExecutionRecord, ValidationTaskResult
+from remediation_agent.domain.models import (
+    ValidationCleanupReceipt,
+    ValidationDiagnostic,
+    ValidationExecutionRecord,
+    ValidationTaskResult,
+)
 from remediation_agent.ports.models import (
     BehavioralTaskExecution,
     BehavioralTaskRequest,
     SandboxExecutionProfile,
     SandboxTaskExecution,
+    ValidationCancelled,
     ValidationTaskRequest,
 )
+from remediation_agent.ports.protocols import ArtifactStore
 
 _MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _MAX_ARCHIVE_FILES = 50_000
@@ -91,10 +98,19 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         region_name: str,
         code_interpreter_identifier: str = "aws.codeinterpreter.v1",
         behavioral_bundle: Path = Path("/app/validation/ecommerce"),
+        scratch_root: Path = Path("/tmp/aios-validation"),  # noqa: S108  # nosec B108
+        result_store: ArtifactStore | None = None,
         validation_bundle: Path = Path("/app/validation/pytest_vendor.tar.gz"),
         client: _CodeInterpreterClient | None = None,
     ) -> None:
-        super().__init__(workspace_root, image="agentcore-code-interpreter", behavioral_bundle=behavioral_bundle)
+        super().__init__(
+            workspace_root,
+            image="agentcore-code-interpreter",
+            behavioral_bundle=behavioral_bundle,
+            scratch_root=scratch_root,
+            result_store=result_store,
+        )
+        self.stage_host_bundle = False
         self.code_interpreter_identifier = code_interpreter_identifier
         self.validation_bundle = validation_bundle
         self._client = client or cast(
@@ -103,6 +119,15 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 "bedrock-agentcore",
                 region_name=region_name,
                 config=Config(connect_timeout=10, read_timeout=180, retries={"max_attempts": 3, "mode": "standard"}),
+            ),
+        )
+        # Stop retries are owned here: the SDK must not multiply the three cleanup attempts.
+        self._cleanup_client = client or cast(
+            _CodeInterpreterClient,
+            boto3.client(
+                "bedrock-agentcore",
+                region_name=region_name,
+                config=Config(connect_timeout=10, read_timeout=30, retries={"total_max_attempts": 1}),
             ),
         )
 
@@ -128,21 +153,25 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         return await super().run_behavior(request)
 
     async def run_task(self, request: ValidationTaskRequest) -> SandboxTaskExecution:
-        root = self._workspace(request.workspace)
+        root = self.validation_root(request)
         self._validate_workdir(root, request.task.cwd)
         self._validate_environment(request.task.environment)
-        browser_path = root / ".aios-verification/bundle/browser.tar.xz"
+        include_bundle = request.snapshot is not None and request.task.profile in {
+            "ecommerce_checkout",
+            "ecommerce_purchase",
+        }
+        browser_path = self.behavioral_bundle / "browser.tar.xz"
         browser = b""
-        if browser_path.is_file():
-            expected = self.behavioral_bundle / "browser.tar.xz"
+        if include_bundle:
+            expected = json.loads((self.behavioral_bundle / "manifest.json").read_text())["files"].get("browser.tar.xz")
             browser = await asyncio.to_thread(browser_path.read_bytes)
             if (
                 browser_path.is_symlink()
-                or archive_digest(browser) != archive_digest(expected.read_bytes())
+                or archive_digest(browser) != "sha256:" + str(expected)
                 or len(browser) > _MAX_UPLOAD_BYTES
             ):
                 raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: untrusted or oversized browser asset")
-        archive = await asyncio.to_thread(self._archive_workspace, root)
+        archive = await asyncio.to_thread(self._archive_workspace, root, include_bundle=include_bundle)
         bundle = await asyncio.to_thread(self._read_bundle)
         if len(archive) + len(bundle) > _MAX_UPLOAD_BYTES:
             raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: upload exceeds 80 MB")
@@ -153,6 +182,8 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
         task_result: ValidationTaskResult | None = None
         failure: Exception | None = None
         cleanup_status = ValidationCleanupStatus.NOT_APPLICABLE
+        cleanup_attempts = 0
+        cancelled = False
         starting = asyncio.create_task(asyncio.to_thread(self._start_session, request.workspace.workspace_id))
         try:
             # Cancellation cannot abandon a provider request that may already own a session.
@@ -167,7 +198,7 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 # Preserve cancellation if the bounded provider request failed before returning an ID.
                 with suppress(Exception):
                     session_id = await asyncio.shield(starting)
-            raise
+            cancelled = True
         except TimeoutError:
             task_result = ValidationTaskResult(
                 task_name=request.task_name,
@@ -179,9 +210,32 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
             failure = exc
         finally:
             if session_id is not None:
-                stopped = await asyncio.shield(asyncio.to_thread(self._stop_session, session_id))
-                cleanup_status = ValidationCleanupStatus.SUCCEEDED if stopped else ValidationCleanupStatus.FAILED
+                for cleanup_attempts in range(1, 4):
+                    stopped = await asyncio.shield(asyncio.to_thread(self._stop_session, session_id))
+                    cleanup_status = ValidationCleanupStatus.SUCCEEDED if stopped else ValidationCleanupStatus.FAILED
+                    if stopped:
+                        break
+                    await asyncio.sleep(0.1 * cleanup_attempts)
 
+        if cancelled:
+            raise ValidationCancelled(
+                ValidationCleanupReceipt(
+                    resource="SESSION",
+                    resource_id=request.snapshot.workspace_id if request.snapshot else request.workspace.workspace_id,
+                    status=cleanup_status,
+                    attempts=cleanup_attempts,
+                    diagnostic=(
+                        ValidationDiagnostic(
+                            code="SESSION_CLEANUP_FAILED",
+                            operation="stop_session",
+                            resource="SESSION",
+                            detail="Session stop could not be confirmed after cancellation.",
+                        )
+                        if cleanup_status is ValidationCleanupStatus.FAILED
+                        else None
+                    ),
+                )
+            )
         if failure is not None:
             suffix = " and session cleanup failed" if cleanup_status is ValidationCleanupStatus.FAILED else ""
             task_result = ValidationTaskResult(
@@ -214,13 +268,6 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 stderr=stderr,
                 output_truncated=stdout_truncated or stderr_truncated or raw_truncated,
             )
-        if cleanup_status is ValidationCleanupStatus.FAILED:
-            task_result = task_result.model_copy(
-                update={
-                    "outcome": ValidationOutcome.ERROR,
-                    "stderr": "Code Interpreter session cleanup failed.",
-                }
-            )
         profile = self.execution_profile()
         return SandboxTaskExecution(
             result=task_result,
@@ -233,6 +280,17 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                 session_digest=archive_digest(session_id.encode("utf-8")) if session_id else None,
                 enforced_controls=profile.enforced_controls,
                 cleanup_status=cleanup_status,
+                cleanup_attempts=cleanup_attempts,
+                cleanup_diagnostic=(
+                    ValidationDiagnostic(
+                        code="SESSION_CLEANUP_FAILED",
+                        operation="stop_session",
+                        resource="SESSION",
+                        detail="Code Interpreter session stop could not be confirmed.",
+                    )
+                    if cleanup_status is ValidationCleanupStatus.FAILED
+                    else None
+                ),
                 outcome=task_result.outcome,
                 duration_ms=task_result.duration_ms,
             ),
@@ -346,7 +404,7 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
 
     def _stop_session(self, session_id: str) -> bool:
         try:
-            self._client.stop_code_interpreter_session(
+            self._cleanup_client.stop_code_interpreter_session(
                 codeInterpreterIdentifier=self.code_interpreter_identifier,
                 sessionId=session_id,
                 clientToken=str(uuid4()),
@@ -355,7 +413,7 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
             return False
         return True
 
-    def _archive_workspace(self, root: Path) -> bytes:
+    def _archive_workspace(self, root: Path, *, include_bundle: bool = False) -> bytes:
         buffer = io.BytesIO()
         count = 0
         with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
@@ -387,6 +445,20 @@ class AgentCoreCodeInterpreterSandbox(DockerSandboxExecutor):
                     archive.add(path, arcname=relative, recursive=False)
                     if buffer.tell() > _MAX_UPLOAD_BYTES:
                         raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: workspace exceeds 80 MB")
+            if include_bundle:
+                # Trusted image assets are streamed into the upload, never copied to session storage.
+                for path in sorted(self.behavioral_bundle.rglob("*")):
+                    if path.is_symlink():
+                        raise SandboxError("Trusted bundle contains a symlink")
+                    if not path.is_file() or path.name == "browser.tar.xz":
+                        continue
+                    relative = path.relative_to(self.behavioral_bundle).as_posix()
+                    count += 1
+                    if count > _MAX_ARCHIVE_FILES:
+                        raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: too many asset files")
+                    archive.add(path, arcname=".aios-verification/bundle/" + relative, recursive=False)
+                    if buffer.tell() > _MAX_UPLOAD_BYTES:
+                        raise SandboxError("UNSUPPORTED_VALIDATION_ENVIRONMENT: asset upload exceeds 80 MB")
         return buffer.getvalue()
 
     def _read_bundle(self) -> bytes:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import cast
 from uuid import UUID
 
@@ -184,6 +185,7 @@ async def test_agent_card_is_strict_a2a_v1_with_sigv4_and_read_only_artifact_ski
     assert card.capabilities.push_notifications is False
     assert set(card.security_schemes) == {"aws_sigv4"}
     assert [skill.id for skill in card.skills] == [
+        "runtime_filesystem_qualification",
         "remediate_repository",
         "runtime_readiness_probe",
         "view_remediation_artifact",
@@ -486,3 +488,34 @@ async def test_malformed_data_and_cancel_are_rejected_without_workflow_execution
     assert malformed.json()["result"]["task"]["status"]["state"] == "TASK_STATE_REJECTED"
     assert cancelled.json()["error"]["code"] == -32002
     assert service.starts == []
+
+
+async def test_fixed_runtime_qualification_is_separate_from_remediation(tmp_path: Path) -> None:
+    from uuid import uuid4
+
+    from remediation_agent.api.a2a_contracts import RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE
+    from remediation_agent.domain.runtime_qualification import RuntimeQualificationRequestV1
+    from tests.unit.test_runtime_qualification import adapter
+
+    service, model, _, _, pr, _, _ = build_test_service(scripted_responses())
+    qualified = adapter(tmp_path)
+    app = create_a2a_app(model, service, runtime_qualification=qualified)
+    request = RuntimeQualificationRequestV1(operation="prepare", fixture="ah56", qualification_id=str(uuid4()))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(request.model_dump(mode="json"), RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE),
+            )
+            assert response.json()["result"]["message"]["parts"][0]["data"]["status"] == "PREPARED"
+            denied = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(
+                    {**request.model_dump(mode="json"), "command": "echo unsafe"},
+                    RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE,
+                ),
+            )
+            assert denied.json()["result"]["task"]["status"]["state"] == "TASK_STATE_REJECTED"
+    assert not model.requests and not pr.requests

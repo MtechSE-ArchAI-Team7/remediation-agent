@@ -26,6 +26,8 @@ from remediation_agent.api.a2a_contracts import (
     PUBLICATION_RETRY_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
     RUN_SUMMARY_METADATA_KEY,
+    RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE,
+    RUNTIME_QUALIFICATION_RESULT_MEDIA_TYPE,
     ArtifactPreviewRequestV1,
     ArtifactPreviewResultV1,
     ProviderProbeModelResult,
@@ -41,8 +43,14 @@ from remediation_agent.domain.models import (
     RemediationHandoffV1,
     RemediationRunView,
 )
+from remediation_agent.domain.runtime_qualification import RuntimeQualificationRequestV1
 from remediation_agent.ports.models import ArtifactReadError, ArtifactReadRequest, ModelRequest
-from remediation_agent.ports.protocols import ArtifactReader, ReleaseProvenancePort, StructuredModel
+from remediation_agent.ports.protocols import (
+    ArtifactReader,
+    ReleaseProvenancePort,
+    RuntimeQualificationPort,
+    StructuredModel,
+)
 from remediation_agent.service import ApprovalConflictError, RemediationService, RunNotFoundError
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +81,7 @@ class RemediationA2AExecutor(AgentExecutor):
         artifact_reader: ArtifactReader | None = None,
         release_provenance: ReleaseProvenancePort | None = None,
         task_store: TaskStore | None = None,
+        runtime_qualification: RuntimeQualificationPort | None = None,
     ) -> None:
         self._service = service
         self._model = model
@@ -80,6 +89,7 @@ class RemediationA2AExecutor(AgentExecutor):
         self._artifact_reader = artifact_reader
         self._release_provenance = release_provenance
         self._task_store = task_store
+        self._runtime_qualification = runtime_qualification
 
     def configure(
         self,
@@ -89,6 +99,7 @@ class RemediationA2AExecutor(AgentExecutor):
         probe_provider: str | None,
         artifact_reader: ArtifactReader | None,
         release_provenance: ReleaseProvenancePort | None,
+        runtime_qualification: RuntimeQualificationPort | None = None,
     ) -> None:
         """Bind dependencies constructed by the hosted application lifespan."""
 
@@ -97,6 +108,7 @@ class RemediationA2AExecutor(AgentExecutor):
         self._probe_provider = probe_provider
         self._artifact_reader = artifact_reader
         self._release_provenance = release_provenance
+        self._runtime_qualification = runtime_qualification
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task_id = context.task_id
@@ -109,6 +121,26 @@ class RemediationA2AExecutor(AgentExecutor):
         except ValueError as exc:
             await self._reject_transport(task_id, context_id, event_queue, "INVALID_DATA_PART")
             _LOGGER.info("Rejected malformed A2A input: %s", type(exc).__name__)
+            return
+
+        if media_type == RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE:
+            try:
+                request = RuntimeQualificationRequestV1.model_validate(payload)
+                session_id = context.call_context.state.get("session_id")
+                if self._runtime_qualification is None or not isinstance(session_id, str):
+                    raise ValueError("Qualification is not configured")
+                result = await self._runtime_qualification.execute(request, session_id)
+                await event_queue.enqueue_event(
+                    a2a_pb.Message(
+                        role=a2a_pb.Role.ROLE_AGENT,
+                        task_id=task_id,
+                        context_id=context_id,
+                        message_id=f"qualification-{task_id}",
+                        parts=[_data_part(result.model_dump(mode="json"), RUNTIME_QUALIFICATION_RESULT_MEDIA_TYPE)],
+                    )
+                )
+            except (ValueError, RuntimeError, OSError):
+                await self._reject_transport(task_id, context_id, event_queue, "RUNTIME_QUALIFICATION_FAILED")
             return
 
         if media_type == PROVIDER_PROBE_REQUEST_MEDIA_TYPE:

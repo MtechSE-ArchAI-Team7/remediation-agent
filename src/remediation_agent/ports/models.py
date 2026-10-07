@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, TypeVar
@@ -26,7 +27,10 @@ from remediation_agent.domain.models import (
     RemediationHandoffV1,
     RepositoryRef,
     StrictModel,
+    ValidationCleanupReceipt,
     ValidationExecutionRecord,
+    ValidationSnapshotRef,
+    ValidationStorageEvidence,
     ValidationTaskResult,
     WorkspaceRef,
 )
@@ -195,6 +199,7 @@ class PatchApplyResult(StrictModel):
 
 class ValidationTaskRequest(StrictModel):
     workspace: WorkspaceRef
+    snapshot: ValidationSnapshotRef | None = None
     task_name: NonEmptyStr
     task: ValidationTaskConfig
     attempt: int = Field(default=1, ge=1)
@@ -207,18 +212,37 @@ class SandboxExecutionProfile(StrictModel):
 
 
 class BehavioralTaskRequest(ValidationTaskRequest):
+    run_id: str | None = None
     capability_only: bool = False
     patch_digest: NonEmptyStr
 
 
 class BehavioralTaskExecution(StrictModel):
-    evidence: BehavioralEvidence
-    executions: list[SandboxTaskExecution] = Field(min_length=1, max_length=2)
+    evidence: BehavioralEvidence | None = None
+    executions: list[SandboxTaskExecution] = Field(default_factory=list, max_length=2)
+    storage: ValidationStorageEvidence | None = None
 
 
 class SandboxTaskExecution(StrictModel):
     result: ValidationTaskResult
     execution: ValidationExecutionRecord
+
+
+class ValidationCancelled(asyncio.CancelledError):
+    def __init__(self, receipt: ValidationCleanupReceipt):
+        self.receipt = receipt
+        super().__init__("Validation cancelled; session cleanup recorded")
+
+
+class BehavioralExecutionFailure(RuntimeError):
+    def __init__(self, result: BehavioralTaskExecution):
+        self.result = result
+        detail = (
+            "; ".join(f.code + ": " + f.detail for f in result.storage.failures)
+            if result.storage
+            else "Behavioral evidence is absent"
+        )
+        super().__init__(detail[:4000])
 
 
 BehavioralTaskExecution.model_rebuild()

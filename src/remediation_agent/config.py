@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     checkpoint_encryption_key: SecretStr | None = None
     artifact_root: Path = Path(".artifacts")
     workspace_root: Path = Path(".workspaces")
+    validation_scratch_root: Path = Path("/tmp/aios-validation")  # noqa: S108  # nosec B108
     behavioral_bundle: Path = Path(".artifacts/validation/ecommerce")
     sandbox_image: str = "aios-remediation-sandbox:local"
 

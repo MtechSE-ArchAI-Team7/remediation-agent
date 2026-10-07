@@ -29,11 +29,18 @@ from remediation_agent.api.a2a_contracts import (
     PROVIDER_PROBE_RESULT_MEDIA_TYPE,
     PUBLICATION_RETRY_MEDIA_TYPE,
     REMEDIATION_HANDOFF_MEDIA_TYPE,
+    RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE,
+    RUNTIME_QUALIFICATION_RESULT_MEDIA_TYPE,
 )
 from remediation_agent.api.a2a_executor import RemediationA2AExecutor
 from remediation_agent.api.agentcore import create_agentcore_app
 from remediation_agent.config import Settings
-from remediation_agent.ports.protocols import ArtifactReader, ReleaseProvenancePort, StructuredModel
+from remediation_agent.ports.protocols import (
+    ArtifactReader,
+    ReleaseProvenancePort,
+    RuntimeQualificationPort,
+    StructuredModel,
+)
 from remediation_agent.service import RemediationService
 
 
@@ -87,6 +94,17 @@ def build_agent_card(runtime_url: str = "http://localhost:9000/") -> a2a_pb.Agen
         ],
         skills=[
             a2a_pb.AgentSkill(
+                id="runtime_filesystem_qualification",
+                name="Runtime filesystem qualification",
+                description=(
+                    "Prepare and cold-resume a bundled isolated fixture; no remediation approvals or publication."
+                ),
+                tags=["qualification"],
+                input_modes=[RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE],
+                output_modes=[RUNTIME_QUALIFICATION_RESULT_MEDIA_TYPE],
+                security_requirements=security,
+            ),
+            a2a_pb.AgentSkill(
                 id="remediate_repository",
                 name="Remediate repository",
                 description=(
@@ -134,6 +152,7 @@ def create_a2a_app(
     artifact_reader: ArtifactReader | None = None,
     release_provenance: ReleaseProvenancePort | None = None,
     runtime_url: str | None = None,
+    runtime_qualification: RuntimeQualificationPort | None = None,
 ) -> Starlette:
     """Compose the hosted A2A application with injectable offline boundaries."""
 
@@ -145,6 +164,7 @@ def create_a2a_app(
         artifact_reader=artifact_reader,
         release_provenance=release_provenance,
         task_store=store,
+        runtime_qualification=runtime_qualification,
     )
     context_builder = _AgentCoreV1CallContextBuilder()
     card = build_agent_card(runtime_url or "http://localhost:9000/")
@@ -187,6 +207,10 @@ def create_a2a_app(
                 probe_provider=configured_provider,
                 artifact_reader=configured_reader,
                 release_provenance=configured_provenance,
+                runtime_qualification=cast(
+                    RuntimeQualificationPort | None,
+                    getattr(dependencies.state, "runtime_qualification", runtime_qualification),
+                ),
             )
             if task_store is None and service is None:
                 settings = Settings()  # type: ignore[call-arg]

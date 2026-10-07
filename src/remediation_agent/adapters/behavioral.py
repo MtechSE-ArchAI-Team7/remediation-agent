@@ -8,13 +8,27 @@ import json
 import os
 import shutil
 import tarfile
-import tempfile
+import time
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from remediation_agent.adapters.validation_storage import ValidationStorageError, _raise_io, diagnostic, footprint
 from remediation_agent.domain.enums import ValidationCleanupStatus, ValidationOutcome
-from remediation_agent.domain.models import BehavioralEvidence, BehavioralReport, WorkspaceRef
-from remediation_agent.ports.models import BehavioralTaskExecution, BehavioralTaskRequest, ValidationTaskRequest
+from remediation_agent.domain.models import (
+    BehavioralEvidence,
+    BehavioralReport,
+    ValidationCleanupReceipt,
+    ValidationDiagnostic,
+    ValidationSnapshotRef,
+    ValidationStorageEvidence,
+)
+from remediation_agent.ports.models import (
+    ArtifactWriteRequest,
+    BehavioralTaskExecution,
+    BehavioralTaskRequest,
+    ValidationCancelled,
+    ValidationTaskRequest,
+)
 
 if TYPE_CHECKING:
     from remediation_agent.adapters.sandbox import DockerSandboxExecutor
@@ -40,7 +54,7 @@ def _copy(source: Path, target: Path) -> None:
     total = 0
     count = 0
     entries: list[Path] = []
-    for directory, directories, files in os.walk(source, followlinks=False):
+    for directory, directories, files in os.walk(source, followlinks=False, onerror=_raise_io):
         current = Path(directory)
         directories[:] = [name for name in directories if _allowed((current / name).relative_to(source).as_posix())]
         if any((current / name).is_symlink() for name in directories):
@@ -100,18 +114,48 @@ def _digest_files(root: Path, *, ignore_bytecode: bool = False) -> str:
 async def run_behavioral_pair(
     sandbox: DockerSandboxExecutor, request: BehavioralTaskRequest
 ) -> BehavioralTaskExecution:
-    root = sandbox._workspace(request.workspace)
-    if request.task.profile is None:
-        raise ValueError("Behavioral profile is absent")
-    pair_root = Path(tempfile.mkdtemp(prefix="verification-", dir=sandbox.workspace_root))
+    started = time.monotonic()
+    storage = ValidationStorageEvidence(task_name=request.task_name, attempt=request.attempt)
     executions = []
-    reports = []
+    reports: list[BehavioralReport] = []
+    snapshots: list[ValidationSnapshotRef] = []
+    cleaned: set[str] = set()
+    lease: str | None = None
+    operation = "preflight"
+    resource = "WORKSPACE"
+    assertion_digest = dependency_digest = ""
+    cancelled = False
     try:
-        base, candidate = pair_root / "base", pair_root / "candidate"
-        base.mkdir()
-        candidate.mkdir()
-        await asyncio.to_thread(_copy, root, candidate)
-        # Bound the archive before materializing it. Git arguments never come from the model.
+        root = sandbox._workspace(request.workspace)
+        if request.task.profile is None:
+            raise ValueError("Behavioral profile is absent")
+        # Inspect sizes before writing any validation copies. Include archive and frozen tests.
+        source_bytes, source_files = await asyncio.to_thread(footprint, root)
+        projected = source_bytes * 4 + 4 * 1024 * 1024
+        files = source_files * 4 + 100
+        if sandbox.stage_host_bundle and request.task.profile in _ECOMMERCE_PROFILES:
+            bundle_bytes, bundle_files = await asyncio.to_thread(footprint, sandbox.behavioral_bundle)
+            projected += bundle_bytes
+            files += bundle_files
+            if request.task.profile == "ecommerce_checkout":
+                with tarfile.open(sandbox.behavioral_bundle / "browser.tar.xz", "r:xz") as browser:
+                    members = browser.getmembers()
+                    projected += sum(item.size for item in members)
+                    files += len(members)
+        storage = storage.model_copy(update={"projected_scratch_bytes": projected, "projected_files": files})
+        managed_bytes, scratch_free_bytes = await asyncio.to_thread(sandbox.scratch.preflight, projected, files)
+        storage = storage.model_copy(update={"managed_bytes": managed_bytes, "scratch_free_bytes": scratch_free_bytes})
+        # Git metadata must still identify the reviewed immutable base.
+        head_exit, head, _, _ = await sandbox._run_capped(
+            sandbox._git_argv(root, "rev-parse", "HEAD"),
+            cwd=root,
+            timeout=30,
+            output_limit=1024,
+        )
+        if head_exit or head.strip() != request.workspace.base_commit:
+            raise ValueError("WORKSPACE_INTEGRITY_FAILED: immutable Git HEAD is unavailable or changed")
+        lease, pair_root = sandbox.scratch.create()
+        resource, operation = "SCRATCH", "freeze_inputs"
         tree_exit, tree, _, truncated = await sandbox._run_capped(
             sandbox._git_argv(root, "ls-tree", "-rl", request.workspace.base_commit),
             cwd=root,
@@ -119,12 +163,7 @@ async def run_behavioral_pair(
             output_limit=1024 * 1024,
         )
         sizes = [line.split("\t", 1)[0].split()[-1] for line in tree.splitlines()]
-        if (
-            tree_exit != 0
-            or truncated
-            or len(sizes) > 10000
-            or sum(int(size) for size in sizes if size.isdigit()) > _MAX_BYTES
-        ):
+        if tree_exit or truncated or len(sizes) > 10000 or sum(int(s) for s in sizes if s.isdigit()) > _MAX_BYTES:
             raise ValueError("Immutable base exceeds behavioral snapshot limits")
         archive = pair_root / "base.tar"
         await sandbox._run(
@@ -132,27 +171,18 @@ async def run_behavioral_pair(
             cwd=root,
             timeout=60,
         )
-        await asyncio.to_thread(_extract, archive, base)
         tests = pair_root / "assertions"
         tests.mkdir()
         for name in request.task.test_paths:
-            source = candidate / name
-            if not source.exists():
-                raise ValueError(f"Behavioral test path is absent: {name}")
+            source = root / name
+            if not source.exists() or source.is_symlink() or not source.resolve().is_relative_to(root):
+                raise ValueError(f"Behavioral test path is absent or unsafe: {name}")
             destination = tests / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             if source.is_dir():
                 await asyncio.to_thread(_copy, source, destination)
             else:
                 shutil.copyfile(source, destination)
-        for name in request.task.test_paths:
-            destination = base / name
-            if destination.is_dir():
-                shutil.rmtree(destination)
-            elif destination.exists():
-                destination.unlink()
-        await asyncio.to_thread(_copy, tests, base)
-        # Protect bootstrap overrides from the application snapshot. Assets are host-owned.
         assets_digest = _digest_files(_ASSETS, ignore_bytecode=True)
         assertion_digest = (
             "sha256:"
@@ -163,16 +193,32 @@ async def run_behavioral_pair(
         dependency_digest = assets_digest
         if request.task.profile in _ECOMMERCE_PROFILES:
             manifest = sandbox.behavioral_bundle / "manifest.json"
-            if not manifest.is_file():
+            if not manifest.is_file() or manifest.is_symlink():
                 raise ValueError("UNSUPPORTED_VALIDATION_ENVIRONMENT: offline e-commerce bundle is absent")
             dependency_digest = "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
-        snapshots = [("base", base)] if request.capability_only else [("base", base), ("candidate", candidate)]
-        for label, snapshot in snapshots:
+        for label in ["base"] if request.capability_only else ["base", "candidate"]:
+            operation, resource = "stage_" + label, "SNAPSHOT"
+            ref = sandbox.scratch.register(lease, label, request.workspace.workspace_id, request.workspace.base_commit)
+            snapshots.append(ref)
+            snapshot = Path(ref.path)
+            snapshot.mkdir()
+            if label == "base":
+                await asyncio.to_thread(_extract, archive, snapshot)
+            else:
+                await asyncio.to_thread(_copy, root, snapshot)
+            for name in request.task.test_paths:
+                target = snapshot / name
+                if target.is_dir():
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+            await asyncio.to_thread(_copy, tests, snapshot)
             reserved = snapshot / ".aios-verification"
             if reserved.exists():
                 raise ValueError("Repository attempts to replace trusted validation assets")
             shutil.copytree(_ASSETS, reserved, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            if request.task.profile in _ECOMMERCE_PROFILES:
+            # Docker needs mounted native assets; Code Interpreter streams them from the immutable image.
+            if sandbox.stage_host_bundle and request.task.profile in _ECOMMERCE_PROFILES:
                 shutil.copytree(sandbox.behavioral_bundle, reserved / "bundle", symlinks=False)
                 if request.task.profile == "ecommerce_checkout":
                     from remediation_agent.adapters.validation_assets.runner import unpack_browser
@@ -191,75 +237,189 @@ async def run_behavioral_pair(
             (snapshot / ".git").mkdir(exist_ok=True)
             profile_digest = _digest_files(snapshot)
             task = request.task.model_copy(
-                update={
-                    "argv": ["python", "-I", ".aios-verification/runner.py"],
-                    "cwd": ".",
-                    "environment": {},
-                }
+                update={"argv": ["python", "-I", ".aios-verification/runner.py"], "cwd": ".", "environment": {}}
             )
+            operation, resource = "execute_" + label, "SESSION"
             execution = await sandbox.run_task(
                 ValidationTaskRequest(
-                    workspace=WorkspaceRef(
-                        workspace_id=f"verify-{label}-{request.workspace.workspace_id}"[:60],
-                        path=str(snapshot),
-                        base_commit=request.workspace.base_commit,
-                    ),
+                    workspace=request.workspace,
+                    snapshot=ref,
                     task_name=request.task_name,
                     task=task,
                     attempt=request.attempt,
                 )
             )
             executions.append(execution)
-            if _digest_files(snapshot) != profile_digest:
-                raise ValueError("Validation changed the isolated source, assertions, or trusted assets")
+            storage.cleanup.append(
+                ValidationCleanupReceipt(
+                    resource="SESSION",
+                    resource_id=ref.workspace_id,
+                    status=execution.execution.cleanup_status,
+                    attempts=execution.execution.cleanup_attempts,
+                    diagnostic=execution.execution.cleanup_diagnostic,
+                )
+            )
             result = execution.result
+            operation, resource = "parse_" + label, "REPORT"
             if result.output_truncated or result.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT}:
                 raise ValueError(f"Behavioral execution {result.outcome}: " + (result.stderr or result.stdout)[:2000])
+            report = BehavioralReport.model_validate_json(result.stdout)
+            reports.append(report)
+            storage = storage.model_copy(update={"reports": list(reports)})
+            if result.exit_code != (0 if all(c.outcome == "PASSED" for c in report.cases) else 1):
+                raise ValueError("Behavioral report disagrees with executor exit status")
             if execution.execution.cleanup_status not in {
                 ValidationCleanupStatus.SUCCEEDED,
                 ValidationCleanupStatus.NOT_APPLICABLE,
             }:
-                raise ValueError("Behavioral sandbox cleanup failed")
-            report = BehavioralReport.model_validate_json(result.stdout)
-            expected_exit = 0 if all(item.outcome == "PASSED" for item in report.cases) else 1
-            if result.exit_code != expected_exit:
-                raise ValueError("Behavioral report disagrees with executor exit status")
-            reports.append(report)
-        if reports[0].runtime_digest != reports[-1].runtime_digest:
+                raise ValueError("Behavioral sandbox session cleanup failed")
+            operation, resource = "integrity_" + label, "SNAPSHOT"
+            if _digest_files(snapshot) != profile_digest:
+                raise ValueError("Validation changed isolated source, assertions, or trusted assets")
+            receipt = await sandbox.cleanup_snapshot(ref)
+            storage.cleanup.append(receipt)
+            cleaned.add(ref.workspace_id)
+            if receipt.status is not ValidationCleanupStatus.SUCCEEDED:
+                storage.failures.append(
+                    receipt.diagnostic
+                    or ValidationDiagnostic(
+                        code="SNAPSHOT_CLEANUP_FAILED",
+                        operation="snapshot_cleanup",
+                        resource="SNAPSHOT",
+                        detail="Owned snapshot cleanup failed",
+                    )
+                )
+            # Retain each completed execution before another snapshot or repair can run.
+            if sandbox.result_store is not None and request.run_id is not None:
+                from remediation_agent.adapters.evidence import SecretRedactor
+
+                await sandbox.result_store.write_bundle(
+                    ArtifactWriteRequest(
+                        run_id=request.run_id,
+                        files={
+                            f"validation-{request.task_name}-{request.attempt}-{label}.json": SecretRedactor().redact(
+                                json.dumps(
+                                    {
+                                        "execution": execution.model_dump(mode="json"),
+                                        "storage": storage.model_dump(mode="json"),
+                                    }
+                                )
+                            )
+                        },
+                    )
+                )
+            if storage.failures:
+                break
+        if reports and reports[0].runtime_digest != reports[-1].runtime_digest:
             raise ValueError("Base/candidate runtime dependency fingerprints differ")
-        if request.task.profile not in _ECOMMERCE_PROFILES and reports[0].runtime_digest:
+        if reports and request.task.profile not in _ECOMMERCE_PROFILES and reports[0].runtime_digest:
             dependency_digest = reports[0].runtime_digest
-        return BehavioralTaskExecution(
-            evidence=BehavioralEvidence(
-                task_name=request.task_name,
-                attempt=request.attempt,
-                base_commit=request.workspace.base_commit,
-                patch_digest=request.patch_digest,
-                assertions_digest=assertion_digest,
-                dependency_digest=dependency_digest,
-                base=reports[0],
-                candidate=reports[-1],
-                cleanup_succeeded=True,
-            ),
-            executions=executions,
+    except asyncio.CancelledError as exc:
+        cancelled = True
+        if isinstance(exc, ValidationCancelled):
+            storage.cleanup.append(exc.receipt)
+            if exc.receipt.diagnostic is not None:
+                storage.failures.append(exc.receipt.diagnostic)
+        storage.failures.append(
+            ValidationDiagnostic(
+                code="VALIDATION_CANCELLED",
+                operation=operation,
+                resource="SESSION",
+                detail="Validation was cancelled; owned cleanup attempted.",
+            )
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        storage.failures.insert(
+            0, exc.diagnostic if isinstance(exc, ValidationStorageError) else diagnostic(exc, operation, resource)
         )
     finally:
-        # Destruction also stops any still-active containers associated with these snapshots.
-        cleanup_failed = False
-        for label in ("base", "candidate"):
-            snapshot = pair_root / label
-            if snapshot.exists():
+        for ref in snapshots:
+            if ref.workspace_id not in cleaned:
                 try:
-                    cleaned = await sandbox.destroy(
-                        WorkspaceRef(
-                            workspace_id=f"verify-{label}-{request.workspace.workspace_id}"[:60],
-                            path=str(snapshot),
-                            base_commit=request.workspace.base_commit,
+                    receipt = await asyncio.shield(sandbox.cleanup_snapshot(ref))
+                    storage.cleanup.append(receipt)
+                    if receipt.status is not ValidationCleanupStatus.SUCCEEDED:
+                        storage.failures.append(
+                            receipt.diagnostic
+                            or ValidationDiagnostic(
+                                code="SNAPSHOT_CLEANUP_FAILED",
+                                operation="snapshot_cleanup",
+                                resource="SNAPSHOT",
+                                detail="Owned snapshot cleanup failed",
+                            )
+                        )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    problem = diagnostic(exc, "snapshot_cleanup", "SNAPSHOT")
+                    storage.failures.append(problem)
+                    storage.cleanup.append(
+                        ValidationCleanupReceipt(
+                            resource="SNAPSHOT",
+                            resource_id=ref.workspace_id,
+                            status=ValidationCleanupStatus.FAILED,
+                            diagnostic=problem,
                         )
                     )
-                    cleanup_failed = cleanup_failed or not cleaned.succeeded
-                except (OSError, RuntimeError, ValueError):
-                    cleanup_failed = True
-        if cleanup_failed:
-            raise RuntimeError("Behavioral snapshot cleanup failed")
-        shutil.rmtree(pair_root)
+        if lease is not None:
+            try:
+                if any(
+                    owner in {ref.workspace_id for ref in snapshots} for owner in sandbox._active_containers.values()
+                ):
+                    raise RuntimeError("Scratch retained because validation processes may still be active")
+                receipt = await asyncio.shield(sandbox.scratch.cleanup_lease(lease))
+                storage.cleanup.append(receipt)
+                if receipt.status is not ValidationCleanupStatus.SUCCEEDED:
+                    storage.failures.append(
+                        receipt.diagnostic
+                        or ValidationDiagnostic(
+                            code="SNAPSHOT_CLEANUP_FAILED",
+                            operation="lease_cleanup",
+                            resource="SCRATCH",
+                            detail="Owned scratch cleanup failed",
+                        )
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                problem = diagnostic(exc, "lease_cleanup", "SCRATCH")
+                storage.failures.append(problem)
+                storage.cleanup.append(
+                    ValidationCleanupReceipt(
+                        resource="SCRATCH", resource_id=lease, status=ValidationCleanupStatus.FAILED, diagnostic=problem
+                    )
+                )
+        storage = storage.model_copy(update={"duration_ms": int((time.monotonic() - started) * 1000)})
+        if sandbox.result_store is not None and request.run_id is not None:
+            from remediation_agent.adapters.evidence import SecretRedactor
+
+            try:
+                storage_name = f"validation-{request.task_name}-{request.attempt}-storage.json"
+                await asyncio.shield(
+                    sandbox.result_store.write_bundle(
+                        ArtifactWriteRequest(
+                            run_id=request.run_id,
+                            files={storage_name: SecretRedactor().redact(storage.model_dump_json())},
+                        )
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - artifact provider failures must not mask primary execution
+                storage.failures.append(
+                    diagnostic(RuntimeError(type(exc).__name__), "persist_validation_evidence", "REPORT")
+                )
+    if cancelled:
+        raise asyncio.CancelledError
+    evidence = None
+    if len(reports) == (1 if request.capability_only else 2):
+        evidence = BehavioralEvidence(
+            task_name=request.task_name,
+            attempt=request.attempt,
+            base_commit=request.workspace.base_commit,
+            patch_digest=request.patch_digest,
+            assertions_digest=assertion_digest,
+            dependency_digest=dependency_digest,
+            base=reports[0],
+            candidate=reports[-1],
+            cleanup_succeeded=not storage.failures
+            and all(
+                c.status in {ValidationCleanupStatus.SUCCEEDED, ValidationCleanupStatus.NOT_APPLICABLE}
+                for c in storage.cleanup
+            ),
+        )
+    return BehavioralTaskExecution(evidence=evidence, executions=executions, storage=storage)

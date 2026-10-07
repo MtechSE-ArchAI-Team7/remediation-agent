@@ -31,6 +31,7 @@ from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
 from remediation_agent.adapters.provenance import AgentCoreReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
+from remediation_agent.adapters.runtime_qualification import RuntimeQualification
 from remediation_agent.config import Settings
 from remediation_agent.domain.enums import ModelOperation, ReleaseProvenanceStatus
 from remediation_agent.domain.models import (
@@ -203,18 +204,21 @@ def create_agentcore_app(
                 if settings.inspection_mcp_mode == "agentcore_gateway"
                 else GitHubRemoteMcpInspectionTools(github_token, policy)
             )
+            sandbox = AgentCoreCodeInterpreterSandbox(
+                settings.workspace_root,
+                behavioral_bundle=settings.behavioral_bundle,
+                scratch_root=settings.validation_scratch_root,
+                result_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
+                region_name=region_name,
+                code_interpreter_identifier=settings.code_interpreter_identifier,
+                validation_bundle=settings.code_interpreter_bundle,
+            )
             nodes = WorkflowNodes(
                 policy=policy,
                 model=structured_model,
                 repository=repository,
                 inspection_tools=inspection_tools,
-                sandbox=AgentCoreCodeInterpreterSandbox(
-                    settings.workspace_root,
-                    behavioral_bundle=settings.behavioral_bundle,
-                    region_name=region_name,
-                    code_interpreter_identifier=settings.code_interpreter_identifier,
-                    validation_bundle=settings.code_interpreter_bundle,
-                ),
+                sandbox=sandbox,
                 pr_provider=DraftPullRequestProvider(
                     token=github_token,
                     writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
@@ -237,6 +241,14 @@ def create_agentcore_app(
             application.state.probe_provider = settings.llm_provider
             application.state.artifact_reader = S3ArtifactReader(artifact_bucket, region_name=region_name)
             application.state.release_provenance = provenance
+            application.state.runtime_qualification = RuntimeQualification(
+                workspace_root=settings.workspace_root,
+                fixtures=Path("/app/config/evaluation/snapshots"),
+                sandbox=sandbox,
+                policy=policy_config,
+                provenance=provenance,
+                artifacts=S3ArtifactStore(artifact_bucket, region_name=region_name),
+            )
             application.state.remediation_service = RemediationService(
                 build_graph(nodes, checkpointer),
                 max_active_runs=policy_config.limits.max_active_runs,

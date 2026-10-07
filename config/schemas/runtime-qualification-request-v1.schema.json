@@ -1,0 +1,52 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "fixture": {
+      "enum": [
+        "ah54",
+        "ah56"
+      ],
+      "title": "Fixture",
+      "type": "string"
+    },
+    "operation": {
+      "enum": [
+        "prepare",
+        "resume"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "qualification_id": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "title": "Qualification Id",
+      "type": "string"
+    },
+    "receipt_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Receipt Digest"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation",
+    "fixture",
+    "qualification_id"
+  ],
+  "title": "RuntimeQualificationRequestV1",
+  "type": "object"
+}

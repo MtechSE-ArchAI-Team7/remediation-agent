@@ -32,8 +32,11 @@
       "type": "string"
     },
     "workflow_version": {
-      "const": "remediation-v3",
-      "default": "remediation-v3",
+      "default": "remediation-v4",
+      "enum": [
+        "remediation-v3",
+        "remediation-v4"
+      ],
       "title": "Workflow Version",
       "type": "string"
     }

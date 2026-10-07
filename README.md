@@ -834,3 +834,21 @@ before/after integrations passed in both Docker and Code Interpreter, including 
 model-generated hosted trials against the final image remain a mandatory executable release gate. The first `make security` run found 18 advisories in the service lock. The
 release follow-up upgraded `langgraph-sdk` to 0.4.5, `PyJWT` to 2.15.1, and `urllib3` to 2.8.0; the subsequent Bandit and
 pip-audit checks passed.
+
+## Validation storage and hosted release proof
+
+The reviewed Git workspace stays under `AIOS_WORKSPACE_ROOT` (`/mnt/workspace/runs` on AgentCore).
+`AIOS_VALIDATION_SCRATCH_ROOT` defaults to `/tmp/aios-validation`; it must be operator-owned, private and outside
+the managed mount. Base and candidate snapshots use distinct owned references and execute sequentially. Code Interpreter
+uploads sealed dependencies/browser archives directly from the immutable image; Chromium expands only in its sandbox.
+Preflight rejects managed usage over 768 MiB, more than 50,000 projected files, or insufficient scratch space plus
+128 MiB reserve. No dependency downloads occur in remediation runs.
+
+`validation-storage.json` retains primary execution failures, completed reports, elapsed time, errno and independent
+cleanup receipts. `FAILED` cleanup never becomes an unknown zero-duration success. Patch/edit evidence is persisted
+before execution. Git metadata, immutable HEAD and candidate digest must survive approval resume and validation;
+post-application corruption requires a fresh trial and blocks publication and successful incident memory.
+
+Releases require both three generated trials per fixture (simulated GitHub boundary) and a separate actual-runtime
+prepare/stop/resume filesystem qualification. See [qualification and recovery](docs/WORKFLOW_QUALIFICATION.md).
+Default tests use no live credentials; `AIOS_RUN_RUNTIME_QUALIFICATION=1` explicitly enables the hosted operator driver.

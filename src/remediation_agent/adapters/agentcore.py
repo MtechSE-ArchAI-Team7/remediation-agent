@@ -295,10 +295,20 @@ class AgentCoreWorkspaceRecovery:
         workspace: WorkspaceRef,
         *,
         recovery_is_safe: bool,
+        expected_diff: str | None = None,
     ) -> WorkspaceRef:
         path = Path(workspace.path)
         if path.is_dir() and not path.is_symlink():
-            return workspace
+            try:
+                await self._repository.verify_workspace(workspace, expected_diff)
+                return workspace
+            except OSError:
+                # A failing managed filesystem is not permission to destroy and reclone evidence.
+                raise RuntimeError("WORKSPACE_RECOVERY_UNSAFE") from None
+            except (RuntimeError, ValueError):
+                if not recovery_is_safe:
+                    raise RuntimeError("WORKSPACE_RECOVERY_UNSAFE") from None
+                await self._repository.remove_workspace(workspace)
         if not recovery_is_safe:
             raise RuntimeError("WORKSPACE_RECOVERY_UNSAFE")
         immutable_ref = repository.model_copy(update={"commit_sha": workspace.base_commit})
@@ -306,6 +316,7 @@ class AgentCoreWorkspaceRecovery:
         if recovered.base_commit.lower() != workspace.base_commit.lower():
             await self._repository.remove_workspace(recovered)
             raise RuntimeError("WORKSPACE_RECOVERY_UNSAFE")
+        await self._repository.verify_workspace(recovered, expected_diff)
         return recovered
 
 

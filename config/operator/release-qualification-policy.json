@@ -33,6 +33,12 @@
         "bedrock-agentcore:StopCodeInterpreterSession"
       ],
       "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:aws:code-interpreter/aws.codeinterpreter.v1"
+    },
+    {
+      "Sid": "StopOnlyQualificationRuntimeSessions",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:StopRuntimeSession",
+      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3"
     }
   ]
 }

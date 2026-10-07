@@ -74,6 +74,7 @@ from remediation_agent.policy.engine import PolicyEngine
 from remediation_agent.ports.models import (
     ArtifactWriteRequest,
     AuditWriteRequest,
+    BehavioralExecutionFailure,
     BehavioralTaskRequest,
     BranchRequest,
     CandidateVerifyRequest,
@@ -779,6 +780,7 @@ class WorkflowNodes:
         for name in state["compiled_contract"].task_digests:
             report = await self.sandbox.probe_capability(
                 BehavioralTaskRequest(
+                    run_id=state["run_id"],
                     workspace=state["workspace"],
                     task_name=name,
                     task=self.policy.config.validation_tasks[name],
@@ -1105,6 +1107,17 @@ class WorkflowNodes:
                 )
             if applied_policy.changed_files != state["patch_policy"].changed_files:
                 raise RuntimeError("applied workspace diff does not match the preflighted file scope")
+            await self.artifact_store.write_bundle(
+                ArtifactWriteRequest(
+                    run_id=state["run_id"],
+                    files={
+                        "patch.diff": applied_diff.unified_diff,
+                        "edit-receipts.json": json.dumps(
+                            [r.model_dump(mode="json") for r in state.get("edit_receipts", [])]
+                        ),
+                    },
+                )
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             update = self._verification_blocked(
                 state, ["Canonical patch application failed: " + self.audit.redactor.redact(str(exc))[:1000]]
@@ -1179,6 +1192,11 @@ class WorkflowNodes:
         if state.get("execution_binding") != self._execution_binding(state):
             return self._verification_blocked(state, ["REVALIDATION_REQUIRED: execution inputs changed."])
         results: list[ValidationTaskResult] = []
+        storage_evidence = list(state.get("validation_storage_evidence", []))
+        try:
+            await self.repository.verify_workspace(state["workspace"], state["validation_baseline_digest"])
+        except (OSError, RuntimeError, ValueError) as exc:
+            return self._verification_blocked(state, ["WORKSPACE_INTEGRITY_FAILED before validation: " + str(exc)])
         behavioral = list(state.get("behavioral_evidence", []))
         gaps: list[str] = []
         execution_records = list(state.get("validation_execution_records", []))
@@ -1187,14 +1205,25 @@ class WorkflowNodes:
         attempt_number = state.get("attempt_counter", 0) + 1
         for name in state["selected_validation_tasks"]:
             task = self.policy.validation_task(name)
+            records_start = len(execution_records)
             try:
                 request = ValidationTaskRequest(
                     workspace=state["workspace"], task_name=name, task=task, attempt=attempt_number
                 )
                 if task.kind == "BEHAVIORAL":
                     pair = await self.sandbox.run_behavior(
-                        BehavioralTaskRequest(**request.model_dump(), patch_digest=state["diff_digest"])
+                        BehavioralTaskRequest(
+                            **request.model_dump(), patch_digest=state["diff_digest"], run_id=state["run_id"]
+                        )
                     )
+                    if pair.storage is not None:
+                        storage_evidence.append(
+                            type(pair.storage).model_validate(
+                                self.audit.redactor.redact_data(pair.storage.model_dump(mode="json"))
+                            )
+                        )
+                    if pair.evidence is None or pair.storage is not None and pair.storage.failures:
+                        raise BehavioralExecutionFailure(pair)
                     if any(
                         previous.task_name == name and previous.assertions_digest != pair.evidence.assertions_digest
                         for previous in behavioral
@@ -1277,6 +1306,49 @@ class WorkflowNodes:
                     task_execution = await self.sandbox.run_task(request)
                     result = task_execution.result
                     execution_records.append(task_execution.execution)
+            except BehavioralExecutionFailure as exc:
+                pair = exc.result
+                storage = pair.storage
+                execution_records.extend(item.execution for item in pair.executions)
+                detail = self.audit.redactor.redact(str(exc))
+                gaps.append(f"{name}: {detail}")
+                profile = self.sandbox.execution_profile()
+                failed_cleanup = storage is not None and any(
+                    c.status is ValidationCleanupStatus.FAILED for c in storage.cleanup
+                )
+                cleanup_status = (
+                    ValidationCleanupStatus.FAILED
+                    if failed_cleanup
+                    else (
+                        ValidationCleanupStatus.SUCCEEDED
+                        if storage is not None and storage.cleanup
+                        else ValidationCleanupStatus.NOT_APPLICABLE
+                    )
+                )
+                duration = (
+                    storage.duration_ms if storage is not None else sum(e.result.duration_ms for e in pair.executions)
+                )
+                result = ValidationTaskResult(
+                    task_name=name, outcome=ValidationOutcome.ERROR, duration_ms=duration, stderr=detail
+                )
+                execution_records.append(
+                    ValidationExecutionRecord(
+                        attempt=attempt_number,
+                        task_name=name,
+                        backend=profile.backend,
+                        executor_id=profile.executor_id,
+                        input_digest=self.policy.digest_text(request.model_dump_json()),
+                        enforced_controls=profile.enforced_controls,
+                        cleanup_status=cleanup_status,
+                        outcome=ValidationOutcome.ERROR,
+                        duration_ms=duration,
+                    )
+                )
+                if storage is not None:
+                    failures.extend(
+                        WorkflowFailure(category="ENVIRONMENT_SETUP", code=f.code, detail=f.detail)
+                        for f in storage.failures
+                    )
             except (OSError, RuntimeError, ValueError) as exc:
                 gaps.append(f"{name}: validation capability unavailable: {exc}")
                 result = ValidationTaskResult(
@@ -1306,6 +1378,17 @@ class WorkflowNodes:
                         duration_ms=0,
                     )
                 )
+            if any(
+                r.cleanup_status not in {ValidationCleanupStatus.SUCCEEDED, ValidationCleanupStatus.NOT_APPLICABLE}
+                for r in execution_records[records_start:]
+            ):
+                gaps.append(f"{name}: validation session cleanup was not confirmed.")
+                result = result.model_copy(
+                    update={
+                        "outcome": ValidationOutcome.ERROR,
+                        "stderr": (result.stderr + "\nValidation session cleanup was not confirmed.").strip(),
+                    }
+                )
             if result.outcome in {ValidationOutcome.ERROR, ValidationOutcome.TIMED_OUT}:
                 gaps.append(f"{name}: validation did not complete; infrastructure recovery is required.")
             result = result.model_copy(
@@ -1331,6 +1414,7 @@ class WorkflowNodes:
                 detail,
             )
         try:
+            await self.repository.verify_workspace(state["workspace"], state["validation_baseline_digest"])
             post_validation_diff = await self.repository.current_diff(state["workspace"])
             if post_validation_diff.digest != state["validation_baseline_digest"]:
                 results.append(
@@ -1387,6 +1471,7 @@ class WorkflowNodes:
             "verification_gaps": [self.audit.redactor.redact(item)[:2000] for item in gaps][:50],
             "current_validation_results": results,
             "validation_execution_records": execution_records,
+            "validation_storage_evidence": storage_evidence[-50:],
             "validation_attempts": [*state.get("validation_attempts", []), attempt],
             "validation_outcome": outcome,
             "audit_events": self._event_from(
@@ -2234,6 +2319,10 @@ class WorkflowNodes:
                 [item.model_dump(mode="json") for item in state.get("validation_execution_records", [])],
                 indent=2,
                 default=str,
+            ),
+            "validation-storage.json": json.dumps(
+                [item.model_dump(mode="json") for item in state.get("validation_storage_evidence", [])],
+                indent=2,
             ),
             "model-calls.json": json.dumps(
                 [item.model_dump(mode="json") for item in state.get("model_calls", [])],

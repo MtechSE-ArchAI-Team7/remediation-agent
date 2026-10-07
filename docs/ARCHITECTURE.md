@@ -113,3 +113,25 @@ The sealed headless browser includes its matching ELF loader and shared librarie
 resources; direct child-process launch avoids zygote re-executing the loader through `/proc/self/exe`. This preserves the
 existing outer Docker/managed-sandbox isolation controls. Qualification includes actual page interaction and loopback
 request interception; browser launch alone is insufficient evidence.
+
+## Managed storage and validation lifecycle
+
+The one workflow owns the reviewed Git checkout on managed session storage. A separate `ValidationSnapshotRef` is
+accepted only by validation execution and cleanup; patch/repository operations still require `WorkspaceRef`.
+An operator-owned scratch lease records exact base/candidate ownership and rejects traversal, other-run references,
+symlinks and overlap with `/mnt/workspace`. Only one snapshot exists at a time. Trusted image assets are streamed to
+Code Interpreter; Docker stages them only in private scratch. Storage preflight precedes snapshot writes.
+
+`BehavioralTaskExecution` can retain partial executions and `ValidationStorageEvidence` even without a completed pair.
+Cleanup cannot replace the primary failure. Transient filesystem cleanup retries at most three times; process/session
+stop must be confirmed. Each completed snapshot and final storage report is persisted independently. The workflow
+records infrastructure gaps without spending behavioral repair attempts and checks Git/HEAD/diff before and after execution.
+The canonical patch and edit receipts are durable before this boundary. Execution binding version `remediation-v4`
+rejects unfinished v3 approvals while old completed evidence remains readable.
+
+`RuntimeQualificationPort` is an operator test boundary, not another agent or a remediation approval bypass.
+Its A2A request accepts only prepare/resume, an enum fixture, a UUID and a prepared receipt digest. A fresh runtime
+process must recover the fixed fixture's managed Git checkout and exact release/policy/assets/receipt before applying
+its bundled patch. Real application/browser checks and cleanup produce a digest-addressed artifact. The deployment
+client, not the runtime role, stops its isolated qualification session. Readiness and simulated publication trials cannot
+substitute for this cold-resume proof; any failed qualification invokes guarded rollback.

@@ -92,3 +92,18 @@ stale-base rejection. `tests/unit/test_source_edits.py` covers ordinary variable
 placeholder rejection, stale ranges/digests and overlapping edits. Operator qualifications are explicit opt-ins; default
 checks do not call cloud services. The operator release role gains scoped gateway/system-sandbox invocation and ECR read
 permissions; the runtime role does not gain them. ECR login requires account-level `GetAuthorizationToken` visibility.
+
+## Session storage threat model and evidence
+
+| Threat | Status | Evidence and residual limits |
+|---|---|---|
+| Shared quota exhaustion hides a failed fix (LLM10/09) | PARTIALLY_MITIGATED | `test_validation_storage.py`: capacity rejection before staging, sequential snapshots, partial-copy cleanup and EREMOTEIO. 768 MiB operating ceiling and private scratch reduce exposure; concurrent external writes and AWS storage availability remain external risks. |
+| Cleanup deletes reviewed or another run's files (LLM05/06) | MITIGATED | Distinct snapshot type and exact lease ledger; tests reject forged refs, symlinks, repository targets and preserve real Git. Process/session cleanup and filesystem cleanup are separate receipts. |
+| Cleanup masks original errors (LLM09) | MITIGATED | Simultaneous malformed execution/remote I/O cleanup test preserves the primary result, measured duration and errno; cleanup retries are bounded. Graph tests prevent repair, PR and successful memory after incomplete validation. |
+| Stale workspace approved after restart (LLM05/09) | MITIGATED | Real Git cold-resume tests reject missing metadata and changed source; immutable HEAD/candidate digest verified on resume and both sides of validation. v4 execution binding requires old unfinished runs to revalidate. |
+| Readiness mistaken for filesystem qualification (LLM09) | PARTIALLY_MITIGATED | `RuntimeQualificationPort`, fixed fixture schemas and guarded deployment test actual managed storage after stop/resume, with real sandbox/browser proof. Generated trials retain simulated remote writes; actual draft publication remains separately verified. |
+| Qualification grants shell/deployment/approval access (LLM06) | MITIGATED | Strict request permits only bundled fixture IDs and prepare/resume. Tests reject commands, paths and approval flags. Only the operator deployment role can stop sessions on the existing runtime; runtime privileges are unchanged. IAM cannot narrow StopRuntimeSession to one session ID, so operator code binds its generated IDs. |
+
+The probable Oct 7 storage trigger was two roughly 526 MB dependency/browser copies on a 1 GB managed mount; the
+masked primary exception prevents a definitive quota attribution. The implementation removes that staging pattern and
+adds release qualification at the missed filesystem boundary. Capacity reservation is conservative, not a cloud quota guarantee.

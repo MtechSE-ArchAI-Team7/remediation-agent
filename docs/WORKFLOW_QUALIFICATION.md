@@ -54,9 +54,25 @@ Accepted risks remain visible; an approval is distinct from evidence resolving a
 
 After the guarded release, obtain or locate one fresh native Agent 2 delivery. Use its actual `DiagnosisHandoffV1` or
 correlated delivery receipt and existing Agent 3 task; do not manufacture criteria from a task summary or create a duplicate
-run. Preserve genuine human plan/diff approvals. Verify GitHub reports an open draft in the configured repository and that
+run. For authorized trial runs, the operator test driver may submit approvals, recording each exact approval ID/scope digest.
+Non-trial runs retain genuine human plan/diff approvals and all hard denials. Verify GitHub reports an open draft in the configured repository and that
 its head SHA is the journal's validated commit. Agent 4 receives the unchanged v1 handoff only with required PR references.
 
 Email, user association, line items, inventory/idempotency, deployment and runtime soak are outside the selected AH-56
 local contract. A specific `placed`/`pending` order status is not asserted. Header/cookie baseline issues remain visible and
 do not automatically expand this patch. Mandatory operator security controls still apply.
+
+## Actual runtime filesystem qualification
+
+Generated trials run on a CI parent filesystem with real hosted Code Interpreter. They do not prove managed storage
+survival. The deployment job therefore invokes `RuntimeQualificationRequestV1` through A2A with media type
+`application/vnd.aios.runtime-qualification-request.v1+json`. Only bundled `ah54`/`ah56` fixtures and fixed `prepare`/
+`resume` operations are accepted; no command, path, repository or approval fields exist. The prepared receipt binds
+session, release provenance, policy, assets, fixture and candidate. A new process must recover the receipt and Git tree.
+`runtime-qualification.json` records real paired assertions, storage diagnostics, Git integrity and cleanup, and is
+referenced by its immutable manifest. The result schema is additive; diagnosis/remediation/provider-probe v1 wires remain.
+
+The operator driver requires explicit `AIOS_RUN_RUNTIME_QUALIFICATION=1`, exact source/image/version/release arguments
+and an output directory. The guarded workflow supplies these values. A local process restart unit test is routing evidence;
+only an actual managed-runtime result with `managed_filesystem` and `process_restarted` true qualifies the release.
+The separate post-release native replay must still verify an actual GitHub draft and exact validated head SHA.

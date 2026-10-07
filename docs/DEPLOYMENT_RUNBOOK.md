@@ -44,6 +44,10 @@ the configured runtime ID and caps the scan with `AIOS_RELEASE_MAX_RUNTIME_VERSI
    runtime status, `/mnt/workspace` session-storage mount and `AIOS_WORKSPACE_ROOT`.
 7. The bounded provider canary resolves release provenance and exercises an internal schema with an optional/defaulted
    map. A return to strict provider JSON-schema mode therefore fails the release.
+8. `scripts/qualify_runtime.py` prepares AH-54 and AH-56 fixtures on the deployed managed filesystem, stops each
+   isolated session, resumes it and requires a different process nonce, intact Git/candidate digests, real application/browser
+   base/candidate evidence and verified cleanup. Source/image/release/exact version must match. Failure triggers rollback.
+   `runtime-filesystem-qualification` retains correlation and result artifacts even when the job fails.
 
 Each normal deployment uses `${github.run_id}-${github.run_attempt}` as its release ID. Automatic rollback creates a
 new `rollback-...` release ID while retaining the previous source SHA and image digest. Rollback preserves unrelated
@@ -54,9 +58,9 @@ provider probe. A control-plane `READY` result alone is insufficient.
 
 ## Incident replay
 
-Replay a failed case with a new task/run ID and runtime session. Obtain a newly issued `DiagnosisHandoffV1` from Agent 2;
-never reconstruct a missing diagnosis from logs, summaries or Jira. A sensitive plan or patch may stop at an approval
-interrupt. Do not auto-approve it. Agent 4 remains the independent post-deployment verifier.
+Replay a failed case with a new task/run ID and runtime session. Use the archived actual Agent 2 `DiagnosisHandoffV1` only after checking the live base still matches; otherwise obtain
+a new native diagnosis. Never reconstruct it from logs, summaries or Jira. Trial-only operator approval is authorized
+through draft creation: record every decision against its exact approval ID/scope digest. Non-trial gates and hard denials remain. Agent 4 remains the independent post-deployment verifier.
 
 
 ## Operator qualification permissions
@@ -65,7 +69,9 @@ Apply `config/operator/release-qualification-policy.json` only to the existing
 `github-actions-remediation-agentcore-deploy` role. It adds read access to the single Agent 3 ECR repository,
 `ecr:GetAuthorizationToken` on `*` (AWS requires that scope), invocation of the configured IAM model gateway, and
 start/invoke/stop access to the system `aws.codeinterpreter.v1` sandbox. The role's existing main-branch OIDC trust and
-one-hour sessions remain unchanged. This does not add runtime-agent authority or provision cloud resources.
+one-hour sessions remain unchanged. It also permits `bedrock-agentcore:StopRuntimeSession` only on
+`arn:aws:bedrock-agentcore:ap-southeast-1:734849394833:runtime/remediation_agent-2425SXH9D3`.
+This API cannot restrict a session ID in IAM: the operator driver generates and records only its own trial sessions. This does not add runtime-agent authority or provision cloud resources.
 
 Each qualification job runs one case three times, with a 55-minute job limit and a one-hour OIDC session. Reports bind
 policy, offline assets, model configuration, prompt version, source archive, source SHA and image digest. A runtime
@@ -75,3 +81,13 @@ rollback is recovery of the preceding attested version, not permission to bypass
 `make qualify-workflow-docker` and `make qualify-workflow-hosted` are explicit development qualifications. Their outputs
 are named `development-trials.json` unless source/image/runtime bindings are supplied by the release job. A synthetic
 qualification handoff is never a substitute for the fresh native Agent 2 delivery used after release.
+
+## Storage failure recovery
+
+AWS managed session storage has a 1 GB limit; use the 768 MiB operating ceiling and keep bulky disposable data outside it.
+See [AWS limits](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html).
+For `WORKSPACE_STORAGE_IO_ERROR`, `VALIDATION_STORAGE_EXHAUSTED` or failed cleanup, inspect `validation-storage.json`
+and preserved patch/edit receipts. Do not approve through damaged metadata or retry publication. Clean-base recovery is
+allowed only before application; corruption afterward requires a new correlated trial with an unchanged live base.
+Do not remove the managed mount or fall back to syntax-only success. Stop/resume qualification uses the same session ID;
+wait for StopRuntimeSession completion before resuming. Application deployment and Agent 4 soak remain pending checks.

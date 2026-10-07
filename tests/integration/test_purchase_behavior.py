@@ -53,9 +53,10 @@ async def qualify_profile(
             workspace=workspace, task_name=task_name, task=task, attempt=1, patch_digest="sha256:fixture"
         )
     )
+    assert result.evidence is not None, result.model_dump_json()
     base = {case.test_id: case.outcome for case in result.evidence.base.cases}
     candidate = {case.test_id: case.outcome for case in result.evidence.candidate.cases}
-    assert base[reproduction] == "ASSERTION_FAILED", result.evidence.model_dump_json()
+    assert base.get(reproduction) == "ASSERTION_FAILED", result.evidence.model_dump_json()
     assert set(base) == set(candidate) == set(task.required_test_ids)
     assert all(outcome == "PASSED" for outcome in candidate.values()), result.evidence.model_dump_json()
     assert result.evidence.assertions_digest.startswith("sha256:")
@@ -111,6 +112,7 @@ async def test_browser_omitting_checkout_request_is_bounded_assertion_failure(tm
             patch_digest="sha256:missing-browser-request",
         )
     )
+    assert result.evidence is not None, result.model_dump_json()
     cases = {case.test_id: case.outcome for case in result.evidence.candidate.cases}
     assert cases["checkout_persists_before_success"] == "PASSED"
     assert all(cases[name] == "ASSERTION_FAILED" for name in task.required_test_ids if "browser" in name)

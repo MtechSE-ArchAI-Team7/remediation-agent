@@ -311,7 +311,7 @@ class RemediationPlan(StrictModel):
 
 class CompiledContractV1(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
-    workflow_version: Literal["remediation-v3"] = "remediation-v3"
+    workflow_version: Literal["remediation-v3", "remediation-v4"] = "remediation-v4"
     base_commit: NonEmptyStr
     policy_digest: NonEmptyStr
     criteria: dict[str, str] = Field(max_length=20)
@@ -323,7 +323,7 @@ class CompiledContractV1(StrictModel):
 
 
 class ExecutionBindingV1(StrictModel):
-    workflow_version: Literal["remediation-v3"] = "remediation-v3"
+    workflow_version: Literal["remediation-v3", "remediation-v4"] = "remediation-v4"
     base_commit: NonEmptyStr
     contract_digest: NonEmptyStr
     policy_digest: NonEmptyStr
@@ -483,6 +483,35 @@ class ValidationTaskResult(StrictModel):
     output_truncated: bool = False
 
 
+class ValidationDiagnostic(StrictModel):
+    code: IdentifierStr
+    operation: IdentifierStr
+    resource: Literal["WORKSPACE", "SCRATCH", "SNAPSHOT", "SESSION", "REPORT", "ASSET"]
+    detail: str = Field(default="", max_length=2000)
+    errno: int | None = None
+
+
+class ValidationCleanupReceipt(StrictModel):
+    resource: Literal["SNAPSHOT", "SCRATCH", "SESSION"]
+    resource_id: IdentifierStr
+    status: ValidationCleanupStatus
+    attempts: int = Field(default=1, ge=0, le=3)
+    diagnostic: ValidationDiagnostic | None = None
+
+
+class ValidationStorageEvidence(StrictModel):
+    task_name: IdentifierStr
+    attempt: int = Field(ge=1)
+    duration_ms: int = Field(default=0, ge=0)
+    managed_bytes: int = Field(default=0, ge=0)
+    projected_scratch_bytes: int = Field(default=0, ge=0)
+    projected_files: int = Field(default=0, ge=0)
+    scratch_free_bytes: int = Field(default=0, ge=0)
+    failures: list[ValidationDiagnostic] = Field(default_factory=list, max_length=20)
+    cleanup: list[ValidationCleanupReceipt] = Field(default_factory=list, max_length=10)
+    reports: list[BehavioralReport] = Field(default_factory=list, max_length=2)
+
+
 class ValidationExecutionRecord(StrictModel):
     """Redacted proof of the deterministic boundary used for one validation task."""
 
@@ -494,6 +523,8 @@ class ValidationExecutionRecord(StrictModel):
     session_digest: str | None = None
     enforced_controls: list[IdentifierStr] = Field(min_length=1, max_length=20)
     cleanup_status: ValidationCleanupStatus
+    cleanup_attempts: int = Field(default=1, ge=0, le=3)
+    cleanup_diagnostic: ValidationDiagnostic | None = None
     outcome: ValidationOutcome
     duration_ms: int = Field(ge=0)
 
@@ -510,6 +541,16 @@ class WorkspaceRef(StrictModel):
     path: NonEmptyStr
     base_commit: NonEmptyStr
     status: WorkspaceStatus = WorkspaceStatus.READY
+
+
+class ValidationSnapshotRef(StrictModel):
+    """Operator-owned disposable snapshot; never a patch or repository target."""
+
+    workspace_id: NonEmptyStr
+    path: NonEmptyStr
+    base_commit: NonEmptyStr
+    lease_id: IdentifierStr
+    owner_workspace_id: IdentifierStr
 
 
 class RollbackInstructions(StrictModel):

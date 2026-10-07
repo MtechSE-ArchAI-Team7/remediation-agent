@@ -1,0 +1,256 @@
+{
+  "$defs": {
+    "BehavioralCaseResult": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "PASSED",
+            "ASSERTION_FAILED",
+            "SETUP_ERROR",
+            "SKIPPED"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "test_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Test Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "test_id",
+        "outcome"
+      ],
+      "title": "BehavioralCaseResult",
+      "type": "object"
+    },
+    "BehavioralReport": {
+      "additionalProperties": false,
+      "properties": {
+        "cases": {
+          "items": {
+            "$ref": "#/$defs/BehavioralCaseResult"
+          },
+          "maxItems": 200,
+          "minItems": 1,
+          "title": "Cases",
+          "type": "array"
+        },
+        "runtime_digest": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime Digest"
+        }
+      },
+      "required": [
+        "cases"
+      ],
+      "title": "BehavioralReport",
+      "type": "object"
+    },
+    "ValidationCleanupReceipt": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "default": 1,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "diagnostic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationDiagnostic"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resource": {
+          "enum": [
+            "SNAPSHOT",
+            "SCRATCH",
+            "SESSION"
+          ],
+          "title": "Resource",
+          "type": "string"
+        },
+        "resource_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Resource Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ValidationCleanupStatus"
+        }
+      },
+      "required": [
+        "resource",
+        "resource_id",
+        "status"
+      ],
+      "title": "ValidationCleanupReceipt",
+      "type": "object"
+    },
+    "ValidationCleanupStatus": {
+      "enum": [
+        "SUCCEEDED",
+        "FAILED",
+        "NOT_APPLICABLE",
+        "UNKNOWN"
+      ],
+      "title": "ValidationCleanupStatus",
+      "type": "string"
+    },
+    "ValidationDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Detail",
+          "type": "string"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Errno"
+        },
+        "operation": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Operation",
+          "type": "string"
+        },
+        "resource": {
+          "enum": [
+            "WORKSPACE",
+            "SCRATCH",
+            "SNAPSHOT",
+            "SESSION",
+            "REPORT",
+            "ASSET"
+          ],
+          "title": "Resource",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "operation",
+        "resource"
+      ],
+      "title": "ValidationDiagnostic",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt": {
+      "minimum": 1,
+      "title": "Attempt",
+      "type": "integer"
+    },
+    "cleanup": {
+      "items": {
+        "$ref": "#/$defs/ValidationCleanupReceipt"
+      },
+      "maxItems": 10,
+      "title": "Cleanup",
+      "type": "array"
+    },
+    "duration_ms": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "failures": {
+      "items": {
+        "$ref": "#/$defs/ValidationDiagnostic"
+      },
+      "maxItems": 20,
+      "title": "Failures",
+      "type": "array"
+    },
+    "managed_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Managed Bytes",
+      "type": "integer"
+    },
+    "projected_files": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Projected Files",
+      "type": "integer"
+    },
+    "projected_scratch_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Projected Scratch Bytes",
+      "type": "integer"
+    },
+    "reports": {
+      "items": {
+        "$ref": "#/$defs/BehavioralReport"
+      },
+      "maxItems": 2,
+      "title": "Reports",
+      "type": "array"
+    },
+    "scratch_free_bytes": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Scratch Free Bytes",
+      "type": "integer"
+    },
+    "task_name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Task Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_name",
+    "attempt"
+  ],
+  "title": "ValidationStorageEvidence",
+  "type": "object"
+}

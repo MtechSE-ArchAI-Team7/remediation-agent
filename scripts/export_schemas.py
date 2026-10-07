@@ -24,9 +24,11 @@ from remediation_agent.domain.models import (
     PublicationRetryRequestV1,
     ReleaseProvenanceV1,
     RemediationHandoffV1,
+    ValidationStorageEvidence,
     VerificationBriefV1,
 )
 from remediation_agent.domain.qualification import ReleaseQualificationV1
+from remediation_agent.domain.runtime_qualification import RuntimeQualificationRequestV1, RuntimeQualificationResultV1
 from remediation_agent.evaluation import (
     EvaluationJudgeSuiteV1,
     EvaluationSuiteManifestV2,
@@ -41,6 +43,9 @@ def main() -> None:
     output = Path(__file__).parents[1] / "config" / "schemas"
     output.mkdir(parents=True, exist_ok=True)
     schemas = {
+        "runtime-qualification-request-v1.schema.json": RuntimeQualificationRequestV1.model_json_schema(),
+        "runtime-qualification-result-v1.schema.json": RuntimeQualificationResultV1.model_json_schema(),
+        "validation-storage.schema.json": ValidationStorageEvidence.model_json_schema(),
         "release-qualification-v1.schema.json": ReleaseQualificationV1.model_json_schema(),
         "compiled-contract-v1.schema.json": CompiledContractV1.model_json_schema(),
         "capability-report-v1.schema.json": CapabilityReportV1.model_json_schema(),

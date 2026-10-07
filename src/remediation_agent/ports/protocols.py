@@ -22,6 +22,7 @@ from remediation_agent.domain.models import (
     RepositoryRef,
     WorkspaceRef,
 )
+from remediation_agent.domain.runtime_qualification import RuntimeQualificationRequestV1, RuntimeQualificationResultV1
 from remediation_agent.ports.models import (
     ArtifactReadRequest,
     ArtifactReadResult,
@@ -72,6 +73,7 @@ class RepositoryInspectionPort(Protocol):
 
 
 class RepositoryWorkspacePort(Protocol):
+    async def verify_workspace(self, workspace: WorkspaceRef, expected_diff: str | None = None) -> None: ...
     async def publication_check(self, request: PublicationCheckRequest) -> str: ...
 
     async def compile_edits(self, request: EditCompileRequest) -> EditCompileResult: ...
@@ -197,8 +199,15 @@ class WorkspaceRecoveryPort(Protocol):
         workspace: WorkspaceRef,
         *,
         recovery_is_safe: bool,
+        expected_diff: str | None = None,
     ) -> WorkspaceRef: ...
 
 
 class StructuredOutputRunnable(Protocol):
     async def ainvoke(self, input: object) -> BaseModel: ...
+
+
+class RuntimeQualificationPort(Protocol):
+    async def execute(
+        self, request: RuntimeQualificationRequestV1, session_id: str
+    ) -> RuntimeQualificationResultV1: ...

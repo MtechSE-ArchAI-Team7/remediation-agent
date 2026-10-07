@@ -21,6 +21,8 @@ PROVIDER_PROBE_REQUEST_MEDIA_TYPE = "application/vnd.aios.provider-probe-request
 PROVIDER_PROBE_RESULT_MEDIA_TYPE = "application/vnd.aios.provider-probe-result.v1+json"
 ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE = "application/vnd.aios.artifact-preview-request.v1+json"
 ARTIFACT_PREVIEW_RESULT_MEDIA_TYPE = "application/vnd.aios.artifact-preview-result.v1+json"
+RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE = "application/vnd.aios.runtime-qualification-request.v1+json"
+RUNTIME_QUALIFICATION_RESULT_MEDIA_TYPE = "application/vnd.aios.runtime-qualification-result.v1+json"
 RUN_SUMMARY_METADATA_KEY = "aios_run"
 _CANONICAL_UUID = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
@@ -100,6 +102,7 @@ SUPPORTED_INPUT_MEDIA_TYPES = frozenset(
         APPROVAL_DECISION_MEDIA_TYPE,
         PUBLICATION_RETRY_MEDIA_TYPE,
         PROVIDER_PROBE_REQUEST_MEDIA_TYPE,
+        RUNTIME_QUALIFICATION_REQUEST_MEDIA_TYPE,
         ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE,
     }
 )

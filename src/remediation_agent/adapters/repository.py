@@ -228,6 +228,16 @@ class LocalGitRepository:
         diff = await self._run(["git", "diff", "--no-ext-diff", "--binary", "HEAD", "--"], cwd=root)
         return DiffResult(unified_diff=diff, digest="sha256:" + hashlib.sha256(diff.encode()).hexdigest())
 
+    async def verify_workspace(self, workspace: WorkspaceRef, expected_diff: str | None = None) -> None:
+        root = self._workspace_root(workspace)
+        if not (root / ".git").is_dir() or (root / ".git").is_symlink():
+            raise RepositoryError("WORKSPACE_INTEGRITY_FAILED: Git metadata unavailable")
+        head = (await self._run(["git", "rev-parse", "HEAD"], cwd=root)).strip()
+        if head != workspace.base_commit:
+            raise RepositoryError("WORKSPACE_INTEGRITY_FAILED: immutable HEAD changed")
+        if expected_diff is not None and (await self.current_diff(workspace)).digest != expected_diff:
+            raise RepositoryError("WORKSPACE_INTEGRITY_FAILED: expected workspace digest changed")
+
     async def publication_check(self, request: PublicationCheckRequest) -> str:
         root = self._workspace_root(request.workspace)
         await self._run(["git", "add", "--all", "--", "."], cwd=root)

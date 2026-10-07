@@ -98,7 +98,11 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             else:
                 inspection_tools = GitHubRemoteMcpInspectionTools(github_token, policy)
             sandbox = DockerSandboxExecutor(
-                settings.workspace_root, settings.sandbox_image, behavioral_bundle=settings.behavioral_bundle
+                settings.workspace_root,
+                settings.sandbox_image,
+                behavioral_bundle=settings.behavioral_bundle,
+                scratch_root=settings.validation_scratch_root,
+                result_store=LocalArtifactStore(settings.artifact_root),
             )
             pr_provider = DraftPullRequestProvider(
                 token=github_token,

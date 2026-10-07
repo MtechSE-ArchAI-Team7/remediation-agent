@@ -541,7 +541,9 @@ async def test_code_interpreter_records_cleanup_failure_without_exposing_session
         )
     )
 
-    assert execution.result.outcome is ValidationOutcome.ERROR
+    assert execution.result.outcome is ValidationOutcome.PASSED  # completed report is preserved
+    assert execution.execution.cleanup_attempts == 3
+    assert execution.execution.cleanup_diagnostic is not None
     assert execution.execution.cleanup_status == "FAILED"
     assert "ci-session" not in execution.execution.model_dump_json()
 
