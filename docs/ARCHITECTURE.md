@@ -21,7 +21,7 @@ flowchart LR
     Seal --> Branch[Branch]
     Branch --> Commit[Commit]
     Commit --> Push[Push and reconcile]
-    Push --> Draft[Create and verify exact draft]
+    Push --> Draft[GitHub MCP: create and verify exact draft]
     Draft --> Cleanup[Cleanup]
     Cleanup --> Durable[Persist cleanup and publication receipts]
     Durable --> Memory[Eligible incident memory]
@@ -135,3 +135,23 @@ process must recover the fixed fixture's managed Git checkout and exact release/
 its bundled patch. Real application/browser checks and cleanup produce a digest-addressed artifact. The deployment
 client, not the runtime role, stops its isolated qualification session. Readiness and simulated publication trials cannot
 substitute for this cold-resume proof; any failed qualification invokes guarded rollback.
+
+
+## Deterministic MCP publication
+
+`PullRequestProvider` uses an operation-scoped direct session to GitHub's fixed hosted MCP endpoint. Its allowlist is
+`list_pull_requests`, `create_pull_request`, and `pull_request_read` with `method=get`. This connection is independent of
+the three-tool read-only model inspection session and its optional IAM Gateway. One agent identity and policy engine
+still own both boundaries; no model can invoke publication.
+
+MCP readiness proves discovery and repository read access only. Both write gates, sealed candidate evidence and exact
+approval bindings still precede publication. Git branch/commit/push remain unchanged. The provider reconciles the exact
+head across all PR states, rejects ambiguity, forces draft creation, and verifies the returned number through an MCP read.
+Creation IDs are GitHub database IDs, not PR numbers. Success requires matching repository/branches/head/base SHAs and an
+open, unmerged draft. Unknown outcomes reconcile on retry; no REST fallback, merge, update or review operation exists.
+
+Internal readiness/results/errors carry bounded `PublicationCallRecord` values. Workflow stages convert them into the
+existing hash-chained audit before checkpointing; public v1 handoffs/journals remain compatible. Session objects, bearer
+headers and raw provider bodies never enter state. HTTP responses are capped at 1 MiB and each discovery/tool operation
+uses the operator MCP timeout. Tests and release qualification exercise the same SDK adapter using a captured GitHub-shaped
+MCP contract without making remote writes.

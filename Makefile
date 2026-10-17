@@ -28,7 +28,7 @@ test-mcp:
 	uv run pytest tests/mcp tests/graph/test_mcp_inspection.py tests/unit/test_model_adapter.py
 
 test-mcp-live:
-	uv run pytest -m live_mcp tests/mcp/test_repository_mcp.py
+	uv run pytest -m live_mcp tests/mcp
 
 test-tool-gateway-live:
 	AIOS_RUN_AGENTCORE_TOOL_GATEWAY_LIVE=1 uv run pytest -m live_mcp tests/integration/test_agentcore_tool_gateway_live.py

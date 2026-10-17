@@ -239,9 +239,9 @@ OPERATIONAL_TOOL_CATALOG: Final[tuple[OperationalToolDescriptor, ...]] = (
         Mode.DETERMINISTIC_WORKFLOW,
         Effect.OPTIONAL_REMOTE_WRITE,
         Availability.CONFIG_AND_POLICY_GATED,
-        "Create an optional draft pull request for the validated pushed branch.",
+        "Create and verify an optional draft through GitHub MCP for the validated pushed branch.",
         "Application and operator-policy write gates",
-        "Exact repository matching and idempotency key",
+        "Exact repository/commit matching and MCP lookup before creation",
         "Draft only; merge is unavailable",
     ),
     _tool(

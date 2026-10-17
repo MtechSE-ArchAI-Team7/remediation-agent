@@ -116,3 +116,46 @@ async def test_duplicate_run_cannot_replace_original_handoff() -> None:
     assert len(model.requests) == calls
     with pytest.raises(ApprovalConflictError, match="RUN_INPUT_MISMATCH"):
         await service.start(original.model_copy(update={"issue_summary": "A different defect"}), run_id=first.run_id)
+
+
+async def test_mcp_publication_audit_preserves_failed_attempt_and_exact_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from remediation_agent.adapters.pr import DraftPullRequestProvider
+    from remediation_agent.adapters.pr_fixture import SimulatedGitHubPrMcp
+    from tests.unit.test_pr_provider import CONTRACT
+
+    service, _, repository, sandbox, provider, _, _ = build_test_service(
+        scripted_responses(),
+        github_writes_enabled=True,
+        github_repository="MtechSE-ArchAI-Team7/example-service",
+    )
+
+    def create_pr(args: dict[str, object]) -> dict[str, object]:
+        slug = f"{args['owner']}/{args['repo']}"
+        return {
+            "number": 42,
+            "html_url": f"https://github.com/{slug}/pull/42",
+            "draft": True,
+            "state": "open",
+            "merged": False,
+            "head": {"ref": args["head"], "sha": "b" * 40, "repo": {"full_name": slug}},
+            "base": {"ref": args["base"], "sha": "a" * 40, "repo": {"full_name": slug}},
+        }
+
+    fixture = SimulatedGitHubPrMcp(CONTRACT, create_pr)
+    fixture.lose_create_response = True
+    real = DraftPullRequestProvider(token="fixture-only", writes_enabled=True, transport=fixture.transport())  # noqa: S106
+    monkeypatch.setattr(provider, "check_readiness", real.check_readiness)
+    monkeypatch.setattr(provider, "create_draft", real.create_draft)
+    monkeypatch.setattr(provider, "verify_draft", real.verify_draft)
+    result = await service.start(diagnosis_handoff())
+    assert result.status is FinalStatus.DRAFT_PR_CREATED and sandbox.destroyed
+    snapshot = await service.graph.aget_state(service._config(result.run_id))
+    events = [event for event in snapshot.values["audit_events"] if event.event_type == "PUBLICATION_MCP_CALL"]
+    records = [json.loads(event.detail) for event in events]
+    creates = [record for record in records if record["operation"] == "create_pull_request"]
+    assert len(creates) == 1 and creates[0]["result_code"] != "OK"
+    assert sum(record["operation"] == "pull_request_read" for record in records) == 2
+    assert all(record["transport"] == "github_mcp" for record in records)
+    assert "fixture-only" not in json.dumps(records)
+    assert len(repository.pushes) == 1 and len(fixture.published) == 1
+    assert snapshot.values["publication_journal"].verified

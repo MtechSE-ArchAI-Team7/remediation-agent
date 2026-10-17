@@ -21,7 +21,7 @@ def render_tool_catalog_markdown() -> str:
         "The Resolution/Remediation Agent implements "
         f"**{len(OPERATIONAL_TOOL_CATALOG)} operational tools**: **{model_count} model-callable** "
         f"inspection/control tools and **{workflow_count} deterministic workflow-only** tools. "
-        "All tools belong to the same agent and shared LangGraph state; they are not agents or subagents.",
+        "All tools belong to the same agent and shared LangGraph state; internal stages are workflow nodes.",
         "",
         "## Authority boundary",
         "",
@@ -35,7 +35,7 @@ def render_tool_catalog_markdown() -> str:
         '    HostTools --> Workspace["Disposable workspace"]',
         '    HostTools --> Sandbox["Docker / AgentCore Code Interpreter"]',
         '    HostTools --> Evidence["Redacted audit + artifacts"]',
-        '    HostTools -->|application gate + policy gate| Remote["Optional branch + draft PR"]',
+        '    HostTools -->|application gate + policy gate| Remote["Optional Git push + MCP draft PR"]',
         '    Remote -. never .-> Merge["Merge or deploy"]',
         "```",
         "",

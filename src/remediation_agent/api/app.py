@@ -107,6 +107,7 @@ def create_app(service: RemediationService | None = None) -> FastAPI:
             pr_provider = DraftPullRequestProvider(
                 token=github_token,
                 writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
+                timeout_seconds=policy_config.limits.max_mcp_tool_timeout_seconds,
             )
             artifact_store = LocalArtifactStore(settings.artifact_root)
             audit_sink = JsonlAuditSink(settings.artifact_root)

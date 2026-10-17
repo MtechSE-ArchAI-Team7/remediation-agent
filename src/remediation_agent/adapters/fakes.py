@@ -73,6 +73,7 @@ from remediation_agent.ports.models import (
     PatchApplyResult,
     PreparedDraftPr,
     PublicationCheckRequest,
+    PublicationReadiness,
     PushRequest,
     PushResult,
     ReadFileRequest,
@@ -493,8 +494,9 @@ class FakePullRequestProvider:
         self.create = create
         self.requests: list[DraftPrRequest] = []
 
-    async def check_readiness(self, repository: RepositoryRef, slug: str | None) -> None:
+    async def check_readiness(self, repository: RepositoryRef, slug: str | None) -> PublicationReadiness:
         _ = repository, slug
+        return PublicationReadiness()
 
     async def prepare(self, request: DraftPrRequest) -> PreparedDraftPr:
         self.requests.append(request)

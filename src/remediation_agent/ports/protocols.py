@@ -50,6 +50,7 @@ from remediation_agent.ports.models import (
     PatchApplyResult,
     PreparedDraftPr,
     PublicationCheckRequest,
+    PublicationReadiness,
     PushRequest,
     PushResult,
     ReadFileRequest,
@@ -151,7 +152,7 @@ class ReleaseProvenancePort(Protocol):
 
 
 class PullRequestProvider(Protocol):
-    async def check_readiness(self, repository: RepositoryRef, slug: str | None) -> None: ...
+    async def check_readiness(self, repository: RepositoryRef, slug: str | None) -> PublicationReadiness: ...
 
     async def verify_draft(self, request: DraftPrRequest) -> CreatedDraftPr: ...
 

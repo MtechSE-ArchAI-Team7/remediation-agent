@@ -2,7 +2,7 @@
 
 > Generated from `src/remediation_agent/tools/catalog.py`; do not edit manually.
 
-The Resolution/Remediation Agent implements **17 operational tools**: **4 model-callable** inspection/control tools and **13 deterministic workflow-only** tools. All tools belong to the same agent and shared LangGraph state; they are not agents or subagents.
+The Resolution/Remediation Agent implements **17 operational tools**: **4 model-callable** inspection/control tools and **13 deterministic workflow-only** tools. All tools belong to the same agent and shared LangGraph state; internal stages are workflow nodes.
 
 ## Authority boundary
 
@@ -16,7 +16,7 @@ flowchart LR
     HostTools --> Workspace["Disposable workspace"]
     HostTools --> Sandbox["Docker / AgentCore Code Interpreter"]
     HostTools --> Evidence["Redacted audit + artifacts"]
-    HostTools -->|application gate + policy gate| Remote["Optional branch + draft PR"]
+    HostTools -->|application gate + policy gate| Remote["Optional Git push + MCP draft PR"]
     Remote -. never .-> Merge["Merge or deploy"]
 ```
 
@@ -40,7 +40,7 @@ Repository content cannot expand the allowlist, choose commands, call mutation t
 | `sandbox.run_task` | Run one operator-defined validation task in the restricted Docker sandbox. | `run_task` / `SandboxExecutor` | — | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `POLICY_GATED` | Trusted argv arrays without a shell<br>Non-root, no network, resource, timeout, and output limits<br>Post-validation diff integrity check |
 | `sandbox.destroy` | Destroy the assigned disposable workspace during mandatory cleanup. | `destroy` / `SandboxExecutor` | — | `SANDBOX` | `DETERMINISTIC_WORKFLOW` | `DISPOSABLE_WORKSPACE_WRITE` | `ALWAYS_BOUNDED` | Exact workspace identity and root containment<br>Cleanup attempted for every workspace-owning terminal path<br>Cleanup failure is surfaced in state and evidence |
 | `pull_request.prepare` | Prepare a deterministic draft pull-request payload and metadata. | `prepare` / `PullRequestProvider` | — | `PULL_REQUEST` | `DETERMINISTIC_WORKFLOW` | `CONTROL_ONLY` | `POLICY_GATED` | Runs only after deterministic validation passes<br>Workflow-generated title, body, branch, and idempotency key<br>Creates no remote state |
-| `pull_request.create_draft` | Create an optional draft pull request for the validated pushed branch. | `create_draft` / `PullRequestProvider` | — | `PULL_REQUEST` | `DETERMINISTIC_WORKFLOW` | `OPTIONAL_REMOTE_WRITE` | `CONFIG_AND_POLICY_GATED` | Application and operator-policy write gates<br>Exact repository matching and idempotency key<br>Draft only; merge is unavailable |
+| `pull_request.create_draft` | Create and verify an optional draft through GitHub MCP for the validated pushed branch. | `create_draft` / `PullRequestProvider` | — | `PULL_REQUEST` | `DETERMINISTIC_WORKFLOW` | `OPTIONAL_REMOTE_WRITE` | `CONFIG_AND_POLICY_GATED` | Application and operator-policy write gates<br>Exact repository/commit matching and MCP lookup before creation<br>Draft only; merge is unavailable |
 | `audit.write` | Write the redacted hash-chained JSONL audit trail for the run. | `write` / `AuditSink` | — | `EVIDENCE` | `DETERMINISTIC_WORKFLOW` | `LOCAL_EVIDENCE_WRITE` | `ALWAYS_BOUNDED` | Secret and path redaction<br>Stable digests, UTC timestamps, and hash chaining<br>Local artifact root containment |
 | `artifact.write_bundle` | Write the bounded remediation evidence and handoff artifact bundle. | `write_bundle` / `ArtifactStore` | — | `EVIDENCE` | `DETERMINISTIC_WORKFLOW` | `LOCAL_EVIDENCE_WRITE` | `ALWAYS_BOUNDED` | Workflow-generated file names and contents<br>Redaction and local artifact root containment<br>Failure recorded in the final handoff |
 

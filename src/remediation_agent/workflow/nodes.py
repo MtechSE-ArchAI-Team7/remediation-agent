@@ -86,6 +86,7 @@ from remediation_agent.ports.models import (
     ModelRequest,
     PatchApplicabilityError,
     PatchApplyRequest,
+    PublicationCallRecord,
     PublicationCheckRequest,
     PublicationError,
     PushRequest,
@@ -215,7 +216,8 @@ class WorkflowNodes:
             return {}
         try:
             if self.github_writes_enabled:
-                await self.pr_provider.check_readiness(state["handoff"].repository, self.github_repository)
+                readiness = await self.pr_provider.check_readiness(state["handoff"].repository, self.github_repository)
+                state = self._publication_records(state, readiness.records)
             manifest = await self.artifact_store.write_bundle(
                 ArtifactWriteRequest(
                     run_id=state["run_id"],
@@ -226,6 +228,8 @@ class WorkflowNodes:
                 )
             )
         except (OSError, RuntimeError, ValueError) as exc:
+            if isinstance(exc, PublicationError):
+                state = self._publication_records(state, exc.records)
             return self._verification_blocked(
                 state, ["INTAKE_CAPABILITY_UNAVAILABLE: " + self.audit.redactor.redact(str(exc))[:1000]]
             )
@@ -1819,6 +1823,7 @@ class WorkflowNodes:
                         if stage == "DRAFT"
                         else self.pr_provider.verify_draft(request)
                     )
+                    state = self._publication_records(state, result.records)
                     updates["draft_pr"] = result.metadata
                 receipt = PublicationReceipt(
                     stage=stage,
@@ -1845,6 +1850,7 @@ class WorkflowNodes:
                 )
                 return updates
             except PublicationError as exc:
+                state = self._publication_records(state, exc.records)
                 if not exc.retryable or attempt == 3:
                     return self._publication_failure(state, stage, exc)
             except (OSError, RuntimeError, ValueError) as exc:
@@ -1852,6 +1858,26 @@ class WorkflowNodes:
                     return self._publication_failure(state, stage, exc)
             await asyncio.sleep(0.25 * attempt)
         raise AssertionError("bounded publication loop exhausted without outcome")
+
+    def _publication_records(
+        self, state: RemediationState, records: Sequence[PublicationCallRecord]
+    ) -> RemediationState:
+        for record in records:
+            state = cast(
+                RemediationState,
+                {
+                    **state,
+                    "audit_events": self._event(
+                        state,
+                        "PUBLICATION_MCP_CALL",
+                        record.result_code,
+                        record.model_dump_json(),
+                        input_value=record.input_digest,
+                        output_value=record.output_digest,
+                    ),
+                },
+            )
+        return state
 
     def _publication_failure(self, state: RemediationState, stage: str, exc: Exception) -> dict[str, object]:
         code = exc.code if isinstance(exc, PublicationError) else "PUBLICATION_OPERATION_FAILED"

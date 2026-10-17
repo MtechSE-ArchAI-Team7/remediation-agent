@@ -93,7 +93,7 @@ The lifecycle is:
     ordinary Git applicability mismatches consume the same
     bounded repair-attempt budget, restart from the immutable base, and stop at the configured limit. Applicability
     retries never relax patch anchoring with `--unidiff-zero`.
-11. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create a GitHub draft; always attempt cleanup.
+11. Produce rollback, audit, artifacts, and a draft-PR payload; optionally create and verify a GitHub draft through host-controlled MCP; always attempt cleanup.
 12. After successful cleanup, optionally store only a bounded `AUTO_VALIDATED` incident summary when both write gates permit it. Storage failure never changes a successful remediation result.
 
 Model output never decides whether validation passed, lowers policy severity, supplies executable command strings, or
@@ -446,6 +446,22 @@ cannot change these limits or select a different MCP server.
 Production accepts only canonical `https://github.com/{owner}/{repo}.git` handoffs. `LOCAL`, GitLab, generic Git, and
 credential-bearing URLs fail deterministic intake validation before workspace creation. The shared v1 handoff schema is
 unchanged so other agents retain wire compatibility.
+
+Draft publication uses a separate direct Streamable HTTP session to GitHub's fixed hosted MCP endpoint, even when
+inspection uses AgentCore Gateway. The deterministic provider permits only `list_pull_requests`, `create_pull_request`,
+and `pull_request_read` (`method=get`). These tools are never supplied to the model. There is no direct REST fallback;
+branch, commit and push remain trusted Git operations. The existing MCP timeout policy also bounds publication calls.
+
+Readiness checks discovery and repository read access, not guaranteed write permission. Git push and MCP draft creation
+remain the authoritative permission checks. Discovery drift, oversized/invalid responses and mismatched remote evidence
+fail closed. Creation forces draft mode, accepts the returned URL only as a locator, and re-reads the PR to verify its
+repository, branches, exact head/base SHAs, open/unmerged state and draft flag. A lost response is reconciled before any
+repeat create. Publication failures retain the candidate with `HUMAN_ACTION_REQUIRED` for an exact publication retry.
+Audit events include redacted MCP operation/outcome records and digests, including interrupted creation attempts.
+
+`make test-mcp-live` includes read-only publication discovery/list/read checks. It never creates a PR. A guarded release
+and an authorized native Agent 2 run proving `DRAFT_PR_CREATED` are required before presenting hosted MCP publication as
+implemented. The presentation evidence must bind the source/image/runtime version, run, PR and validated commit SHAs.
 
 GitHub creation also requires `github.writes_enabled=true` in the reviewed policy. Both gates must be enabled. The Git
 adapter uses the injected token only through a trusted askpass process for exact-host `https://github.com` remotes; it

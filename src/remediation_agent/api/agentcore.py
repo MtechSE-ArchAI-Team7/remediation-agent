@@ -222,6 +222,7 @@ def create_agentcore_app(
                 pr_provider=DraftPullRequestProvider(
                     token=github_token,
                     writes_enabled=settings.github_writes_enabled and policy_config.github.writes_enabled,
+                    timeout_seconds=policy_config.limits.max_mcp_tool_timeout_seconds,
                 ),
                 artifact_store=S3ArtifactStore(artifact_bucket, region_name=region_name),
                 audit_sink=S3AuditSink(artifact_bucket, region_name=region_name),

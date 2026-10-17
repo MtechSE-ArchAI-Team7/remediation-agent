@@ -57,10 +57,13 @@ class ArtifactReadError(RuntimeError):
 class PublicationError(RuntimeError):
     """Safe typed publication failure; transport data must not enter evidence."""
 
-    def __init__(self, code: str, *, retryable: bool = False):
+    def __init__(
+        self, code: str, *, retryable: bool = False, records: list[PublicationCallRecord] | None = None
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.records = list(records or [])
 
 
 class PatchApplicabilityError(RuntimeError):
@@ -287,8 +290,25 @@ class PreparedDraftPr(StrictModel):
     metadata: DraftPrMetadata
 
 
+class PublicationCallRecord(StrictModel):
+    """Bounded transport evidence, converted to domain audit events before checkpointing."""
+
+    transport: Literal["github_mcp"] = "github_mcp"
+    operation: Literal["discovery", "list_pull_requests", "create_pull_request", "pull_request_read"]
+    started_at: datetime
+    completed_at: datetime
+    result_code: str = Field(pattern=r"^[A-Z0-9_]{1,100}$")
+    input_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    output_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class PublicationReadiness(StrictModel):
+    records: list[PublicationCallRecord] = Field(default_factory=list, max_length=5)
+
+
 class CreatedDraftPr(StrictModel):
     metadata: DraftPrMetadata
+    records: list[PublicationCallRecord] = Field(default_factory=list, max_length=5)
 
 
 class ArtifactWriteRequest(StrictModel):

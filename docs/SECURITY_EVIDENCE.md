@@ -74,7 +74,7 @@ assertions and reconciled publication address these gaps, with complete hosted q
 | Threat | Status | Evidence and residual limits |
 |---|---|---|
 | Non-secret source corruption and placeholder patches (LLM05) | MITIGATED | `tests/unit/test_source_edits.py`: code references survive; real secret locations remain protected; exact ranges/digests, overlap and placeholder rejection precede host-generated diffs. Bounded identifier matching prevents pathological redaction scans. |
-| Lost publication response or unrelated PR accepted (LLM05/06) | MITIGATED | `tests/unit/test_pr_provider.py`: exact commit/base/repository/open/draft checks, lost POST reconciliation, rate-limit classification; no duplicate create or force push. |
+| Lost publication response or unrelated PR accepted (LLM05/06) | MITIGATED | `tests/unit/test_pr_provider.py`: exact commit/base/repository/open/draft checks, lost MCP creation-response reconciliation, rate-limit classification; no duplicate create or force push. |
 | Stale approvals and publication recovery (LLM05/09) | MITIGATED | `tests/graph/test_publication_recovery.py`: changed assets stop approval, failed artifact writes prevent publication, retries bind the verified candidate and preserve the sealed brief; memory waits for delivery evidence and cleanup. |
 | Unqualified browser/runtime dependencies (LLM03/09) | PARTIALLY_MITIGATED | Locked application and independent Playwright manifests, sealed browser/shared libraries, platform and digest checks, actual storefront assertions. Every release must produce hosted application/browser qualification; a Docker pass alone is insufficient. |
 | Incomplete inspected context or prose-sensitive contracts (LLM09) | PARTIALLY_MITIGATED | Required evidence paths and named assertions are operator-owned; missing coverage stops before approval, canonical request semantics replace descriptive equality. Natural-language diagnosis interpretation still requires review. |
@@ -107,3 +107,19 @@ permissions; the runtime role does not gain them. ECR login requires account-lev
 The probable Oct 7 storage trigger was two roughly 526 MB dependency/browser copies on a 1 GB managed mount; the
 masked primary exception prevents a definitive quota attribution. The implementation removes that staging pattern and
 adds release qualification at the missed filesystem boundary. Capacity reservation is conservative, not a cloud quota guarantee.
+
+
+## GitHub MCP publication boundary
+
+| Threat | Status | Evidence and residual limits |
+|---|---|---|
+| Publication tools enter model authority (LLM06) | MITIGATED | Separate provider with exactly three host-called PR tools; unchanged inspection allowlist. `tests/mcp/test_pr_mcp.py`, `tests/unit/test_pr_provider.py`, and existing inspection graph tests. Both application and policy write gates remain required. |
+| Creation acknowledgement mistaken for verified delivery (LLM05/09) | MITIGATED | Creation URL is only a locator; MCP read must prove exact repository, branches, head/base SHAs, open/unmerged draft and canonical URL. Unit tests reject missing fields, changed candidates, unrelated URLs and ambiguous matches. |
+| Duplicate write or lost attempt evidence (LLM05/06) | MITIGATED | Lookup precedes every create; SDK cancellation caused by transport loss records an interrupted call. Graph recovery tests retain that attempt, reconcile the draft and preserve one commit/push/create. No server-side exactly-once guarantee is claimed under arbitrary external races. |
+| MCP drift, errors or large content (LLM02/03/10) | PARTIALLY_MITIGATED | Exact tool names and argument contracts, 1 MiB HTTP/result caps, operator timeouts, no redirects, redacted codes/digests and cleanup/cancellation tests. GitHub manages service/schema availability and API limits. |
+| Readiness overstates write permissions (LLM09) | PARTIALLY_MITIGATED | Readiness establishes MCP discovery and repository read access only. Actual Git/MCP writes enforce permissions and retain recoverable failures. Native live publication remains a separate release acceptance check. |
+
+Publication uses the existing token directly in a separate session; the read-only inspection Gateway/Cedar policy is
+unchanged. This introduces no IAM changes or new runtime deployment authority. Credential scope and upstream outages
+remain operator responsibilities. The captured tool contract is `config/contracts/github-pr-mcp-tools.json` (2026-10-17);
+`make test-mcp-live` verifies it read-only, while default tests use no live credentials.

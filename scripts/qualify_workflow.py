@@ -1,7 +1,7 @@
 """Opt-in generated workflow qualification. Never delivers a diagnosis or writes to GitHub.
 
 Immutable application archives, real model/inspection/Git/sandbox, isolated test approvals,
-and a strict simulated GitHub HTTP boundary. This is release evidence, not a native replay.
+and a strict simulated GitHub MCP boundary. This is release evidence, not a native replay.
 """
 
 from __future__ import annotations
@@ -18,13 +18,12 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-import httpx
-
 from remediation_agent.adapters.agentcore_sandbox import AgentCoreCodeInterpreterSandbox
 from remediation_agent.adapters.checkpoint import in_memory_checkpointer
 from remediation_agent.adapters.evidence import JsonlAuditSink, LocalArtifactStore
 from remediation_agent.adapters.models import build_structured_model
 from remediation_agent.adapters.pr import DraftPullRequestProvider
+from remediation_agent.adapters.pr_fixture import SimulatedGitHubPrMcp
 from remediation_agent.adapters.provenance import LocalReleaseProvenance
 from remediation_agent.adapters.repository import LocalGitRepository
 from remediation_agent.adapters.sandbox import DockerSandboxExecutor
@@ -216,32 +215,26 @@ async def trial(case: str, backend: str, output: Path, settings: Settings) -> di
             max_output_tokens=policy.config.limits.max_model_output_tokens,
             max_format_retries=policy.config.limits.max_model_format_retries,
         )
-        published: list[dict[str, object]] = []
         slug = "MtechSE-ArchAI-Team7/buggy-ecommerce-demo"
 
-        def transport(request: httpx.Request) -> httpx.Response:
-            if request.url.path == "/repos/" + slug:
-                return httpx.Response(200, json={"full_name": slug, "permissions": {"push": True}})
-            if request.method == "GET":
-                return httpx.Response(200, json=published)
-            value = json.loads(request.content)
-            commit = git(remote, "rev-parse", "refs/heads/" + value["head"])
-            published.append(
-                {
-                    "number": 1,
-                    "html_url": "https://github.com/" + slug + "/pull/1",
-                    "state": "open",
-                    "draft": True,
-                    "head": {"ref": value["head"], "sha": commit, "repo": {"full_name": slug}},
-                    "base": {"ref": "main", "sha": base, "repo": {"full_name": slug}},
-                }
-            )
-            return httpx.Response(201, json=published[-1])
+        def create_pr(value: dict[str, object]) -> dict[str, object]:
+            commit = git(remote, "rev-parse", "refs/heads/" + str(value["head"]))
+            return {
+                "number": 1,
+                "html_url": "https://github.com/" + slug + "/pull/1",
+                "state": "open",
+                "draft": True,
+                "merged": False,
+                "head": {"ref": value["head"], "sha": commit, "repo": {"full_name": slug}},
+                "base": {"ref": "main", "sha": base, "repo": {"full_name": slug}},
+            }
 
+        publication = SimulatedGitHubPrMcp(ROOT / "config/contracts/github-pr-mcp-tools.json", create_pr)
         provider = DraftPullRequestProvider(
-            token="isolated-qualification",  # noqa: S106 - simulated HTTP transport only
-            writes_enabled=True,  # noqa: S106
-            transport=httpx.MockTransport(transport),
+            token="isolated-qualification",  # noqa: S106 - in-process MCP transport only
+            writes_enabled=True,
+            transport=publication.transport(),
+            timeout_seconds=policy.config.limits.max_mcp_tool_timeout_seconds,
         )
         nodes = WorkflowNodes(
             policy=policy,

@@ -11,7 +11,7 @@ historical defective snapshot, not an obsolete diagnosis submitted to an already
 
 `scripts/qualify_workflow.py` exercises real configured model calls, bounded source inspection, plan/risk stages,
 exact edit generation, test-only approval/resume, real Git, restricted application/browser execution and durable publication.
-GitHub HTTP writes are simulated, while local branch/commit/push operations use a disposable bare Git remote. The script's
+GitHub MCP publication is simulated through the real provider and SDK, while local branch/commit/push operations use a disposable bare Git remote. The script's
 synthetic qualification diagnoses never go to a deployed runtime and must never be reused as native Agent 2 deliveries.
 
 Set the normal provider/gateway settings and `AIOS_BEHAVIORAL_BUNDLE` to a compatible offline bundle, then opt in:
@@ -76,6 +76,7 @@ The operator driver requires explicit `AIOS_RUN_RUNTIME_QUALIFICATION=1`, exact 
 and an output directory. The guarded workflow supplies these values. A local process restart unit test is routing evidence;
 only an actual managed-runtime result with `managed_filesystem` and `process_restarted` true qualifies the release.
 The separate post-release native replay must still verify an actual GitHub draft and exact validated head SHA.
+Retain `PUBLICATION_MCP_CALL` audit events proving create/read transport, including the runtime source and image bindings.
 
 The release trial also verifies task-name contracts before approval: prose in `proposed_validation_tasks` triggers the
 existing single planning correction; persistent unknown IDs block before patch generation. Edit proposals with unknown
