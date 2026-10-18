@@ -44,7 +44,11 @@ def derive(archive: bytes, replacements: dict[str, bytes]) -> bytes:
             target.addfile(member, BytesIO(payload))
     if replaced != set(replacements):
         raise ValueError("MISSING_RELEASE_DEPENDENCY_FILES")
-    return gzip.compress(output.getvalue(), mtime=0)
+    compressed = BytesIO()
+    # GzipFile uses the portable unknown-OS header on Python 3.12, unlike compress.
+    with gzip.GzipFile(fileobj=compressed, mode="wb", filename="", mtime=0) as stream_out:
+        stream_out.write(output.getvalue())
+    return compressed.getvalue()
 
 
 def build(root: Path = ROOT) -> None:

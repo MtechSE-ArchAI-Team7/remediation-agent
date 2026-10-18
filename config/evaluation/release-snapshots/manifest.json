@@ -3,14 +3,14 @@
     "repository": "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
     "source_commit": "13ee0115fe7752707d2199600a06ef639aa3666b",
     "archive": "ah54.tar.gz",
-    "archive_digest": "sha256:0ff61cb66bcdae67d19f228196f1339c83a99a8ef5290852d6b1a0d8923c4967",
+    "archive_digest": "sha256:e85109fc7b9f0e1bad16f7cafbde53eba188afd1abd26caaa5893747464fe24a",
     "patch_digest": "sha256:4b10a8ded896b2a9c5e98771c34d0823a71456e5f660e21dbc6f0e22b3e4d3ee"
   },
   "ah56": {
     "repository": "https://github.com/MtechSE-ArchAI-Team7/buggy-ecommerce-demo",
     "source_commit": "4575981b9ea889e13af7e2ec67dcd10b59d3795c",
     "archive": "ah56.tar.gz",
-    "archive_digest": "sha256:7d918da9fc3385cc1c3b191de2b3f353b74f15ad6495362d8400a37135f93095",
+    "archive_digest": "sha256:490dcdbc9ddab54c18e26922e3949187d0d6995cbd32ec0d689e4bb514ebab7e",
     "patch_digest": "sha256:73665f5fe0d90a67b8a188f0923a44a4008f3827cb5975095fea4af83070826a"
   }
 }

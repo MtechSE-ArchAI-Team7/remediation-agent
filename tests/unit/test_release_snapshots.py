@@ -30,6 +30,7 @@ def test_release_fixture_preserves_application_and_provenance(case: str, tmp_pat
     released = ROOT / "config/evaluation/release-snapshots"
     before = contents(original / (case + ".tar.gz"))
     after = contents(released / (case + ".tar.gz"))
+    assert (released / (case + ".tar.gz")).read_bytes()[9] == 255
     assert before.keys() == after.keys()
     assert {name for name in before if before[name] != after[name]} == {"package.json", "package-lock.json"}
     assert (released / (case + ".diff")).read_bytes() == (original / (case + ".diff")).read_bytes()
