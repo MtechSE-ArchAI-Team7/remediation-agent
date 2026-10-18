@@ -255,3 +255,12 @@ def test_scanned_archive_is_the_only_publication_source() -> None:
         if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
             assert cast(dict[str, object], step["with"])["ignore-unfixed"] is False
     assert "aws-access-key-id" not in str(jobs)
+
+
+def test_manual_image_validation_cannot_publish_or_deploy() -> None:
+    workflow = _load_workflow("validate-image.yaml")
+    assert workflow["permissions"] == {"contents": "read"}
+    jobs = cast(dict[str, dict[str, object]], workflow["jobs"])
+    assert set(jobs) == {"image"}
+    assert jobs["image"]["with"] == {"publish": False}
+    assert "secrets" not in jobs["image"]

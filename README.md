@@ -691,16 +691,51 @@ Artifact preview is outside the workflow: it first resolves the completed source
 reads only the matching manifest reference from `runs/*`, verifies its digest, reapplies redaction, and returns bounded
 UTF-8 content without invoking the model or altering checkpoint state.
 
-After CI succeeds on a push to `main`, the release workflow publishes a `linux/arm64` commit-SHA tag to
-`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent` then requires three consecutive hosted full-workflow trials per immutable AH-54/AH-56 snapshot before updating the
-existing AgentCore Runtime with that image digest. Pull requests run CI without publishing, tags publish without deploying, and a manual
-dispatch may publish and deploy. Configure these GitHub repository values before enabling the release:
+The repository owns its release gates in `.github/workflows/checks.yaml` and
+`.github/workflows/build-scan-image.yaml`. Every pull request and push to `main` runs Ruff,
+strict mypy, workflow linting, package build, the credential-free default suite, the deterministic
+benchmark, PostgreSQL/Docker/browser integration, Bandit and pip-audit. Integration setup must
+succeed and no integration test may be skipped. Unit and integration coverage are combined with
+branch measurement enabled and must reach **90%**.
+
+Trusted runs additionally require the SonarQube quality gate, Snyk Code, and Snyk Open Source
+scans of locked Python and bundled Node dependencies. Reports retain all severities. HIGH or
+CRITICAL findings and scanner errors block release. Fork and Dependabot pull requests run the
+credential-free checks without scanner secrets. The complete scanner gate remains mandatory on
+`main`. No scanner finding is suppressed in the repository policy.
+
+After these checks pass, the pipeline builds the `linux/arm64` runtime image once and retains a
+SHA-256-verified Docker archive. Trivy scans that archive before publication, including unfixed
+vulnerabilities. Publication loads the same archive and pushes a commit-SHA tag to
+`734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent`. The resulting immutable
+ECR digest feeds the existing hosted qualification and guarded deployment workflows. Three
+consecutive generated purchase trials and three checkout trials must pass before the existing
+AgentCore Runtime is updated. Managed-storage restart checks, exact-version configuration checks,
+and the bounded provider probe remain required. A failed deployment uses the guarded rollback path.
+
+A push to `main` releases automatically. Pull requests only validate. Tags publish without deploying.
+A manual `Image` run on `main` releases, while a manual run on a working branch validates and scans
+without publishing or updating the runtime. The manual `Validate image without publication` workflow
+can diagnose the ARM64 build and Trivy independently while another check is blocked. It has no AWS
+role secret and always disables publication. Release runs are serialized. Pull request runs may
+cancel an obsolete run for the same ref. The final summary fails if any required stage failed,
+was cancelled or was skipped. Test, coverage, scanner and quality reports are retained for 30 days,
+and image archives for three days. Rerunning failed jobs reuses successful artifacts in the same run.
+
+Configure these repository values. Snyk Code must be enabled for the selected organization, and
+the Sonar project must support the branch or pull request analysis being requested.
 
 | Kind | Name | Purpose |
 |---|---|---|
+| Variable | `SONAR_HOST_URL` | SonarQube Cloud or Server URL |
+| Variable | `SONAR_ORGANIZATION` | Sonar organization |
+| Variable | `SONAR_PROJECT_KEY` | Remediation project key |
+| Secret | `SONAR_TOKEN` | Token authorized to analyze that project |
+| Variable | `SNYK_ORG` | Organization ID with Code and Open Source enabled |
+| Secret | `SNYK_TOKEN` | Scanner token authorized for that organization |
 | Variable | `AGENTCORE_RUNTIME_ID` | Existing AgentCore Runtime identifier |
 | Secret | `AWS_ROLE_ARN` | OIDC role used only to publish the image to ECR |
-| Secret | `AWS_AGENTCORE_DEPLOY_ROLE_ARN` | OIDC role for isolated qualification, guarded update and readiness probe |
+| Secret | `AWS_AGENTCORE_DEPLOY_ROLE_ARN` | OIDC role for qualification, guarded update and readiness probe |
 
 The image-publishing role currently documented for the initial test deployment has account-wide ECR PowerUser access
 and is therefore test-only; replace it with a repository-scoped role before a non-test deployment. Keep the AgentCore

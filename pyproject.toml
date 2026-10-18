@@ -86,5 +86,6 @@ source = ["remediation_agent"]
 branch = true
 
 [tool.coverage.report]
+precision = 2
 show_missing = true
 skip_covered = true
