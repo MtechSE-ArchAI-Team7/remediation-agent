@@ -29,6 +29,9 @@ def derive(archive: bytes, replacements: dict[str, bytes]) -> bytes:
             path = PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir()):
                 raise ValueError("UNSAFE_RELEASE_FIXTURE")
+            # Canonicalize archive metadata before re-emitting it. No extraction occurs.
+            member = member.replace(name=path.as_posix())
+            member.pax_headers = {}
             relative = PurePosixPath(*path.parts[1:]).as_posix()
             if member.isdir():
                 target.addfile(member)

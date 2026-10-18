@@ -696,7 +696,8 @@ The repository owns its release gates in `.github/workflows/checks.yaml` and
 strict mypy, workflow linting, package build, the credential-free default suite, the deterministic
 benchmark, PostgreSQL/Docker/browser integration, Bandit and pip-audit. Integration setup must
 succeed and no integration test may be skipped. Unit and integration coverage are combined with
-branch measurement enabled and must reach **90%**.
+branch measurement enabled and the service package must reach **90%**. The same run measures
+operator scripts and submits the complete source report to Sonar for its new-code coverage gate.
 
 Trusted runs additionally require the SonarQube quality gate, Snyk Code, and Snyk Open Source
 scans of locked Python and bundled Node dependencies. Reports retain all severities. HIGH or

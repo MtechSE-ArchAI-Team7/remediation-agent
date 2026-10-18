@@ -56,7 +56,9 @@ async def test_write_immutability_and_audit_symlinks(tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             await store.write_bundle(ArtifactWriteRequest(run_id=run, files={name: "{}"}))
     request = ArtifactWriteRequest(run_id="run", files={"verification-brief.json": "{}"})
-    assert await store.write_bundle(request) == await store.write_bundle(request)
+    first_write = await store.write_bundle(request)
+    repeated_write = await store.write_bundle(request)
+    assert repeated_write == first_write
     with pytest.raises(ValueError, match="immutable"):
         await store.write_bundle(
             ArtifactWriteRequest(run_id="run", files={"verification-brief.json": '{"different":true}'})

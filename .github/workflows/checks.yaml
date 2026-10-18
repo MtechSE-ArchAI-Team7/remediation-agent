@@ -75,7 +75,7 @@ jobs:
     - name: Prepare reports
       run: mkdir -p reports
     - name: Default unit graph security and MCP tests
-      run: uv run --frozen --no-sync pytest --strict-markers --junitxml=reports/unit.xml --cov=src --cov-report=term-missing
+      run: uv run --frozen --no-sync pytest --strict-markers --junitxml=reports/unit.xml --cov=src --cov=scripts --cov-report=term-missing
         --cov-report=html:reports/htmlcov-unit
       env:
         COVERAGE_FILE: reports/.coverage.unit
@@ -116,7 +116,7 @@ jobs:
         docker image inspect aios-remediation-sandbox:local >/dev/null
         test -s .artifacts/validation/ecommerce/manifest.json
     - name: Database Git sandbox and browser integration
-      run: uv run --frozen --no-sync pytest -m integration --strict-markers --junitxml=reports/integration.xml --cov=src --cov-report=term-missing
+      run: uv run --frozen --no-sync pytest -m integration --strict-markers --junitxml=reports/integration.xml --cov=src --cov=scripts --cov-report=term-missing
       env:
         AIOS_TEST_POSTGRES_DSN: postgresql://ci:ci@localhost:5432/remediation
         COVERAGE_FILE: reports/.coverage.integration
@@ -269,7 +269,7 @@ jobs:
         uv run --frozen --no-sync coverage xml -o reports/coverage.xml
         uv run --frozen --no-sync coverage json -o reports/coverage.json
         uv run --frozen --no-sync coverage html -d reports/htmlcov
-        uv run --frozen --no-sync coverage report --fail-under=90
+        uv run --frozen --no-sync coverage report --include="src/*" --fail-under=90
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: coverage
@@ -324,10 +324,32 @@ jobs:
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+    - name: Retain Sonar gate conditions and findings
+      if: ${{ always() }}
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+        SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+        PULL_REQUEST: ${{ github.event.pull_request.number }}
+        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+      run: |
+        mkdir -p reports/sonar
+        reference="branch=$SOURCE_BRANCH"
+        if [ -n "$PULL_REQUEST" ]; then reference="pullRequest=$PULL_REQUEST"; fi
+        host="${SONAR_HOST_URL:-https://sonarcloud.io}"
+        curl --fail --silent --show-error --max-time 30 --retry 2 --get --user "$SONAR_TOKEN:" \
+          --data-urlencode "projectKey=$SONAR_PROJECT_KEY" --data-urlencode "$reference" \
+          "$host/api/qualitygates/project_status" > reports/sonar/quality-gate.json
+        curl --fail --silent --show-error --max-time 30 --retry 2 --get --user "$SONAR_TOKEN:" \
+          --data-urlencode "componentKeys=$SONAR_PROJECT_KEY" --data-urlencode "$reference" \
+          --data-urlencode "resolved=false" --data-urlencode "ps=500" \
+          "$host/api/issues/search" > reports/sonar/issues.json
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: sonar
-        path: .scannerwork/report-task.txt
+        path: |
+          .scannerwork/report-task.txt
+          reports/sonar/
         include-hidden-files: true
         overwrite: true
         retention-days: 30

@@ -23,6 +23,21 @@ def sequence(value: object) -> list[object]:
     return cast(list[object], value)
 
 
+def report_path(value: str) -> Path:
+    """CLI reports are runner-generated files under the checkout's reports directory."""
+    root = Path.cwd() / "reports"
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if ".." in path.parts or not path.is_relative_to(root):
+        raise ValueError("Report path is outside reports directory")
+    if root.is_symlink() or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(root)):
+        raise ValueError("Report symlinks are forbidden")
+    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("Report symlinks are forbidden")
+    return path
+
+
 def read_json(path: Path) -> object:
     if not path.is_file() or path.stat().st_size > 50_000_000:
         raise ValueError("Missing or oversized report")
@@ -89,6 +104,8 @@ def check_scan(kind: str, path: Path, status: int) -> None:
 
 
 def check_junit(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size > 10_000_000:
+        raise ValueError("Missing or oversized test report")
     raw = path.read_bytes()
     if len(raw) > 10_000_000 or b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
         raise ValueError("Unsafe or oversized test report")
@@ -132,9 +149,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "scan":
-            check_scan(args.kind, args.path, args.status)
+            check_scan(args.kind, report_path(str(args.path)), args.status)
         elif args.command == "junit":
-            check_junit(args.path)
+            check_junit(report_path(str(args.path)))
         elif not summarize(
             json.loads(os.environ["JOB_RESULTS"]), args.required, Path(os.environ["GITHUB_STEP_SUMMARY"])
         ):

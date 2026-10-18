@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.ci_reports import check_junit, check_scan, main, scan_findings, summarize
+from scripts.ci_reports import check_junit, check_scan, main, report_path, scan_findings, summarize
 
 
 @pytest.mark.parametrize("severity", ["high", "critical"])
@@ -118,3 +118,29 @@ def test_cli_returns_failure_without_echoing_secret_report(tmp_path: Path, monke
     path.write_text('{"error":"credential-value"}')
     monkeypatch.setattr("sys.argv", ["ci_reports", "scan", "snyk-code", str(path), "0"])
     assert main() == 1
+
+
+@pytest.mark.parametrize("value", ["../outside.json", "/etc/passwd", "reports/../outside.json"])
+def test_cli_report_paths_cannot_leave_report_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="outside reports"):
+        report_path(value)
+
+
+def test_cli_reports_reject_symlinks_and_accept_runner_reports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    report = reports / "scan.json"
+    report.write_text('{"vulnerabilities": []}')
+    assert report_path("reports/scan.json") == report
+    monkeypatch.setattr("sys.argv", ["ci_reports", "scan", "snyk-open-source", "reports/scan.json", "0"])
+    assert main() == 0
+    link = reports / "link.json"
+    link.symlink_to(report)
+    with pytest.raises(ValueError, match="symlinks"):
+        report_path(str(link))
+    directory = reports / "alias"
+    directory.symlink_to(reports, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinks"):
+        report_path("reports/alias/scan.json")

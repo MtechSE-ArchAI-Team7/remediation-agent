@@ -52,3 +52,19 @@ def test_release_derivation_rejects_missing_dependency_contract() -> None:
     archive = (ROOT / "config/evaluation/snapshots/ah54.tar.gz").read_bytes()
     with pytest.raises(ValueError, match="MISSING_RELEASE_DEPENDENCY_FILES"):
         derive(archive, {"missing.json": b"{}"})
+
+
+@pytest.mark.parametrize(
+    "name,kind", [("../escape", tarfile.REGTYPE), ("/escape", tarfile.REGTYPE), ("root/link", tarfile.SYMTYPE)]
+)
+def test_release_derivation_rejects_unsafe_archive_entries(name: str, kind: bytes) -> None:
+    from io import BytesIO
+
+    source = BytesIO()
+    with tarfile.open(fileobj=source, mode="w") as archive:
+        member = tarfile.TarInfo(name)
+        member.type = kind
+        member.linkname = "../../escape" if kind == tarfile.SYMTYPE else ""
+        archive.addfile(member)
+    with pytest.raises(ValueError, match="UNSAFE_RELEASE_FIXTURE"):
+        derive(source.getvalue(), {})
