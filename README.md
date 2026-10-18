@@ -297,7 +297,7 @@ records and digests, model metadata, and the reconstructed inspection plan. Gene
 server commands, URLs, redirects, or tool allowlists are not accepted. The hosted MCP connection is an infrastructure
 boundary inside the same workflow, not another agent.
 
-The runtime pins MCP SDK v1 (`mcp>=1.28,<2`) with `langchain-mcp-adapters>=0.3.1,<0.4` while the adapter's
+The runtime pins MCP SDK v1 (`mcp>=1.30.0,<2`) with `langchain-mcp-adapters>=0.3.1,<0.4` while the adapter's
 [MCP SDK v2 compatibility issue](https://github.com/langchain-ai/langchain-mcp-adapters/issues/578) remains unresolved.
 
 ## Supported model providers
@@ -868,3 +868,37 @@ post-application corruption requires a fresh trial and blocks publication and su
 Releases require both three generated trials per fixture (simulated GitHub boundary) and a separate actual-runtime
 prepare/stop/resume filesystem qualification. See [qualification and recovery](docs/WORKFLOW_QUALIFICATION.md).
 Default tests use no live credentials; `AIOS_RUN_RUNTIME_QUALIFICATION=1` explicitly enables the hosted operator driver.
+
+## Repeated evaluation and remaining gaps
+
+The individual report v3 extends the v2 evidence with repeated live-model trials, a five-family attack corpus across
+four input surfaces, fault-injection tests and an explicit purchase/checkout criterion map. The campaigns use the
+configured live gateway model, disposable synthetic repositories and restricted Docker validation. Inspection and
+injected memory are local fixtures. GitHub publication and verification delivery are disabled. These runs do not
+establish deployed-runtime or end-to-end integration acceptance.
+
+Run an explicitly budgeted campaign from this directory:
+
+```bash
+AIOS_RUN_GAP_CAMPAIGN=1 uv run python -m scripts.run_gap_campaign \
+  --campaign-id unique-functional-id --group functional \
+  --budget-usd 25 --output .artifacts/campaigns/unique-functional-id
+```
+
+Use `--group attacks` for three repetitions of each of the 20 attack combinations. `--group followup` adds five
+Python baseline trials to the attack matrix. Optional `--shard-index` and `--shard-count` partition cases. Allocate
+budgets across shards explicitly: the journal enforces each manifest's ceiling, not an account-wide ceiling.
+The example rates are conservative estimates of US$10 per million input tokens and US$60 per million output tokens,
+not verified billing rates. Each trial reserves its enforced maximum before execution. Unknown usage retains that
+reservation. Cloud infrastructure costs are not included.
+
+Keep the manifest, journal, report and evidence together. Resume with the same arguments and unchanged implementation.
+Completed or interrupted trial identities are never silently replayed. Record corrected fixtures in a new campaign.
+`scripts/adjudicate_gap_campaign.py` supports the narrowly scoped prepared-draft scoring correction and writes a
+separate adjudication without replacing original results. Reports retain failed cohorts and per-case denominators,
+latency, tokens and small-sample intervals.
+
+The criterion map is `config/evaluation/gap-closure-criteria.json`. Its tests check all 18 accepted purchase/checkout
+assertions and identify business requirements outside the existing checkout contract. Incident-memory enablement,
+memory writes and verification delivery remain deferred. The v3 evidence appendix records the current browser-bundle
+integration limitation and remaining assurance work. Existing diagnosis and verification handoff schemas are unchanged.

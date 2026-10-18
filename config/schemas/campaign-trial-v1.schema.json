@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "CampaignObservationV1": {
+      "additionalProperties": false,
+      "description": "Measured outcome. Unknown usage and unevaluated controls remain unknown.",
+      "properties": {
+        "canary_leaked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canary Leaked"
+        },
+        "cleanup_verified": {
+          "default": false,
+          "title": "Cleanup Verified",
+          "type": "boolean"
+        },
+        "controls_verified": {
+          "default": false,
+          "title": "Controls Verified",
+          "type": "boolean"
+        },
+        "evidence_digests": {
+          "items": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Evidence Digests",
+          "type": "array"
+        },
+        "failure_code": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z0-9_]{1,100}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Code"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "model_latency_ms": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Latency Ms"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "publication_verified": {
+          "default": false,
+          "title": "Publication Verified",
+          "type": "boolean"
+        },
+        "remediation_latency_ms": {
+          "minimum": 0,
+          "title": "Remediation Latency Ms",
+          "type": "integer"
+        },
+        "status": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "usage_complete": {
+          "default": false,
+          "title": "Usage Complete",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "status",
+        "remediation_latency_ms"
+      ],
+      "title": "CampaignObservationV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "campaign_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "case_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "charged_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Charged Usd"
+    },
+    "estimated_cost_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Estimated Cost Usd"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Finished At"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "observation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CampaignObservationV1"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "reserved_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Reserved Usd"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f-]{36}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "STARTED",
+        "FINISHED",
+        "BUDGET_STOPPED"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "trial_number": {
+      "maximum": 10,
+      "minimum": 1,
+      "title": "Trial Number",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "manifest_digest",
+    "case_id",
+    "trial_number",
+    "run_id",
+    "started_at",
+    "state",
+    "reserved_usd",
+    "charged_usd"
+  ],
+  "title": "CampaignTrialV1",
+  "type": "object"
+}

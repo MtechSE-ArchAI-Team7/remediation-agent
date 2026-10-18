@@ -1,0 +1,571 @@
+{
+  "$defs": {
+    "CampaignCaseV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attack_family": {
+          "anyOf": [
+            {
+              "enum": [
+                "goal_hijack",
+                "leakage",
+                "extraction",
+                "malformed_output",
+                "execution"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attack Family"
+        },
+        "attack_surface": {
+          "anyOf": [
+            {
+              "enum": [
+                "diagnosis",
+                "repository",
+                "tool",
+                "memory"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attack Surface"
+        },
+        "case_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "code",
+            "configuration",
+            "unsafe",
+            "unsupported",
+            "approval",
+            "attack"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "expected_statuses": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Expected Statuses",
+          "type": "array"
+        },
+        "fixture_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Fixture Digest",
+          "type": "string"
+        },
+        "handoff": {
+          "$ref": "#/$defs/DiagnosisHandoffV1"
+        },
+        "language": {
+          "enum": [
+            "javascript",
+            "python",
+            "json",
+            "none"
+          ],
+          "title": "Language",
+          "type": "string"
+        },
+        "repetitions": {
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Repetitions",
+          "type": "integer"
+        },
+        "require_draft": {
+          "default": false,
+          "title": "Require Draft",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "case_id",
+        "category",
+        "language",
+        "repetitions",
+        "handoff",
+        "expected_statuses",
+        "fixture_digest"
+      ],
+      "title": "CampaignCaseV1",
+      "type": "object"
+    },
+    "CampaignPriceV1": {
+      "additionalProperties": false,
+      "properties": {
+        "input_per_million_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Input Per Million Usd"
+        },
+        "model": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "output_per_million_usd": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Output Per Million Usd"
+        },
+        "provider": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "observed_at",
+        "source",
+        "input_per_million_usd",
+        "output_per_million_usd"
+      ],
+      "title": "CampaignPriceV1",
+      "type": "object"
+    },
+    "Diagnosis": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "contradictions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Contradictions",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "summary": {
+          "maxLength": 20000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "unresolved_questions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Unresolved Questions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "summary",
+        "confidence",
+        "evidence_ids"
+      ],
+      "title": "Diagnosis",
+      "type": "object"
+    },
+    "DiagnosisHandoffV1": {
+      "additionalProperties": false,
+      "description": "Provisional versioned handoff from Agent 2 to Agent 3.",
+      "properties": {
+        "acceptance_criteria": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Acceptance Criteria",
+          "type": "array"
+        },
+        "case_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Case Id",
+          "type": "string"
+        },
+        "diagnosis": {
+          "$ref": "#/$defs/Diagnosis"
+        },
+        "issue_summary": {
+          "maxLength": 10000,
+          "minLength": 1,
+          "title": "Issue Summary",
+          "type": "string"
+        },
+        "jira_ticket_id": {
+          "maxLength": 64,
+          "minLength": 3,
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*-[1-9][0-9]*$",
+          "title": "Jira Ticket Id",
+          "type": "string"
+        },
+        "remediation_type": {
+          "$ref": "#/$defs/RemediationType"
+        },
+        "repository": {
+          "$ref": "#/$defs/RepositoryRef"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "supporting_evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRecord"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Supporting Evidence",
+          "type": "array"
+        },
+        "upstream_audit_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Upstream Audit Refs",
+          "type": "array"
+        },
+        "upstream_correlation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Upstream Correlation Id"
+        }
+      },
+      "required": [
+        "case_id",
+        "jira_ticket_id",
+        "issue_summary",
+        "remediation_type",
+        "diagnosis",
+        "supporting_evidence",
+        "acceptance_criteria",
+        "repository"
+      ],
+      "title": "DiagnosisHandoffV1",
+      "type": "object"
+    },
+    "EvidenceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "minLength": 1,
+          "title": "Digest",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "default": "",
+          "maxLength": 10000,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "source_locator": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Source Locator",
+          "type": "string"
+        },
+        "source_type": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Source Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "source_type",
+        "source_locator",
+        "observed_at",
+        "digest"
+      ],
+      "title": "EvidenceRecord",
+      "type": "object"
+    },
+    "RemediationType": {
+      "enum": [
+        "CODE",
+        "CONFIGURATION",
+        "ACCOUNT_UNLOCK",
+        "PASSWORD_RESET",
+        "ACCESS_PROVISIONING",
+        "PRIVILEGED_ACCESS",
+        "SOFTWARE_REQUEST",
+        "PRODUCTION_CHANGE",
+        "OTHER"
+      ],
+      "title": "RemediationType",
+      "type": "string"
+    },
+    "RepositoryProvider": {
+      "enum": [
+        "LOCAL",
+        "GITHUB",
+        "GITLAB",
+        "GENERIC_GIT"
+      ],
+      "title": "RepositoryProvider",
+      "type": "string"
+    },
+    "RepositoryRef": {
+      "additionalProperties": false,
+      "properties": {
+        "base_branch": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+          "title": "Base Branch",
+          "type": "string"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-fA-F]{7,64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Commit Sha"
+        },
+        "provider": {
+          "$ref": "#/$defs/RepositoryProvider"
+        },
+        "url": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "url",
+        "base_branch"
+      ],
+      "title": "RepositoryRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "campaign_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/CampaignCaseV1"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "title": "Cases",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "execution_mode": {
+      "default": "live_model_isolated",
+      "enum": [
+        "live_model_isolated",
+        "simulated"
+      ],
+      "title": "Execution Mode",
+      "type": "string"
+    },
+    "image_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Image Digest",
+      "type": "string"
+    },
+    "implementation_digest": {
+      "anyOf": [
+        {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Implementation Digest"
+    },
+    "max_input_tokens_per_trial": {
+      "exclusiveMinimum": 0,
+      "maximum": 10000000,
+      "title": "Max Input Tokens Per Trial",
+      "type": "integer"
+    },
+    "max_output_tokens_per_trial": {
+      "exclusiveMinimum": 0,
+      "maximum": 1000000,
+      "title": "Max Output Tokens Per Trial",
+      "type": "integer"
+    },
+    "model_budget_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "default": "50",
+      "title": "Model Budget Usd"
+    },
+    "policy_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Policy Digest",
+      "type": "string"
+    },
+    "price": {
+      "$ref": "#/$defs/CampaignPriceV1"
+    },
+    "prompt_version": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "publication_mode": {
+      "default": "disabled",
+      "enum": [
+        "disabled",
+        "real_draft"
+      ],
+      "title": "Publication Mode",
+      "type": "string"
+    },
+    "repository": {
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "title": "Repository",
+      "type": "string"
+    },
+    "runtime_version": {
+      "pattern": "^[1-9][0-9]{0,4}$",
+      "title": "Runtime Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_revision": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Source Revision",
+      "type": "string"
+    },
+    "trial_timeout_seconds": {
+      "default": 840,
+      "maximum": 3600,
+      "minimum": 1,
+      "title": "Trial Timeout Seconds",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "created_at",
+    "source_revision",
+    "runtime_version",
+    "image_digest",
+    "policy_digest",
+    "prompt_version",
+    "repository",
+    "price",
+    "max_input_tokens_per_trial",
+    "max_output_tokens_per_trial",
+    "cases"
+  ],
+  "title": "CampaignManifestV1",
+  "type": "object"
+}

@@ -313,3 +313,35 @@ async def test_validation_task_workspace_tampering_is_detected_and_bounded() -> 
         for attempt in result.result.validation_attempts
     )
     assert sandbox.restores == 0
+
+
+@pytest.mark.parametrize("stage", ["artifact_intake", "artifact_final", "audit", "repository"])
+async def test_storage_and_clone_failures_never_claim_success(stage: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    import errno
+
+    service, _, repository, sandbox, _, artifacts, audit = build_test_service(scripted_responses())
+    original = artifacts.write_bundle
+    count = 0
+
+    async def disk_full(request: object) -> object:
+        nonlocal count
+        count += 1
+        if stage == "artifact_intake" or count > 1:
+            raise OSError(errno.ENOSPC, "token=fixture-private")
+        return await original(request)  # type: ignore[arg-type]
+
+    async def unavailable(request: object) -> object:
+        raise OSError(errno.EIO, "token=fixture-private")
+
+    if stage.startswith("artifact"):
+        monkeypatch.setattr(artifacts, "write_bundle", disk_full)
+    elif stage == "audit":
+        monkeypatch.setattr(audit, "write", unavailable)
+    else:
+        monkeypatch.setattr(repository, "create_workspace", unavailable)
+    view = await service.start(diagnosis_handoff())
+    assert view.status not in {FinalStatus.DRAFT_PR_CREATED, FinalStatus.DRAFT_PR_PREPARED}
+    assert view.result is not None and view.result.errors
+    assert "fixture-private" not in view.model_dump_json()
+    if stage in {"artifact_final", "audit"}:
+        assert sandbox.destroyed

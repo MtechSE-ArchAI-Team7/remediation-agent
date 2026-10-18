@@ -179,7 +179,10 @@ class S3A2ATaskStore(TaskStore):
             if params.status and task.status.state != params.status:
                 continue
             if params.HasField("status_timestamp_after"):
-                if not task.status.HasField("timestamp") or task.status.timestamp <= params.status_timestamp_after:
+                if (
+                    not task.status.HasField("timestamp")
+                    or task.status.timestamp.ToNanoseconds() <= params.status_timestamp_after.ToNanoseconds()
+                ):
                     continue
             indexed.append((task, summary))
         indexed.sort(

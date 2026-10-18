@@ -97,3 +97,84 @@ async def test_restore_scopes_git_safe_directory_to_validated_workspace(
         [*safe_config, "reset", "--hard", "a" * 40],
         [*safe_config, "clean", "-fdx"],
     ]
+
+
+@pytest.mark.parametrize(
+    "fault,removed", [("timeout", True), ("timeout", False), ("runtime", True), ("runtime", False), ("exit", True)]
+)
+async def test_executor_failure_cleanup_is_observable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, removed: bool
+) -> None:
+    from remediation_agent.domain.enums import ValidationCleanupStatus
+
+    root = tmp_path / "workspaces/run"
+    (root / ".git").mkdir(parents=True)
+    executor = DockerSandboxExecutor(root.parent, "fixture")
+
+    async def fail(argv: list[str], *, cwd: Path, timeout: float, output_limit: int) -> tuple[int, str, str, bool]:
+        if fault == "exit":
+            return 1, "assertion failed", "", False
+        if fault == "timeout":
+            raise TimeoutError
+        raise RuntimeError("lost response")
+
+    async def cleanup(name: str, cwd: Path) -> bool:
+        return removed
+
+    monkeypatch.setattr(executor, "_run_capped", fail)
+    monkeypatch.setattr(executor, "_remove_container", cleanup)
+    value = ValidationTaskRequest(
+        workspace=WorkspaceRef(workspace_id="run", path=str(root), base_commit="a" * 40),
+        task_name="check",
+        task=ValidationTaskConfig(
+            argv=["python", "check.py"], timeout_seconds=30, output_limit_bytes=4096, environment={"FIXTURE": "1"}
+        ),
+    )
+    if fault == "runtime":
+        with pytest.raises(RuntimeError):
+            await executor.run_task(value)
+    else:
+        result = await executor.run_task(value)
+        assert result.result.outcome != "PASSED"
+        assert (result.execution.cleanup_status == ValidationCleanupStatus.SUCCEEDED) == removed
+    assert bool(executor._active_containers) == (not removed)
+
+
+@pytest.mark.parametrize("fault", ["missing", "symlink", "escape"])
+async def test_invalid_validation_workdir_never_executes(tmp_path: Path, fault: str) -> None:
+    from remediation_agent.adapters.sandbox import SandboxError
+
+    root = tmp_path / "workspaces/run"
+    root.mkdir(parents=True)
+    (root / "link").symlink_to(tmp_path)
+    sandbox = DockerSandboxExecutor(root.parent, "fixture")
+    task = ValidationTaskConfig(argv=["python", "check.py"], timeout_seconds=30, output_limit_bytes=4096)
+    task = task.model_copy(update={"cwd": {"missing": "missing", "symlink": "link", "escape": "../.."}[fault]})
+    with pytest.raises(SandboxError):
+        await sandbox.run_task(
+            ValidationTaskRequest(
+                workspace=WorkspaceRef(workspace_id="run", path=str(root), base_commit="a" * 40),
+                task_name="check",
+                task=task,
+            )
+        )
+    assert not sandbox._active_containers
+
+
+async def test_destroy_retains_workspace_when_process_cannot_be_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspaces/run"
+    root.mkdir(parents=True)
+    sandbox = DockerSandboxExecutor(root.parent, "fixture")
+    sandbox._active_containers.update({"owned": "run", "unrelated": "other"})
+
+    async def fail(name: str, cwd: Path) -> bool:
+        assert name == "owned"
+        return False
+
+    monkeypatch.setattr(sandbox, "_remove_container", fail)
+    workspace = WorkspaceRef(workspace_id="run", path=str(root), base_commit="a" * 40)
+    assert not (await sandbox.destroy(workspace)).succeeded and root.exists()
+    assert len(sandbox._active_containers) == 2
+    assert (await sandbox.collect_artifacts(workspace)).artifacts == []

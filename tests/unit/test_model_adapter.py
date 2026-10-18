@@ -815,3 +815,87 @@ async def test_application_startup_failure_closes_owned_gateway_clients(
 
     assert sync_client.is_closed
     assert async_client.is_closed
+
+
+@pytest.mark.parametrize(
+    "detail,code",
+    [
+        ("longer than expected", "HUNK_BODY_LONGER_THAN_HEADER"),
+        ("shorter than expected", "HUNK_BODY_SHORTER_THAN_HEADER"),
+        ("unexpected trailing newline", "UNEXPECTED_TRAILING_NEWLINE"),
+        ("hunk diff line expected", "HUNK_LINE_MISSING_PREFIX"),
+        ("unexpected marker", "UNEXPECTED_NO_NEWLINE_MARKER"),
+        ("target without source", "TARGET_HEADER_WITHOUT_SOURCE"),
+        ("unexpected hunk found", "HUNK_WITHOUT_FILE_HEADER"),
+        ("unexpected new file", "NEW_FILE_MARKER_WITHOUT_HEADER"),
+        ("unexpected deleted file", "DELETED_FILE_MARKER_WITHOUT_HEADER"),
+        ("unexpected binary", "BINARY_PATCH_MARKER"),
+        ("other", "MALFORMED_UNIFIED_DIFF"),
+    ],
+)
+def test_patch_failure_codes_do_not_expose_untrusted_details(detail: str, code: str) -> None:
+    from remediation_agent.adapters.models import _patch_format_error_code, _patch_format_retry_instruction
+
+    assert _patch_format_error_code(ValueError(detail + " token=fixture-secret")) == code
+    message = _patch_format_retry_instruction(code, 1)
+    assert code in message and "fixture-secret" not in message
+
+
+async def test_provider_parse_failure_tool_schema_and_transport_cleanup() -> None:
+    from types import SimpleNamespace
+
+    from remediation_agent.adapters.evidence import SecretRedactor
+    from remediation_agent.adapters.models import _reasoning_summary
+
+    value = SimpleNamespace(
+        content=[
+            "ordinary text",
+            {"type": "reasoning", "summary": "opaque"},
+            {"type": "reasoning", "summary": [1, {"text": ""}, {"text": "bounded summary"}]},
+        ]
+    )
+    assert _reasoning_summary(value, SecretRedactor()) == "bounded summary"
+    sync = httpx.Client()
+    async_client = httpx.AsyncClient()
+    model = ProviderStructuredModel(
+        _ChatModel([{"parsed": None, "parsing_error": ValueError("bad schema")}]),
+        provider="openai",
+        model="fixture",
+        timeout_seconds=1,
+        retries=0,
+        http_client=sync,
+        http_async_client=async_client,
+    )
+    with pytest.raises(StructuredModelFailure):
+        await model.generate(
+            ModelRequest(
+                operation=ModelOperation.INSPECTION,
+                prompt_version="fixture",
+                system_instruction="Return an inspection plan",
+                payload={},
+            ),
+            InspectionPlan,
+        )
+    await model.aclose()
+    assert sync.is_closed and async_client.is_closed
+
+
+@pytest.mark.parametrize(
+    "response",
+    ["text", AIMessage(content="", invalid_tool_calls=[{"name": "bad", "args": "{", "id": "id", "error": "invalid"}])],
+)
+async def test_invalid_normalized_tool_turn_is_bounded(response: object) -> None:
+    model = ProviderStructuredModel(
+        _ChatModel([response]), provider="fixture", model="fixture", timeout_seconds=1, retries=0
+    )
+    with pytest.raises(RuntimeError):
+        await model.generate_tool_turn(
+            ModelRequest(
+                operation=ModelOperation.INSPECTION,
+                prompt_version="fixture",
+                system_instruction="Use one allowed tool",
+                payload={},
+            ),
+            [HumanMessage(content="fixture")],
+            [finish_inspection],
+        )

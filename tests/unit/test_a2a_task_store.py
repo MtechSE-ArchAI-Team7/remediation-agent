@@ -227,3 +227,105 @@ async def test_s3_store_requires_agentcore_session_in_hosted_mode() -> None:
     store = S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=_S3())
     with pytest.raises(RuntimeError, match="SESSION_REQUIRED"):
         await store.save(_task(), ServerCallContext())
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "read",
+        "delete",
+        "list",
+        "body",
+        "oversize",
+        "mismatch",
+        "truncated",
+        "contents",
+        "index_body",
+        "index_oversize",
+        "index_missing",
+    ],
+)
+async def test_store_faults_remain_explicit(fault: str) -> None:
+    from botocore.exceptions import ClientError
+
+    class Faulty(_S3):
+        def get_object(self, **kwargs: Any) -> dict[str, object]:
+            if fault == "read" or fault == "index_missing":
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+            if fault == "body" or fault == "index_body":
+                return {"Body": "not-readable"}
+            if fault == "oversize" or fault == "index_oversize":
+                return {"Body": io.BytesIO(b"x" * 524_289)}
+            if fault == "mismatch":
+                return {"Body": io.BytesIO(b'{"id":"different"}')}
+            return super().get_object(**kwargs)
+
+        def delete_object(self, **kwargs: Any) -> dict[str, object]:
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteObject")
+
+        def list_objects_v2(self, **kwargs: Any) -> dict[str, object]:
+            if fault == "list":
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+            if fault == "truncated":
+                return {"IsTruncated": True}
+            if fault == "contents":
+                return {"Contents": "invalid"}
+            return {"Contents": [None, {"Key": 10}, {"Key": "ignored.txt"}, {"Key": "index/task.json"}]}
+
+    store = S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=Faulty())
+    with pytest.raises(RuntimeError):
+        if fault == "delete":
+            await store.delete(_task().id, _context("owner"))
+        elif fault in {"read", "body", "oversize", "mismatch"}:
+            await store.get(_task().id, _context("owner"))
+        else:
+            await store.list(a2a_pb.ListTasksRequest(), _context("owner"))
+
+
+async def test_index_filters_pagination_and_corrupt_summary() -> None:
+    client = _S3()
+    store = S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=client)
+    for n in range(3):
+        await store.save(_run_task(f"{n}1111111-1111-4111-8111-111111111111"), _context("owner"))
+    page = await store.list(a2a_pb.ListTasksRequest(page_size=1), _context("viewer"))
+    next_page = await store.list(
+        a2a_pb.ListTasksRequest(page_size=1, page_token=page.next_page_token), _context("viewer")
+    )
+    assert page.tasks[0].id != next_page.tasks[0].id and page.total_size == 3
+    from a2a.utils.errors import InvalidParamsError
+    from a2a.utils.task import encode_page_token
+
+    with pytest.raises(InvalidParamsError):
+        await store.list(a2a_pb.ListTasksRequest(page_token="bad-token"), _context("viewer"))  # noqa: S106
+    with pytest.raises(RuntimeError, match="PAGE_TOKEN"):
+        await store.list(a2a_pb.ListTasksRequest(page_token=encode_page_token("unknown")), _context("viewer"))
+    for params in [
+        a2a_pb.ListTasksRequest(context_id="other"),
+        a2a_pb.ListTasksRequest(status=a2a_pb.TaskState.TASK_STATE_FAILED),
+    ]:
+        assert not (await store.list(params, _context("viewer"))).tasks
+    params = a2a_pb.ListTasksRequest()
+    params.status_timestamp_after.FromDatetime(datetime(2030, 1, 1, tzinfo=UTC))
+    assert not (await store.list(params, _context("viewer"))).tasks
+    task = _run_task()
+    task.id = "mismatched"
+    with pytest.raises(RuntimeError, match="ID_MISMATCH"):
+        store._run_summary(task)
+    assert store._status_priority("PENDING") == 1
+
+
+@pytest.mark.parametrize("value", ["", "..", "a/b", "a\\b", "a\x00b"])
+def test_unsafe_task_ids_are_rejected(value: str) -> None:
+    store = S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=_S3())
+    with pytest.raises(ValueError):
+        store._task_key(value, _context("owner"))
+    with pytest.raises(ValueError):
+        store._index_key(value)
+
+
+def test_task_store_invalid_configuration_and_isolated_scope() -> None:
+    for params in ({"prefix": "../bad"}, {"prefix": ""}, {"max_projection_bytes": 0}):
+        with pytest.raises(ValueError):
+            S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=_S3(), **params)
+    store = S3A2ATaskStore("bucket", region_name="ap-southeast-1", client=_S3(), require_session=False)
+    assert "isolated-test" not in store._task_key("id", ServerCallContext())

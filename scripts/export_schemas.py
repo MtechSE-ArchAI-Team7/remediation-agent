@@ -10,6 +10,7 @@ from remediation_agent.api.a2a_contracts import (
     ProviderProbeResultV1,
     RemediationRunSummaryV1,
 )
+from remediation_agent.domain.campaign import CampaignManifestV1, CampaignResultV1, CampaignTrialV1
 from remediation_agent.domain.models import (
     ApprovalDecisionV1,
     ApprovalRequest,
@@ -43,6 +44,9 @@ def main() -> None:
     output = Path(__file__).parents[1] / "config" / "schemas"
     output.mkdir(parents=True, exist_ok=True)
     schemas = {
+        "campaign-manifest-v1.schema.json": CampaignManifestV1.model_json_schema(),
+        "campaign-trial-v1.schema.json": CampaignTrialV1.model_json_schema(),
+        "campaign-result-v1.schema.json": CampaignResultV1.model_json_schema(),
         "runtime-qualification-request-v1.schema.json": RuntimeQualificationRequestV1.model_json_schema(),
         "runtime-qualification-result-v1.schema.json": RuntimeQualificationResultV1.model_json_schema(),
         "validation-storage.schema.json": ValidationStorageEvidence.model_json_schema(),

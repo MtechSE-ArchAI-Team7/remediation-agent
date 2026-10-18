@@ -428,8 +428,14 @@ class LocalGitRepository:
 
         try:
             stdout, stderr = await asyncio.wait_for(collect(), timeout=self.command_timeout_seconds)
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
         except TimeoutError as exc:
-            process.kill()
+            if process.returncode is None:
+                process.kill()
             await process.wait()
             raise RepositoryError(f"repository operation timed out: {argv[0]}") from exc
         if truncated:

@@ -562,3 +562,110 @@ async def test_live_hosted_github_mcp_contract(tmp_path: Path) -> None:
         )
 
     assert response.status is InspectionToolStatus.SUCCEEDED
+
+
+@pytest.mark.parametrize(
+    "fault", ["target", "symlink", "missing", "escape", "mixed", "directory", "kind", "json", "oversized", "multiple"]
+)
+def test_mcp_response_integrity_and_resource_limits(tmp_path: Path, fault: str) -> None:
+    from mcp.types import ResourceLink
+
+    from remediation_agent.adapters.mcp import _GitHubTarget
+
+    provider = _provider()
+    target = _GitHubTarget(owner=_OWNER, repo=_REPO, commit_sha=_SHA)
+    workspace = _workspace(tmp_path)
+    (tmp_path / "file.py").write_text("immutable\n")
+    if fault == "target":
+        with pytest.raises(ValueError, match="target"):
+            provider._normalize_tree(
+                _json_result(
+                    {
+                        "owner": "other",
+                        "repo": _REPO,
+                        "tree_sha": _SHA,
+                        "sha": _SHA,
+                        "recursive": True,
+                        "tree": [],
+                        "count": 0,
+                        "truncated": False,
+                    }
+                ),
+                target,
+                ".",
+            )
+    elif fault in {"symlink", "missing", "escape"}:
+        (tmp_path / "link").symlink_to(tmp_path / "file.py")
+        assert (
+            provider._workspace_path_rejection(
+                workspace, {"symlink": "link", "missing": "absent", "escape": "../outside"}[fault]
+            )
+            is not None
+        )
+    elif fault == "mixed":
+        result = _file_result("immutable\n")
+        result.structuredContent = {"extra": "mixed"}
+        with pytest.raises(ValueError, match="mixed"):
+            provider._normalize_file_or_directory(result, "file.py", workspace)
+    elif fault == "directory":
+        directory = provider._normalize_file_or_directory(
+            _json_result(
+                [
+                    {"type": "symlink", "path": "link", "name": "link", "sha": _SHA, "size": 0},
+                    {"type": "dir", "path": "src", "name": "src", "sha": _SHA, "size": 0},
+                    {"type": "file", "path": ".env", "name": ".env", "sha": _SHA, "size": 0},
+                ]
+            ),
+            ".",
+            workspace,
+        )
+        assert directory.artifact and directory.artifact.content == "src/"
+    elif fault == "kind":
+        assert (
+            provider._normalize_file_or_directory(_json_result({"type": "submodule"}), ".", workspace).status
+            is InspectionToolStatus.DENIED
+        )
+        linked = CallToolResult(
+            content=[
+                ResourceLink(type="resource_link", uri=AnyUrl("https://example.invalid/resource"), name="external")
+            ]
+        )
+        assert provider._normalize_file_or_directory(linked, ".", workspace).status is InspectionToolStatus.DENIED
+    else:
+        result = _json_result({"not": "a file"})
+        if fault == "oversized":
+            result.structuredContent = {"large": "a" * 100_000}
+        if fault == "multiple":
+            result.content.append(TextContent(type="text", text="{}"))
+        with pytest.raises(ValueError):
+            provider._normalize_file_or_directory(result, "file.py", workspace)
+
+
+def test_mcp_source_mismatch_and_error_redaction(tmp_path: Path) -> None:
+    provider = _provider()
+    (tmp_path / "file.py").write_text("trusted\n")
+    with pytest.raises(ValueError, match="SOURCE_MISMATCH"):
+        provider._normalize_file_or_directory(_file_result("different\n"), "file.py", _workspace(tmp_path))
+    error = provider._normalize_file_or_directory(
+        _json_result("token=super-secret-value", error=True), ".", _workspace(tmp_path)
+    )
+    assert error.status is InspectionToolStatus.ERROR and "super-secret-value" not in error.detail
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (TimeoutError(), "TIMEOUT"),
+        (httpx.ConnectError("private"), "CONNECT_ERROR"),
+        (httpx.RemoteProtocolError("private"), "REMOTE_PROTOCOL_ERROR"),
+        (httpx.TransportError("private"), "TRANSPORT_ERROR"),
+        (ValueError("private"), "SESSION_RUNTIME_ERROR"),
+    ],
+)
+def test_mcp_nested_transport_failures_are_bounded(error: Exception, expected: str) -> None:
+    from remediation_agent.adapters.mcp import _mcp_failure_code
+
+    wrapper = RuntimeError("wrapper")
+    wrapper.__cause__ = error
+    error.__context__ = wrapper
+    assert _mcp_failure_code(ExceptionGroup("group", [wrapper, error])) == expected

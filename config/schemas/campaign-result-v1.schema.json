@@ -1,0 +1,208 @@
+{
+  "$defs": {
+    "CampaignCaseResultV1": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted": {
+          "minimum": 0,
+          "title": "Attempted",
+          "type": "integer"
+        },
+        "budget_stopped": {
+          "minimum": 0,
+          "title": "Budget Stopped",
+          "type": "integer"
+        },
+        "case_id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+          "title": "Case Id",
+          "type": "string"
+        },
+        "completed": {
+          "minimum": 0,
+          "title": "Completed",
+          "type": "integer"
+        },
+        "failures": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Failures",
+          "type": "object"
+        },
+        "input_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Tokens"
+        },
+        "median_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Median Latency Ms"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Tokens"
+        },
+        "p95_latency_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P95 Latency Ms"
+        },
+        "planned": {
+          "minimum": 0,
+          "title": "Planned",
+          "type": "integer"
+        },
+        "success_interval_95": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success Interval 95"
+        },
+        "successful": {
+          "minimum": 0,
+          "title": "Successful",
+          "type": "integer"
+        },
+        "uncertain": {
+          "minimum": 0,
+          "title": "Uncertain",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "case_id",
+        "planned",
+        "attempted",
+        "completed",
+        "successful",
+        "uncertain",
+        "budget_stopped",
+        "failures"
+      ],
+      "title": "CampaignCaseResultV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "campaign_id": {
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+      "title": "Campaign Id",
+      "type": "string"
+    },
+    "cases": {
+      "items": {
+        "$ref": "#/$defs/CampaignCaseResultV1"
+      },
+      "title": "Cases",
+      "type": "array"
+    },
+    "charged_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "title": "Charged Usd"
+    },
+    "cloud_costs": {
+      "const": "NOT_MEASURED",
+      "default": "NOT_MEASURED",
+      "title": "Cloud Costs",
+      "type": "string"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "estimated_cost_usd": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Estimated Cost Usd"
+    },
+    "manifest_digest": {
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "title": "Manifest Digest",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "campaign_id",
+    "manifest_digest",
+    "cases",
+    "charged_usd",
+    "estimated_cost_usd",
+    "complete"
+  ],
+  "title": "CampaignResultV1",
+  "type": "object"
+}

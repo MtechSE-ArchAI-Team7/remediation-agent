@@ -350,3 +350,207 @@ async def test_interpreter_uploads_complete_sealed_manifest_for_every_applicatio
         assert not list(workspace.rglob("browser*"))
     finally:
         await sandbox.scratch.cleanup_lease(lease)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "exit",
+        "truncated",
+        "timeout",
+        "cleanup",
+        "mutation",
+        "runtime",
+        "reserved",
+        "test_missing",
+        "test_symlink",
+        "head",
+        "tree",
+    ],
+)
+async def test_behavioral_failures_retain_diagnostics_and_clean_owned_state(
+    tmp_path: Path, checkout: WorkspaceRef, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    sandbox = reporter(tmp_path)
+    original = sandbox.run_task
+
+    async def fail(value: ValidationTaskRequest) -> SandboxTaskExecution:
+        result = await original(value)
+        assert value.snapshot is not None
+        if fault == "exit":
+            return result.model_copy(update={"result": result.result.model_copy(update={"exit_code": 0})})
+        if fault in {"truncated", "timeout"}:
+            return result.model_copy(
+                update={
+                    "result": result.result.model_copy(
+                        update={
+                            "output_truncated": fault == "truncated",
+                            "outcome": ValidationOutcome.TIMED_OUT,
+                        }
+                    )
+                }
+            )
+        if fault == "cleanup":
+            return result.model_copy(
+                update={
+                    "execution": result.execution.model_copy(
+                        update={
+                            "cleanup_status": ValidationCleanupStatus.FAILED,
+                        }
+                    )
+                }
+            )
+        if fault == "mutation":
+            (Path(value.snapshot.path) / "untrusted.txt").write_text("changed")
+        if fault == "runtime":
+            raw = json.loads(result.result.stdout)
+            raw["runtime_digest"] = "sha256:" + ("a" if Path(value.snapshot.path).name == "base" else "b") * 64
+            return result.model_copy(update={"result": result.result.model_copy(update={"stdout": json.dumps(raw)})})
+        return result
+
+    monkeypatch.setattr(sandbox, "run_task", fail)
+    if fault == "reserved":
+        (Path(checkout.path) / ".aios-verification").mkdir()
+        (Path(checkout.path) / ".aios-verification/untrusted").write_text("replace trusted assets")
+    if fault == "test_missing":
+        shutil.rmtree(Path(checkout.path) / "tests")
+    if fault == "test_symlink":
+        shutil.rmtree(Path(checkout.path) / "tests")
+        (Path(checkout.path) / "tests").symlink_to(tmp_path)
+    if fault in {"head", "tree"}:
+        original_capped = sandbox._run_capped
+
+        async def capped(
+            argv: list[str], *, cwd: Path, timeout: float, output_limit: int
+        ) -> tuple[int, str, str, bool]:
+            if (fault == "head" and "rev-parse" in argv) or (fault == "tree" and "ls-tree" in argv):
+                return 1, "", "failed", False
+            return await original_capped(argv, cwd=cwd, timeout=timeout, output_limit=output_limit)
+
+        monkeypatch.setattr(sandbox, "_run_capped", capped)
+    result = await sandbox.run_behavior(request(checkout))
+    assert result.storage is not None and result.storage.failures, result.model_dump_json()
+    assert result.evidence is None or not result.evidence.cleanup_succeeded
+    assert not list((tmp_path / "scratch").glob("pair-*"))
+    assert (Path(checkout.path) / ".git").is_dir()
+
+
+async def test_behavioral_file_assertions_capability_and_artifact_failures(
+    tmp_path: Path, checkout: WorkspaceRef
+) -> None:
+    from remediation_agent.adapters.evidence import LocalArtifactStore
+    from remediation_agent.domain.models import ArtifactManifest
+    from remediation_agent.ports.models import ArtifactWriteRequest
+
+    class FailingStore(LocalArtifactStore):
+        async def write_bundle(self, request: ArtifactWriteRequest) -> ArtifactManifest:
+            raise OSError(errno.ENOSPC, "no space")
+
+    sandbox = reporter(tmp_path)
+    value = request(checkout)
+    value = value.model_copy(
+        update={
+            "capability_only": True,
+            "run_id": "fixture",
+            "task": value.task.model_copy(update={"test_paths": ["tests/regression.js"]}),
+        }
+    )
+    successful = await sandbox.run_behavior(value)
+    assert successful.evidence is not None and len(successful.executions) == 1
+    sandbox.result_store = FailingStore(tmp_path / "artifacts")
+    failed = await sandbox.run_behavior(value)
+    assert failed.storage is not None and failed.storage.failures
+    assert any(f.operation == "persist_validation_evidence" for f in failed.storage.failures)
+    assert not list((tmp_path / "scratch").glob("pair-*"))
+
+
+def test_snapshot_size_and_asset_symlink_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import tarfile
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "large").write_bytes(b"xx")
+    monkeypatch.setattr(behavioral, "_MAX_BYTES", 1)
+    with pytest.raises(ValueError, match="limits"):
+        behavioral._copy(source, tmp_path / "copy")
+    archive = tmp_path / "base.tar"
+    with tarfile.open(archive, "w") as stream:
+        entry = tarfile.TarInfo("large")
+        entry.size = 2
+        stream.addfile(entry, io.BytesIO(b"xx"))
+    with pytest.raises(ValueError, match="limits"):
+        behavioral._extract(archive, tmp_path / "base")
+    (source / "link").symlink_to(source / "large")
+    with pytest.raises(ValueError, match="asset"):
+        behavioral._digest_files(source)
+
+
+@pytest.mark.parametrize(
+    "fault", ["root_link", "nested_link", "count", "overlap", "writable", "capacity", "lease", "absent"]
+)
+def test_storage_ownership_capacity_and_count_guards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from remediation_agent.adapters import validation_storage as storage
+
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    scratch = tmp_path / "scratch"
+    if fault == "root_link":
+        scratch.symlink_to(managed)
+        with pytest.raises(ValueError):
+            ValidationScratch(scratch, managed)
+        with pytest.raises(ValueError):
+            storage.footprint(scratch)
+        return
+    if fault == "nested_link":
+        (managed / "link").symlink_to(tmp_path)
+        with pytest.raises(ValueError):
+            storage.footprint(managed)
+        return
+    if fault == "count":
+        (managed / "file").write_text("data")
+        with pytest.raises(ValueError):
+            storage.footprint(managed, max_files=0)
+        return
+    if fault == "overlap":
+        with pytest.raises(ValueError):
+            ValidationScratch(managed / "scratch", managed)
+        return
+    guard = ValidationScratch(scratch, managed)
+    if fault == "writable":
+        scratch.mkdir(mode=0o777)
+        scratch.chmod(0o777)
+        with pytest.raises(ValueError):
+            guard.preflight(1, 1)
+        return
+    if fault == "capacity":
+        from collections import namedtuple
+
+        usage = namedtuple("usage", "total used free")
+        monkeypatch.setattr(shutil, "disk_usage", lambda path: usage(1, 1, 0))
+        with pytest.raises(ValidationStorageError):
+            guard.preflight(1, 1)
+        return
+    guard.preflight(1, 1)
+    if fault == "lease":
+        with pytest.raises(ValueError):
+            guard.register("unknown", "base", "owner", "a" * 40)
+    else:
+        lease, _ = guard.create()
+        ref = guard.register(lease, "base", "owner", "a" * 40)
+        with pytest.raises(ValueError, match="absent"):
+            guard.resolve(ref)
+
+
+async def test_cleanup_unknown_lease_and_missing_owned_snapshot(tmp_path: Path) -> None:
+    (tmp_path / "managed").mkdir()
+    guard = ValidationScratch(tmp_path / "scratch", tmp_path / "managed")
+    guard.preflight(1, 1)
+    with pytest.raises(ValueError):
+        await guard.cleanup_lease("unknown")
+    lease, _ = guard.create()
+    ref = guard.register(lease, "base", "owner", "a" * 40)
+    assert (await guard.cleanup_snapshot(ref)).status is ValidationCleanupStatus.SUCCEEDED
+    assert (await guard.cleanup_lease(lease)).status is ValidationCleanupStatus.SUCCEEDED
