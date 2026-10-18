@@ -715,7 +715,7 @@ and the bounded provider probe remain required. A failed deployment uses the gua
 
 A push to `main` releases automatically. Pull requests only validate. Tags publish without deploying.
 A manual `Image` run on `main` releases, while a manual run on a working branch validates and scans
-without publishing or updating the runtime. The manual `Validate image without publication` workflow
+without publishing or updating the runtime. The manual `Image` workflow with `validate-only=true`
 can diagnose the ARM64 build and Trivy independently while another check is blocked. It has no AWS
 role secret and always disables publication. Release runs are serialized. Pull request runs may
 cancel an obsolete run for the same ref. The final summary fails if any required stage failed,

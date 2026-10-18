@@ -119,7 +119,7 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     assert jobs["qualify"]["needs"] == "image"
     assert jobs["deploy"]["needs"] == ["image", "qualify"]
     assert jobs["deploy"]["if"] == (
-        "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}"
+        "${{ !inputs.validate-only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}"
     )
     assert jobs["image"]["needs"] == "ci"
     assert jobs["image"]["uses"] == "./.github/workflows/build-scan-image.yaml"
@@ -258,9 +258,11 @@ def test_scanned_archive_is_the_only_publication_source() -> None:
 
 
 def test_manual_image_validation_cannot_publish_or_deploy() -> None:
-    workflow = _load_workflow("validate-image.yaml")
-    assert workflow["permissions"] == {"contents": "read"}
-    jobs = cast(dict[str, dict[str, object]], workflow["jobs"])
-    assert set(jobs) == {"image"}
-    assert jobs["image"]["with"] == {"publish": False}
-    assert "secrets" not in jobs["image"]
+    workflow = _load_workflow("image.yaml")
+    jobs = _jobs(workflow)
+    diagnostic = jobs["image_check"]
+    assert diagnostic["if"] == "${{ inputs.validate-only }}"
+    assert diagnostic["with"] == {"publish": False}
+    assert "secrets" not in diagnostic
+    for name in ("ci", "image", "qualify", "deploy"):
+        assert "!inputs.validate-only" in str(jobs[name]["if"])

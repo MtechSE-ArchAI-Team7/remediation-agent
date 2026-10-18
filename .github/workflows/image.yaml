@@ -1,6 +1,7 @@
 name: Image
 jobs:
   ci:
+    if: ${{ !inputs.validate-only }}
     uses: ./.github/workflows/checks.yaml
     with:
       trusted-scans: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository
@@ -8,7 +9,16 @@ jobs:
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+  image_check:
+    if: ${{ inputs.validate-only }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/build-scan-image.yaml
+    with:
+      publish: false
   image:
+    if: ${{ !inputs.validate-only }}
     needs: ci
     permissions:
       contents: read
@@ -19,7 +29,7 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
   qualify:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ !inputs.validate-only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     needs: image
     permissions:
       contents: read
@@ -32,7 +42,7 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_AGENTCORE_DEPLOY_ROLE_ARN }}
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ !inputs.validate-only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     needs:
     - image
     - qualify
@@ -62,11 +72,13 @@ jobs:
     - name: Pipeline summary
       run: |
         required=(ci image)
+        if [ "$VALIDATE_ONLY" = "true" ]; then required=(image_check); fi
         if [ "$RELEASE" = "true" ]; then required+=(qualify deploy); fi
         python scripts/ci_reports.py summary "${required[@]}"
       env:
         JOB_RESULTS: ${{ toJSON(needs) }}
-        RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+        VALIDATE_ONLY: ${{ inputs.validate-only }}
+        RELEASE: ${{ !inputs.validate-only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     - name: Record release identity
       run: 'printf ''Source: %s\nImage digest: %s\nRuntime version: %s\n'' "$SOURCE_SHA" "$IMAGE_DIGEST" "$RUNTIME_VERSION"
         >> "$GITHUB_STEP_SUMMARY"'
@@ -76,17 +88,23 @@ jobs:
         RUNTIME_VERSION: ${{ needs.deploy.outputs.runtime-version }}
     needs:
     - ci
+    - image_check
     - image
     - qualify
     - deploy
     if: ${{ always() }}
 'on':
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      validate-only:
+        description: Build and scan only, without publication or runtime changes
+        type: boolean
+        default: false
   push:
     tags:
     - v*
 permissions:
   contents: read
 concurrency:
-  group: remediation-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  group: remediation-${{ inputs.validate-only && format('image-validation-{0}', github.ref) || 'release' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

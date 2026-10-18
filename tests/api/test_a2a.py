@@ -618,10 +618,9 @@ def test_artifact_handoff_requires_completed_valid_manifest(status: int, content
 
 
 async def test_a2a_missing_runtime_and_probe_configuration_fail_closed() -> None:
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from a2a.server.events import EventQueue
-    from google.protobuf import json_format
 
     from remediation_agent.api.a2a_executor import RemediationA2AExecutor, _data_part
 
@@ -632,12 +631,12 @@ async def test_a2a_missing_runtime_and_probe_configuration_fail_closed() -> None
     context.message = a2a_pb.Message(
         parts=[_data_part(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE)]
     )
-    queue = EventQueue()
+    queue = AsyncMock(spec=EventQueue)
     executor = RemediationA2AExecutor(None)
     await executor.execute(context, queue)
-    events = [await queue.dequeue_event() for _ in range(3)]
-    status = json_format.MessageToDict(events[-1])
-    assert status["status"]["message"]["parts"][0]["text"] == "RUNTIME_NOT_CONFIGURED"
+    assert queue.enqueue_event.await_count == 3
+    status = queue.enqueue_event.call_args.args[0]
+    assert status.status.message.parts[0].text == "RUNTIME_NOT_CONFIGURED"
     with pytest.raises(RuntimeError, match="not configured"):
         await executor._provider_probe(context.task_id, _SESSION_ID, {"probe": "bedrock"})
     context.task_id = None
