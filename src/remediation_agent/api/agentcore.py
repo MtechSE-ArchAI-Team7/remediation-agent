@@ -244,7 +244,7 @@ def create_agentcore_app(
             application.state.release_provenance = provenance
             application.state.runtime_qualification = RuntimeQualification(
                 workspace_root=settings.workspace_root,
-                fixtures=Path("/app/config/evaluation/snapshots"),
+                fixtures=Path("/app/config/evaluation/release-snapshots"),
                 sandbox=sandbox,
                 policy=policy_config,
                 provenance=provenance,

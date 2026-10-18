@@ -1,0 +1,16 @@
+{
+  "ah54": {
+    "source_commit": "13ee0115fe7752707d2199600a06ef639aa3666b",
+    "original_archive_digest": "sha256:6ee870494027f3c0ea15a9c2064b9abc822d533dca3cd4c17623f60efa903e63",
+    "release_archive_digest": "sha256:0ff61cb66bcdae67d19f228196f1339c83a99a8ef5290852d6b1a0d8923c4967",
+    "package.json_digest": "sha256:1c397cf4ac97f44f25c798ebd281b5706ad6a379881b9500c21d099719903927",
+    "package-lock.json_digest": "sha256:e343c815e505336c3f7e32f0ab65ba00d375bc9bbc95c99e744f5d6ffcf5c73a"
+  },
+  "ah56": {
+    "source_commit": "4575981b9ea889e13af7e2ec67dcd10b59d3795c",
+    "original_archive_digest": "sha256:3868c0911d6b4a15ab89efdcf17690802b241d7f252a45a4105664e3e921398f",
+    "release_archive_digest": "sha256:7d918da9fc3385cc1c3b191de2b3f353b74f15ad6495362d8400a37135f93095",
+    "package.json_digest": "sha256:1c397cf4ac97f44f25c798ebd281b5706ad6a379881b9500c21d099719903927",
+    "package-lock.json_digest": "sha256:e343c815e505336c3f7e32f0ab65ba00d375bc9bbc95c99e744f5d6ffcf5c73a"
+  }
+}

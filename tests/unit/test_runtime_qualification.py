@@ -38,7 +38,7 @@ def adapter(tmp_path: Path) -> RuntimeQualification:
     sandbox = ControlledSandbox(root, "unused", behavioral_bundle=bundle, scratch_root=tmp_path / "scratch")
     return RuntimeQualification(
         workspace_root=root,
-        fixtures=ROOT / "config/evaluation/snapshots",
+        fixtures=ROOT / "config/evaluation/release-snapshots",
         sandbox=sandbox,
         policy=load_policy(ROOT / "config/policies/demo.json"),
         provenance=_adapter(_ControlClient([{"agentRuntimeVersion": "57"}], {"57": _detail("57")})),

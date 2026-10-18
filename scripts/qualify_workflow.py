@@ -89,7 +89,7 @@ class SnapshotRepository(LocalGitRepository):
 
 
 def initialize_snapshot(directory: Path, case: str) -> tuple[Path, str, dict[str, str]]:
-    snapshots = ROOT / "config/evaluation/snapshots"
+    snapshots = ROOT / "config/evaluation/release-snapshots"
     manifest = cast(dict[str, dict[str, str]], json.loads((snapshots / "manifest.json").read_text()))
     entry = manifest[case]
     archive = snapshots / entry["archive"]

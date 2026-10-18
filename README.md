@@ -713,6 +713,13 @@ consecutive generated purchase trials and three checkout trials must pass before
 AgentCore Runtime is updated. Managed-storage restart checks, exact-version configuration checks,
 and the bounded provider probe remain required. A failed deployment uses the guarded rollback path.
 
+Historical evaluation archives stay in `config/evaluation/snapshots`. Release qualification uses
+`config/evaluation/release-snapshots`, derived with `scripts/build_release_snapshots.py` using the
+reviewed validation dependency manifests. Only `package.json` and `package-lock.json` differ.
+Application source and known-defect patches are unchanged. `dependency-provenance.json` binds the
+original and derived archives, and regression tests verify that derivation. Regenerate release
+snapshots whenever the bundled application dependencies change.
+
 A push to `main` releases automatically. Pull requests only validate. Tags publish without deploying.
 A manual `Image` run on `main` releases, while a manual run on a working branch validates and scans
 without publishing or updating the runtime. The manual `Image` workflow with `validate-only=true`
