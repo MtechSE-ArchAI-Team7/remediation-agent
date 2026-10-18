@@ -319,7 +319,7 @@ jobs:
     - uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
       with:
         args: -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }} -Dsonar.qualitygate.wait=true
-          -Dsonar.qualitygate.timeout=300
+          -Dsonar.qualitygate.timeout=300 ${{ github.event_name != 'pull_request' && format('-Dsonar.branch.name={0}', github.ref_name) || '' }}
       name: Sonar scan and quality gate
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

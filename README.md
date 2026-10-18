@@ -731,7 +731,10 @@ was cancelled or was skipped. Test, coverage, scanner and quality reports are re
 and image archives for three days. Rerunning failed jobs reuses successful artifacts in the same run.
 
 Configure these repository values. Snyk Code must be enabled for the selected organization, and
-the Sonar project must support the branch or pull request analysis being requested.
+the Sonar project must support the branch or pull request analysis being requested. Disable
+SonarQube Cloud Automatic Analysis under **Administration → Analysis Method** so CI can submit
+coverage and enforce the quality gate. Manual runs explicitly identify their source branch.
+See the [SonarQube Cloud setup guide](https://docs.sonarsource.com/sonarqube-cloud/getting-started/github).
 
 | Kind | Name | Purpose |
 |---|---|---|

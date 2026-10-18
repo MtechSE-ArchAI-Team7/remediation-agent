@@ -236,6 +236,8 @@ def test_security_and_coverage_gate_cannot_be_bypassed_by_release_entrypoints() 
     assert checks["coverage"]["needs"] == ["unit", "integration"]
     assert "ci_reports.py junit" in str(checks["integration"])
     assert "sonar.qualitygate.wait=true" in str(checks["sonar"])
+    assert "github.event_name != 'pull_request'" in str(checks["sonar"])
+    assert "format('-Dsonar.branch.name={0}', github.ref_name)" in str(checks["sonar"])
     assert "not integration and not live_model" in (_ROOT / "pyproject.toml").read_text()
 
 
