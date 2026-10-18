@@ -324,7 +324,7 @@ jobs:
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
-    - name: Retain Sonar gate conditions and findings
+    - name: Retain Sonar gate conditions
       if: ${{ always() }}
       env:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -340,10 +340,6 @@ jobs:
         curl --fail --silent --show-error --max-time 30 --retry 2 --get --user "$SONAR_TOKEN:" \
           --data-urlencode "projectKey=$SONAR_PROJECT_KEY" --data-urlencode "$reference" \
           "$host/api/qualitygates/project_status" > reports/sonar/quality-gate.json
-        curl --fail --silent --show-error --max-time 30 --retry 2 --get --user "$SONAR_TOKEN:" \
-          --data-urlencode "componentKeys=$SONAR_PROJECT_KEY" --data-urlencode "$reference" \
-          --data-urlencode "resolved=false" --data-urlencode "ps=500" \
-          "$host/api/issues/search" > reports/sonar/issues.json
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: sonar
