@@ -1,0 +1,534 @@
+name: Required checks
+'on':
+  workflow_call:
+    inputs:
+      trusted-scans:
+        type: boolean
+        required: true
+    secrets:
+      SONAR_TOKEN:
+        required: false
+      SNYK_TOKEN:
+        required: false
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Lint
+      run: uv run --frozen --no-sync ruff check . 2>&1 | tee reports/ruff.log
+    - name: Formatting
+      run: uv run --frozen --no-sync ruff format --check . 2>&1 | tee reports/format.log
+    - name: Strict typing
+      run: uv run --frozen --no-sync mypy src tests scripts 2>&1 | tee reports/mypy.log
+    - name: Validate workflow syntax
+      run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -color 2>&1 | tee reports/actionlint.log
+    - name: Build package
+      run: uv build --no-build-isolation 2>&1 | tee reports/build.log
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: quality
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Default unit graph security and MCP tests
+      run: uv run --frozen --no-sync pytest --strict-markers --junitxml=reports/unit.xml --cov=src --cov-report=term-missing
+        --cov-report=html:reports/htmlcov-unit
+      env:
+        COVERAGE_FILE: reports/.coverage.unit
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: unit
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Build restricted sandbox and sealed browser assets
+      run: make sandbox-build validation-bundle 2>&1 | tee reports/integration-build.log
+    - name: Check integration prerequisites
+      run: |
+        docker info >/dev/null
+        docker image inspect aios-remediation-sandbox:local >/dev/null
+        test -s .artifacts/validation/ecommerce/manifest.json
+    - name: Database Git sandbox and browser integration
+      run: uv run --frozen --no-sync pytest -m integration --strict-markers --junitxml=reports/integration.xml --cov=src --cov-report=term-missing
+      env:
+        AIOS_TEST_POSTGRES_DSN: postgresql://ci:ci@localhost:5432/remediation
+        COVERAGE_FILE: reports/.coverage.integration
+    - name: Reject skipped integration tests
+      run: uv run --frozen --no-sync python scripts/ci_reports.py junit reports/integration.xml
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: integration
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: remediation
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U ci -d remediation" --health-interval 5s --health-timeout 5s --health-retries
+          12
+  functional:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Deterministic remediation benchmark
+      run: uv run --frozen --no-sync python scripts/run_evaluation.py deterministic --output reports/functional.json
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: functional
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+  bandit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Security check
+      run: uv run --frozen --no-sync bandit -r src -f json -o reports/bandit.json
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: bandit
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Security check
+      run: uv run --frozen --no-sync pip-audit --skip-editable --format json --output reports/pip-audit.json
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: audit
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: unit
+        path: reports/unit
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: integration
+        path: reports/integration
+    - name: Combine coverage and enforce ninety percent
+      run: |
+        uv run --frozen --no-sync coverage combine --keep reports/unit reports/integration
+        uv run --frozen --no-sync coverage xml -o reports/coverage.xml
+        uv run --frozen --no-sync coverage json -o reports/coverage.json
+        uv run --frozen --no-sync coverage html -d reports/htmlcov
+        uv run --frozen --no-sync coverage report --fail-under=90
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: coverage
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    needs:
+    - unit
+    - integration
+  sonar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - name: Require Sonar configuration
+      run: |
+        : "${SONAR_TOKEN:?SONAR_TOKEN is required}"
+        : "${SONAR_ORGANIZATION:?SONAR_ORGANIZATION is required}"
+        : "${SONAR_PROJECT_KEY:?SONAR_PROJECT_KEY is required}"
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+        SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: coverage
+        path: reports
+    - uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+      with:
+        args: -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }} -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.timeout=300
+      name: Sonar scan and quality gate
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: sonar
+        path: .scannerwork/report-task.txt
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    needs:
+    - coverage
+    if: ${{ inputs.trusted-scans }}
+  snyk-code:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: '22'
+    - name: Install pinned Snyk CLI
+      run: npm install --global snyk@1.1307.4
+    - name: Require Snyk configuration
+      run: |
+        : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
+        : "${SNYK_ORG:?SNYK_ORG is required}"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_ORG: ${{ vars.SNYK_ORG }}
+    - name: Scan and enforce severity gate
+      run: |
+        set +e
+        snyk code test . --json > reports/snyk-code.json
+        status=$?
+        set -e
+        uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-code reports/snyk-code.json "$status"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_CFG_ORG: ${{ vars.SNYK_ORG }}
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: snyk-code
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    if: ${{ inputs.trusted-scans }}
+  snyk-python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: '22'
+    - name: Install pinned Snyk CLI
+      run: npm install --global snyk@1.1307.4
+    - name: Require Snyk configuration
+      run: |
+        : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
+        : "${SNYK_ORG:?SNYK_ORG is required}"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_ORG: ${{ vars.SNYK_ORG }}
+    - name: Prepare locked production dependency environment
+      run: |
+        uv export --frozen --no-dev --no-hashes --no-emit-project -o reports/requirements.txt
+        uv venv .snyk-venv --seed --python 3.12
+        uv pip sync --python .snyk-venv/bin/python reports/requirements.txt
+        uv pip install --python .snyk-venv/bin/python "setuptools<81"
+        .snyk-venv/bin/python -m pip check
+    - name: Scan and enforce severity gate
+      run: |
+        set +e
+        snyk test --file=reports/requirements.txt --package-manager=pip --command=.snyk-venv/bin/python --json > reports/snyk-python.json
+        status=$?
+        set -e
+        uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-open-source reports/snyk-python.json "$status"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_CFG_ORG: ${{ vars.SNYK_ORG }}
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: snyk-python
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    if: ${{ inputs.trusted-scans }}
+  snyk-node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      with:
+        version: 0.11.25
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install locked dependencies
+      run: uv sync --frozen
+    - name: Prepare reports
+      run: mkdir -p reports
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: '22'
+    - name: Install pinned Snyk CLI
+      run: npm install --global snyk@1.1307.4
+    - name: Require Snyk configuration
+      run: |
+        : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
+        : "${SNYK_ORG:?SNYK_ORG is required}"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_ORG: ${{ vars.SNYK_ORG }}
+    - name: Scan and enforce severity gate
+      run: |
+        set +e
+        snyk test --all-projects validation --json > reports/snyk-node.json
+        status=$?
+        set -e
+        uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-open-source reports/snyk-node.json "$status"
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        SNYK_CFG_ORG: ${{ vars.SNYK_ORG }}
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: snyk-node
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    if: ${{ inputs.trusted-scans }}
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Summarize and enforce required stages
+      run: |
+        required="quality unit integration functional bandit audit coverage"
+        if [ "$TRUSTED_SCANS" = "true" ]; then
+          required="$required sonar snyk-code snyk-python snyk-node"
+        else
+          echo "External scanners are unavailable to untrusted or Dependabot pull requests. They are required on main." >> "$GITHUB_STEP_SUMMARY"
+        fi
+        python scripts/ci_reports.py summary $required
+      env:
+        JOB_RESULTS: ${{ toJSON(needs) }}
+        TRUSTED_SCANS: ${{ inputs.trusted-scans }}
+    needs:
+    - quality
+    - unit
+    - integration
+    - functional
+    - bandit
+    - audit
+    - coverage
+    - sonar
+    - snyk-code
+    - snyk-python
+    - snyk-node
+    if: ${{ always() }}

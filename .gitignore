@@ -40,3 +40,8 @@ pip-audit.json
 
 # Docker
 *.tar
+
+# CI scanner workspaces and evidence
+reports/
+.snyk-venv/
+.scannerwork/

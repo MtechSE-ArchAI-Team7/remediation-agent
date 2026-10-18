@@ -1,0 +1,150 @@
+name: Build scan and publish image
+'on':
+  workflow_call:
+    inputs:
+      publish:
+        required: true
+        type: boolean
+    secrets:
+      AWS_ROLE_ARN:
+        required: false
+    outputs:
+      image-uri:
+        value: ${{ jobs.publish.outputs.image-uri }}
+      image-digest:
+        value: ${{ jobs.publish.outputs.image-digest }}
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+    - name: Prepare image archive
+      run: mkdir -p "$RUNNER_TEMP/image"
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+      with:
+        context: .
+        file: Dockerfile.agentcore
+        platforms: linux/arm64
+        push: false
+        outputs: type=docker,dest=${{ runner.temp }}/image/image.tar
+        tags: remediation-candidate:${{ github.sha }}
+        labels: |-
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+        cache-from: type=gha,scope=agentcore-arm64
+        cache-to: type=gha,mode=max,scope=agentcore-arm64
+    - name: Record immutable archive identity
+      run: echo "sha256=$(sha256sum "$RUNNER_TEMP/image/image.tar" | cut -d " " -f1)" >> "$GITHUB_OUTPUT"
+      id: archive
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: image
+        path: ${{ runner.temp }}/image/image.tar
+        compression-level: 0
+        overwrite: true
+        retention-days: 3
+        if-no-files-found: error
+    outputs:
+      archive-sha256: ${{ steps.archive.outputs.sha256 }}
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: image
+        path: ${{ runner.temp }}/image
+    - name: Verify built archive
+      run: |
+        [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+        printf "%s  %s\n" "$EXPECTED_SHA256" "$RUNNER_TEMP/image/image.tar" | sha256sum --check -
+      env:
+        EXPECTED_SHA256: ${{ needs.build.outputs.archive-sha256 }}
+    - name: Prepare reports
+      run: mkdir -p reports
+    - uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+      with:
+        version: v0.76.0
+        input: ${{ runner.temp }}/image/image.tar
+        scanners: vuln
+        vuln-type: os,library
+        ignore-unfixed: false
+        format: json
+        output: reports/trivy.json
+        exit-code: '0'
+        timeout: 15m
+      name: Scan all container vulnerability severities
+    - name: Enforce high and critical vulnerability gate
+      run: python scripts/ci_reports.py scan trivy reports/trivy.json 0
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: trivy
+        path: reports/
+        include-hidden-files: true
+        overwrite: true
+        retention-days: 30
+        if-no-files-found: error
+      name: Retain reports
+      if: ${{ always() }}
+    needs:
+    - build
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: image
+        path: ${{ runner.temp }}/image
+    - name: Verify built archive
+      run: |
+        [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+        printf "%s  %s\n" "$EXPECTED_SHA256" "$RUNNER_TEMP/image/image.tar" | sha256sum --check -
+      env:
+        EXPECTED_SHA256: ${{ needs.build.outputs.archive-sha256 }}
+    - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ap-southeast-1
+        allowed-account-ids: '734849394833'
+    - name: Verify publishing account
+      run: test "$(aws sts get-caller-identity --query Account --output text)" = "734849394833"
+    - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd
+    - name: Publish the exact scanned image
+      run: |
+        docker load --input "$RUNNER_TEMP/image/image.tar"
+        image="734849394833.dkr.ecr.ap-southeast-1.amazonaws.com/aios/remediation-agent"
+        local_image="remediation-candidate:$SOURCE_SHA"
+        test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$local_image")" = "$SOURCE_SHA"
+        docker tag "$local_image" "$image:$SOURCE_SHA"
+        docker push "$image:$SOURCE_SHA"
+        digest=$(aws ecr describe-images --repository-name aios/remediation-agent --image-ids "imageTag=$SOURCE_SHA" --query 'imageDetails[0].imageDigest' --output text)
+        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+        echo "image-uri=$image:$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+        echo "image-digest=$digest" >> "$GITHUB_OUTPUT"
+        printf 'Image: `%s@%s`\nSource: `%s`\n' "$image" "$digest" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      id: push
+      env:
+        SOURCE_SHA: ${{ github.sha }}
+    needs:
+    - build
+    - scan
+    if: ${{ inputs.publish }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image-uri: ${{ steps.push.outputs.image-uri }}
+      image-digest: ${{ steps.push.outputs.image-digest }}

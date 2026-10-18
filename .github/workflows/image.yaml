@@ -1,26 +1,25 @@
 name: Image
-
-on:
-  workflow_dispatch:
-  push:
-    tags: ["v*"]
-
 jobs:
+  ci:
+    uses: ./.github/workflows/checks.yaml
+    with:
+      trusted-scans: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository
+        && github.actor != 'dependabot[bot]') }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
   image:
+    needs: ci
     permissions:
       contents: read
       id-token: write
-    uses: MtechSE-ArchAI-Team7/github-actions-shared/.github/workflows/docker-build-push-ecr.yaml@c30a46d3ed49304d568753302a59fbc72035cb8a
+    uses: ./.github/workflows/build-scan-image.yaml
     with:
-      aws-region: ap-southeast-1
-      ecr-repository: aios/remediation-agent
-      dockerfile: Dockerfile.agentcore
-      platforms: linux/arm64
+      publish: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-
   qualify:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     needs: image
     permissions:
       contents: read
@@ -32,10 +31,11 @@ jobs:
       source-revision: ${{ github.sha }}
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_AGENTCORE_DEPLOY_ROLE_ARN }}
-
   deploy:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: [image, qualify]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    needs:
+    - image
+    - qualify
     permissions:
       contents: read
       id-token: write
@@ -52,3 +52,41 @@ jobs:
       smoke-test-json: '{"jsonrpc":"2.0","id":"release-probe","method":"SendMessage","params":{"message":{"messageId":"00000000-0000-4000-8000-000000000001","role":"ROLE_USER","parts":[{"data":{"schema_version":"1.0","probe":"openai"},"mediaType":"application/vnd.aios.provider-probe-request.v1+json"}]}}}'
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_AGENTCORE_DEPLOY_ROLE_ARN }}
+  summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Pipeline summary
+      run: |
+        required="ci image"
+        if [ "$RELEASE" = "true" ]; then required="$required qualify deploy"; fi
+        python scripts/ci_reports.py summary $required
+      env:
+        JOB_RESULTS: ${{ toJSON(needs) }}
+        RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    - name: Record release identity
+      run: 'printf ''Source: `%s`\nImage digest: `%s`\nRuntime version: `%s`\n'' "$SOURCE_SHA" "$IMAGE_DIGEST" "$RUNTIME_VERSION"
+        >> "$GITHUB_STEP_SUMMARY"'
+      env:
+        SOURCE_SHA: ${{ github.sha }}
+        IMAGE_DIGEST: ${{ needs.image.outputs.image-digest }}
+        RUNTIME_VERSION: ${{ needs.deploy.outputs.runtime-version }}
+    needs:
+    - ci
+    - image
+    - qualify
+    - deploy
+    if: ${{ always() }}
+'on':
+  workflow_dispatch: null
+  push:
+    tags:
+    - v*
+permissions:
+  contents: read
+concurrency:
+  group: remediation-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}

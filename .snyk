@@ -1,0 +1,10 @@
+version: v1.25.0
+exclude:
+  global:
+    - .venv/**
+    - .snyk-venv/**
+    - reports/**
+    - .artifacts/**
+    - '**/__pycache__/**'
+    - .env
+    - .env.*

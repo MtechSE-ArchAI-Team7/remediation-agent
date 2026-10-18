@@ -81,6 +81,7 @@ strict = true
 packages = ["remediation_agent"]
 
 [tool.coverage.run]
+relative_files = true
 source = ["remediation_agent"]
 branch = true
 

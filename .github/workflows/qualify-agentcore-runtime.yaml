@@ -28,8 +28,10 @@ jobs:
       matrix:
         case: [ah54, ah56]
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-southeast-1
@@ -71,9 +73,10 @@ jobs:
           fi
       - name: Retain bounded qualification evidence, including failed trials
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: workflow-qualification-${{ matrix.case }}
           path: ${{ runner.temp }}/qualification-output
           retention-days: 30
+          overwrite: true
           if-no-files-found: error

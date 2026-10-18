@@ -79,17 +79,19 @@ jobs:
       runtime-arn: ${{ steps.release.outputs.runtime-arn }}
       runtime-version: ${{ steps.release.outputs.runtime-version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
       - name: Install locked release evidence verifier
         run: uv sync --frozen --no-dev
       - name: Read this workflow's immutable-image qualification evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: workflow-qualification-*
           path: ${{ runner.temp }}/workflow-qualification
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ inputs.aws-region }}
@@ -247,7 +249,7 @@ jobs:
             echo "runtime-arn=$runtime_arn"
             echo "target-image=$target_image"
           } >>"$GITHUB_OUTPUT"
-          uv run python -m scripts.check_release_qualification \
+          uv run --frozen --no-sync python -m scripts.check_release_qualification \
             --evidence "$RUNNER_TEMP/workflow-qualification" \
             --runtime "$current_file" \
             --source "$SOURCE_REVISION" --image "$IMAGE_DIGEST"
@@ -495,14 +497,14 @@ jobs:
           RUNTIME_VERSION: ${{ steps.release.outputs.runtime-version }}
           RELEASE_ID: ${{ inputs.release-id }}
         run: |
-          uv run python scripts/qualify_runtime.py \
+          uv run --frozen --no-sync python scripts/qualify_runtime.py \
             --source "$SOURCE_REVISION" --image "$IMAGE_DIGEST" \
             --version "$RUNTIME_VERSION" --release "$RELEASE_ID" \
             --output "${RUNNER_TEMP}/runtime-qualification"
 
       - name: Preserve hosted qualification evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: runtime-filesystem-qualification
           path: ${{ runner.temp }}/runtime-qualification

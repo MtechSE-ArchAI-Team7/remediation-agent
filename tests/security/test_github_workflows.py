@@ -11,7 +11,6 @@ import yaml  # type: ignore[import-untyped]
 
 _ROOT = Path(__file__).resolve().parents[2]
 _WORKFLOW_DIR = _ROOT / ".github" / "workflows"
-_SHARED_WORKFLOW = re.compile(r"^MtechSE-ArchAI-Team7/github-actions-shared/\.github/workflows/[^@]+@[0-9a-f]{40}$")
 
 
 def _load_workflow(name: str) -> dict[str, object]:
@@ -34,13 +33,6 @@ def _jobs(workflow: dict[str, object]) -> dict[str, dict[str, object]]:
     return cast(dict[str, dict[str, object]], raw)
 
 
-def _assert_sha_pinned(job: dict[str, object]) -> str:
-    uses = job["uses"]
-    assert isinstance(uses, str)
-    assert _SHARED_WORKFLOW.fullmatch(uses)
-    return uses.rsplit("@", maxsplit=1)[1]
-
-
 def _assert_local_agentcore_deploy(job: dict[str, object]) -> None:
     assert job["uses"] == "./.github/workflows/deploy-agentcore-runtime.yaml"
 
@@ -58,14 +50,16 @@ def test_main_release_runs_ci_then_image_then_agentcore_deploy() -> None:
     jobs = _jobs(workflow)
 
     assert jobs["image"]["needs"] == "ci"
-    assert jobs["image"]["if"] == "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    assert cast(dict[str, object], jobs["image"]["with"])["publish"] == (
+        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    )
     assert jobs["qualify"]["needs"] == "image"
     assert jobs["qualify"]["uses"] == "./.github/workflows/qualify-agentcore-runtime.yaml"
     assert jobs["deploy"]["needs"] == ["image", "qualify"]
     assert jobs["deploy"]["if"] == "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
 
-    refs = {_assert_sha_pinned(jobs[name]) for name in ("ci", "image")}
-    assert len(refs) == 1
+    assert jobs["ci"]["uses"] == "./.github/workflows/checks.yaml"
+    assert jobs["image"]["uses"] == "./.github/workflows/build-scan-image.yaml"
     _assert_local_agentcore_deploy(jobs["deploy"])
 
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
@@ -92,7 +86,7 @@ def test_pull_requests_run_ci_without_release_jobs() -> None:
     jobs = _jobs(workflow)
 
     assert "pull_request" in triggers
-    assert "pull_request" not in str(jobs["image"]["if"])
+    assert "pull_request" not in str(cast(dict[str, object], jobs["image"]["with"])["publish"])
     assert "pull_request" not in str(jobs["deploy"]["if"])
 
 
@@ -102,7 +96,9 @@ def test_qualification_transfers_private_container_evidence_before_upload() -> N
     transfer_index = next(
         i for i, step in enumerate(steps) if step.get("name") == "Transfer private evidence to the artifact uploader"
     )
-    upload_index = next(i for i, step in enumerate(steps) if step.get("uses") == "actions/upload-artifact@v4")
+    upload_index = next(
+        i for i, step in enumerate(steps) if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    )
     transfer = steps[transfer_index]
     assert transfer_index < upload_index
     assert transfer["if"] == "${{ always() }}"
@@ -122,8 +118,11 @@ def test_standalone_image_workflow_keeps_release_triggers_and_manual_deploys() -
     assert push == {"tags": ["v*"]}
     assert jobs["qualify"]["needs"] == "image"
     assert jobs["deploy"]["needs"] == ["image", "qualify"]
-    assert jobs["deploy"]["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
-    _assert_sha_pinned(jobs["image"])
+    assert jobs["deploy"]["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}"
+    )
+    assert jobs["image"]["needs"] == "ci"
+    assert jobs["image"]["uses"] == "./.github/workflows/build-scan-image.yaml"
     _assert_local_agentcore_deploy(jobs["deploy"])
     deploy_with = cast(dict[str, object], jobs["deploy"]["with"])
     assert deploy_with["server-protocol"] == "A2A"
@@ -191,3 +190,68 @@ def test_local_agentcore_deploy_preserves_required_runtime_configuration() -> No
     assert target_bindings == 2
     assert "create-agent-runtime" not in script
     assert "delete-agent-runtime" not in script
+
+
+def test_every_external_action_is_immutable_and_checkouts_drop_credentials() -> None:
+    for path in _WORKFLOW_DIR.glob("*.yaml"):
+        workflow = _load_workflow(path.name)
+        assert cast(dict[str, object], workflow.get("permissions", {})).get("contents", "read") == "read"
+        for job in _jobs(workflow).values():
+            if "steps" not in job:
+                assert str(job["uses"]).startswith("./.github/workflows/")
+                continue
+            assert isinstance(job["timeout-minutes"], int)
+            for step in cast(list[dict[str, object]], job["steps"]):
+                if "uses" in step:
+                    assert re.fullmatch(r"[A-Za-z0-9_./-]+@[0-9a-f]{40}", str(step["uses"]))
+                    if str(step["uses"]).startswith("actions/checkout@"):
+                        assert cast(dict[str, object], step["with"])["persist-credentials"] is False
+                assert step.get("continue-on-error") is not True
+
+
+def test_security_and_coverage_gate_cannot_be_bypassed_by_release_entrypoints() -> None:
+    for name in ("ci.yaml", "image.yaml"):
+        jobs = _jobs(_load_workflow(name))
+        assert jobs["image"]["needs"] == "ci"
+        assert jobs["ci"]["uses"] == "./.github/workflows/checks.yaml"
+        assert jobs["summary"]["if"] == "${{ always() }}"
+    checks = _jobs(_load_workflow("checks.yaml"))
+    required = {
+        "quality",
+        "unit",
+        "integration",
+        "functional",
+        "bandit",
+        "audit",
+        "coverage",
+        "sonar",
+        "snyk-code",
+        "snyk-python",
+        "snyk-node",
+    }
+    assert set(cast(list[str], checks["gate"]["needs"])) == required
+    script = str(checks["gate"]["steps"])
+    assert all(name in script for name in required)
+    assert "--fail-under=90" in str(checks["coverage"])
+    assert checks["coverage"]["needs"] == ["unit", "integration"]
+    assert "ci_reports.py junit" in str(checks["integration"])
+    assert "sonar.qualitygate.wait=true" in str(checks["sonar"])
+    assert "not integration and not live_model" in (_ROOT / "pyproject.toml").read_text()
+
+
+def test_scanned_archive_is_the_only_publication_source() -> None:
+    jobs = _jobs(_load_workflow("build-scan-image.yaml"))
+    assert jobs["scan"]["needs"] == ["build"]
+    assert jobs["publish"]["needs"] == ["build", "scan"]
+    assert jobs["publish"]["if"] == "${{ inputs.publish }}"
+    for name in ("scan", "publish"):
+        assert "sha256sum --check" in str(jobs[name])
+        assert "needs.build.outputs.archive-sha256" in str(jobs[name])
+    assert "docker load" in str(jobs["publish"])
+    assert "docker build" not in str(jobs["publish"])
+    assert "org.opencontainers.image.revision" in str(jobs["publish"])
+    assert "ci_reports.py scan trivy" in str(jobs["scan"])
+    for step in cast(list[dict[str, object]], jobs["scan"]["steps"]):
+        if str(step.get("uses", "")).startswith("aquasecurity/trivy-action@"):
+            assert cast(dict[str, object], step["with"])["ignore-unfixed"] is False
+    assert "aws-access-key-id" not in str(jobs)
