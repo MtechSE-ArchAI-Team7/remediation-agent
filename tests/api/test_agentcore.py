@@ -349,3 +349,62 @@ async def test_agentcore_start_binds_run_to_session_and_get_rejects_mismatch() -
     assert mismatch.json() == {"detail": "RUN_SESSION_MISMATCH"}
     assert fetched.status_code == 200
     assert fake.gets == [_SESSION_ID]
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "detail"),
+    [
+        ("missing", 404, "RUN_NOT_FOUND"),
+        ("approval", 409, "APPROVAL_CONFLICT"),
+        ("deadline", 504, "INVOCATION_DEADLINE_EXCEEDED"),
+        ("workspace", 409, "WORKSPACE_RECOVERY_UNSAFE"),
+        ("other", 500, "RUNTIME_INVOCATION_FAILED"),
+    ],
+)
+async def test_agentcore_service_errors_have_bounded_http_responses(
+    error: str, code: int, detail: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from remediation_agent.service import ApprovalConflictError, InvocationDeadlineError, RunNotFoundError
+
+    errors = {
+        "missing": RunNotFoundError("private diagnostic"),
+        "approval": ApprovalConflictError("private diagnostic"),
+        "deadline": InvocationDeadlineError("private diagnostic"),
+        "workspace": RuntimeError("WORKSPACE_RECOVERY_UNSAFE"),
+        "other": RuntimeError("private diagnostic"),
+    }
+    service = _FakeRemediationService()
+
+    async def fail(run_id: str) -> RemediationRunView:
+        assert run_id == _SESSION_ID
+        raise errors[error]
+
+    monkeypatch.setattr(service, "get", fail)
+    app = create_agentcore_app(service=cast(RemediationService, service))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations", json={"action": "get", "run_id": _SESSION_ID}, headers=_HEADERS
+            )
+    assert response.status_code == code
+    assert response.json() == {"detail": detail}
+    assert "private diagnostic" not in response.text
+
+
+async def test_agentcore_missing_boundaries_fail_closed() -> None:
+    app = create_agentcore_app(model=FakeStructuredModel({}))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations", json={"action": "get", "run_id": _SESSION_ID}, headers=_HEADERS
+            )
+            assert response.status_code == 503
+            assert response.json() == {"detail": "RUNTIME_NOT_CONFIGURED"}
+    app = create_agentcore_app(service=cast(RemediationService, _FakeRemediationService()))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/invocations", json={"action": "probe", "input": {"probe": "bedrock"}}, headers=_HEADERS
+            )
+            assert response.status_code == 503
+            assert response.json() == {"detail": "MODEL_PROBE_NOT_CONFIGURED"}

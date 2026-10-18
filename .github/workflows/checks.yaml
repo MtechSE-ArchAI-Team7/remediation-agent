@@ -371,7 +371,7 @@ jobs:
     - name: Scan and enforce severity gate
       run: |
         set +e
-        snyk code test . --json > reports/snyk-code.json
+        snyk code test . --org="$SNYK_CFG_ORG" --json > reports/snyk-code.json
         status=$?
         set -e
         uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-code reports/snyk-code.json "$status"
@@ -430,7 +430,7 @@ jobs:
     - name: Scan and enforce severity gate
       run: |
         set +e
-        snyk test --file=reports/requirements.txt --package-manager=pip --command=.snyk-venv/bin/python --json > reports/snyk-python.json
+        snyk test --org="$SNYK_CFG_ORG" --file=reports/requirements.txt --package-manager=pip --command=.snyk-venv/bin/python --json > reports/snyk-python.json
         status=$?
         set -e
         uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-open-source reports/snyk-python.json "$status"
@@ -482,7 +482,7 @@ jobs:
     - name: Scan and enforce severity gate
       run: |
         set +e
-        snyk test --all-projects validation --json > reports/snyk-node.json
+        snyk test --org="$SNYK_CFG_ORG" --all-projects validation --json > reports/snyk-node.json
         status=$?
         set -e
         uv run --frozen --no-sync python scripts/ci_reports.py scan snyk-open-source reports/snyk-node.json "$status"
@@ -509,13 +509,13 @@ jobs:
         persist-credentials: false
     - name: Summarize and enforce required stages
       run: |
-        required="quality unit integration functional bandit audit coverage"
+        required=(quality unit integration functional bandit audit coverage)
         if [ "$TRUSTED_SCANS" = "true" ]; then
-          required="$required sonar snyk-code snyk-python snyk-node"
+          required+=(sonar snyk-code snyk-python snyk-node)
         else
           echo "External scanners are unavailable to untrusted or Dependabot pull requests. They are required on main." >> "$GITHUB_STEP_SUMMARY"
         fi
-        python scripts/ci_reports.py summary $required
+        python scripts/ci_reports.py summary "${required[@]}"
       env:
         JOB_RESULTS: ${{ toJSON(needs) }}
         TRUSTED_SCANS: ${{ inputs.trusted-scans }}

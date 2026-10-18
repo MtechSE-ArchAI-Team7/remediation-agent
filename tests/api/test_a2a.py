@@ -519,3 +519,78 @@ async def test_fixed_runtime_qualification_is_separate_from_remediation(tmp_path
             )
             assert denied.json()["result"]["task"]["status"]["state"] == "TASK_STATE_REJECTED"
     assert not model.requests and not pr.requests
+
+
+@pytest.mark.parametrize(
+    ("media", "payload", "code"),
+    [
+        (DIAGNOSIS_HANDOFF_MEDIA_TYPE, {}, "INVALID_DATA_PART"),
+        (PROVIDER_PROBE_REQUEST_MEDIA_TYPE, {"probe": "other"}, "INVALID_PROVIDER_PROBE"),
+        (PROVIDER_PROBE_REQUEST_MEDIA_TYPE, {"probe": "openai"}, "INVALID_PROVIDER_PROBE"),
+        (PROVIDER_PROBE_REQUEST_MEDIA_TYPE, {"probe": "bedrock"}, "PROVIDER_PROBE_FAILED"),
+        (ARTIFACT_PREVIEW_REQUEST_MEDIA_TYPE, {}, "INVALID_ARTIFACT_PREVIEW_REQUEST"),
+        ("application/unknown+json", {}, "UNSUPPORTED_MEDIA_TYPE"),
+    ],
+)
+async def test_a2a_rejects_invalid_operations_without_starting_work(
+    media: str, payload: dict[str, object], code: str
+) -> None:
+    service = _FakeService()
+    app = create_a2a_app(FakeStructuredModel({}), cast(RemediationService, service), probe_provider="bedrock")
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/", headers=_HEADERS, json=_send(payload, media))
+    task = response.json()["result"]["task"]
+    assert task["status"]["state"] in {"TASK_STATE_REJECTED", "TASK_STATE_FAILED"}
+    assert task["status"]["message"]["parts"][0]["text"] == code
+    assert service.starts == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("approval", "APPROVAL_CONFLICT"),
+        ("missing", "TASK_NOT_FOUND"),
+        ("invalid", "INVALID_DATA_PART"),
+        ("unexpected", "RUNTIME_INVOCATION_FAILED"),
+        ("approval_missing", "MISSING_APPROVAL_REQUEST"),
+        ("handoff_missing", "MISSING_REMEDIATION_HANDOFF"),
+        ("status", "INVALID_WORKFLOW_STATUS"),
+    ],
+)
+async def test_a2a_service_and_incomplete_output_fail_closed(
+    failure: str, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from remediation_agent.service import ApprovalConflictError, RunNotFoundError
+
+    service = _FakeService()
+
+    async def start(handoff: DiagnosisHandoffV1, *, run_id: str | None = None) -> RemediationRunView:
+        assert run_id is not None
+        if failure == "approval":
+            raise ApprovalConflictError("private diagnostic")
+        if failure == "missing":
+            raise RunNotFoundError("private diagnostic")
+        if failure == "invalid":
+            DiagnosisHandoffV1.model_validate({})
+        if failure == "unexpected":
+            raise RuntimeError("private diagnostic")
+        if failure == "approval_missing":
+            return RemediationRunView(run_id=run_id, status=FinalStatus.AWAITING_APPROVAL)
+        if failure == "handoff_missing":
+            return RemediationRunView(run_id=run_id, status=FinalStatus.INTERNAL_ERROR)
+        return RemediationRunView(run_id=run_id, status=FinalStatus.PENDING, result=_result(run_id))
+
+    monkeypatch.setattr(service, "start", start)
+    app = create_a2a_app(FakeStructuredModel({}), cast(RemediationService, service), probe_provider="bedrock")
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/",
+                headers=_HEADERS,
+                json=_send(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE),
+            )
+    task = response.json()["result"]["task"]
+    assert task["status"]["state"] in {"TASK_STATE_REJECTED", "TASK_STATE_FAILED"}
+    assert task["status"]["message"]["parts"][0]["text"] == expected
+    assert "private diagnostic" not in response.text

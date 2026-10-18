@@ -61,14 +61,14 @@ jobs:
         persist-credentials: false
     - name: Pipeline summary
       run: |
-        required="ci image"
-        if [ "$RELEASE" = "true" ]; then required="$required qualify deploy"; fi
-        python scripts/ci_reports.py summary $required
+        required=(ci image)
+        if [ "$RELEASE" = "true" ]; then required+=(qualify deploy); fi
+        python scripts/ci_reports.py summary "${required[@]}"
       env:
         JOB_RESULTS: ${{ toJSON(needs) }}
         RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     - name: Record release identity
-      run: 'printf ''Source: `%s`\nImage digest: `%s`\nRuntime version: `%s`\n'' "$SOURCE_SHA" "$IMAGE_DIGEST" "$RUNTIME_VERSION"
+      run: 'printf ''Source: %s\nImage digest: %s\nRuntime version: %s\n'' "$SOURCE_SHA" "$IMAGE_DIGEST" "$RUNTIME_VERSION"
         >> "$GITHUB_STEP_SUMMARY"'
       env:
         SOURCE_SHA: ${{ github.sha }}

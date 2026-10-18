@@ -134,7 +134,7 @@ jobs:
         [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
         echo "image-uri=$image:$SOURCE_SHA" >> "$GITHUB_OUTPUT"
         echo "image-digest=$digest" >> "$GITHUB_OUTPUT"
-        printf 'Image: `%s@%s`\nSource: `%s`\n' "$image" "$digest" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+        printf 'Image: `%s@%s`\nSource: %s\n' "$image" "$digest" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       id: push
       env:
         SOURCE_SHA: ${{ github.sha }}

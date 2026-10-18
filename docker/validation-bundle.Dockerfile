@@ -1,4 +1,4 @@
-FROM node:20.19.5-bookworm AS validation-build
+FROM node:24-bookworm AS validation-build
 WORKDIR /build
 COPY validation/ecommerce/package.json validation/ecommerce/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && \
