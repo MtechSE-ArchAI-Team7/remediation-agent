@@ -122,3 +122,28 @@ def test_unsupported_dependencies_or_conflicting_lockfile_cannot_pass(tmp_path: 
     (app / "package.json").write_text(json.dumps({"dependencies": {"express": "^5.0.0"}}))
     with pytest.raises(RuntimeError, match="does not support"):
         verify_dependencies(bundle, app)
+
+
+def test_staged_assets_are_readable_without_becoming_writable_to_sandbox(tmp_path: Path) -> None:
+    from remediation_agent.adapters.behavioral import _prepare_docker_assets
+
+    root = tmp_path / "staged"
+    root.mkdir(mode=0o700)
+    manifest = root / "manifest.json"
+    manifest.write_text("{}")
+    manifest.chmod(0o600)
+    node = root / "node"
+    node.write_bytes(b"executable fixture")
+    node.chmod(0o700)
+    _prepare_docker_assets(root)
+    assert root.stat().st_mode & 0o777 == 0o755
+    assert manifest.stat().st_mode & 0o777 == 0o644
+    assert node.stat().st_mode & 0o777 == 0o755
+    assert manifest.read_text() == "{}"
+    outside = tmp_path / "outside"
+    outside.write_text("private")
+    outside.chmod(0o600)
+    (root / "escape").symlink_to(outside)
+    with pytest.raises(ValueError, match="Unsafe verification"):
+        _prepare_docker_assets(root)
+    assert outside.stat().st_mode & 0o777 == 0o600

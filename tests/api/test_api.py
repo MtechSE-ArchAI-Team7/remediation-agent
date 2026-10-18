@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 
 import httpx
+import pytest
 
 from remediation_agent.api.app import create_app
 from remediation_agent.domain.enums import ApprovalStatus, FinalStatus, PolicyDecision, RiskLevel
@@ -109,3 +110,79 @@ async def test_approval_endpoint_resumes_checkpoint() -> None:
             )
             assert completed.status_code == 202
             assert completed.json()["status"] == FinalStatus.DRAFT_PR_PREPARED
+
+
+async def test_runtime_lifespan_releases_checkpoint_and_model_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic import SecretStr
+
+    import remediation_agent.api.app as api
+    from remediation_agent.config import Settings
+
+    settings = Settings(
+        llm_provider="fake",
+        policy_file=Path("config/policies/demo.json"),
+        postgres_dsn=SecretStr("postgresql://fixture"),
+        checkpoint_encryption_key=SecretStr("x" * 32),
+        github_token=SecretStr("fixture"),
+    )
+    monkeypatch.setattr(api, "Settings", lambda: settings)
+    closed = []
+    checkpoint = object()
+
+    @asynccontextmanager
+    async def store(dsn: str, key: str) -> AsyncIterator[object]:
+        assert dsn == "postgresql://fixture" and key == "x" * 32
+        try:
+            yield checkpoint
+        finally:
+            closed.append("checkpoint")
+
+    monkeypatch.setattr(api, "postgres_checkpointer", store)
+    model = MagicMock()
+    model.aclose = AsyncMock()
+    monkeypatch.setattr(api, "build_structured_model", MagicMock(return_value=model))
+    boundaries = {}
+    for name in (
+        "GitHubAskpassCredentialProvider",
+        "LocalGitRepository",
+        "GitHubRemoteMcpInspectionTools",
+        "DockerSandboxExecutor",
+        "DraftPullRequestProvider",
+        "LocalArtifactStore",
+        "JsonlAuditSink",
+        "WorkflowNodes",
+        "build_graph",
+        "RemediationService",
+    ):
+        boundary = MagicMock()
+        boundaries[name] = boundary
+        monkeypatch.setattr(api, name, boundary)
+    app = api.create_app()
+    with pytest.raises(RuntimeError, match="request failure"):
+        async with app.router.lifespan_context(app):
+            assert app.state.remediation_service is boundaries["RemediationService"].return_value
+            assert boundaries["DraftPullRequestProvider"].call_args.kwargs["writes_enabled"] is False
+            assert boundaries["build_graph"].call_args.args[1] is checkpoint
+            raise RuntimeError("request failure")
+    model.aclose.assert_awaited_once()
+    assert closed == ["checkpoint"]
+
+
+async def test_readiness_requires_runtime_and_healthy_checkpoint() -> None:
+    from unittest.mock import AsyncMock
+
+    service, *_ = build_test_service({})
+    app = create_app(service)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/readyz")).status_code == 503
+    async with app.router.lifespan_context(app):
+        service.ready = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/readyz")
+            assert response.status_code == 503
+            assert response.json() == {"detail": "checkpoint store is not ready"}

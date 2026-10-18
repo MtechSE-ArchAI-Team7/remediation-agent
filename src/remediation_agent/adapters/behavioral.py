@@ -78,6 +78,16 @@ def _copy(source: Path, target: Path) -> None:
             shutil.copyfile(item, destination)
 
 
+def _prepare_docker_assets(root: Path) -> None:
+    """Make only owned staged assets readable by the fixed non-root container UID."""
+    paths = [root, *root.rglob("*")]
+    if any(path.is_symlink() for path in paths):
+        raise ValueError("Unsafe verification asset")
+    for path in paths:
+        executable = path.is_dir() or bool(path.stat().st_mode & 0o111)
+        path.chmod(0o755 if executable else 0o644)
+
+
 def _extract(archive: Path, target: Path) -> None:
     with tarfile.open(archive) as stream:
         members = stream.getmembers()
@@ -234,6 +244,8 @@ async def run_behavioral_pair(
                     }
                 )
             )
+            if sandbox.stage_host_bundle:
+                await asyncio.to_thread(_prepare_docker_assets, reserved)
             (snapshot / ".git").mkdir(exist_ok=True)
             profile_digest = _digest_files(snapshot)
             task = request.task.model_copy(

@@ -408,3 +408,79 @@ async def test_agentcore_missing_boundaries_fail_closed() -> None:
             )
             assert response.status_code == 503
             assert response.json() == {"detail": "MODEL_PROBE_NOT_CONFIGURED"}
+
+
+@pytest.mark.parametrize("incident_memory", [False, True])
+async def test_hosted_lifespan_binds_policy_and_closes_model(
+    incident_memory: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from pydantic import SecretStr
+
+    import remediation_agent.api.agentcore as hosted
+    from remediation_agent.adapters.agentcore import AgentCoreRuntimeSecret
+
+    settings = Settings(
+        llm_provider="bedrock",
+        llm_model="configured-model",
+        aws_region="ap-southeast-1",
+        workspace_root=tmp_path / "runs",
+        policy_file=Path("config/policies/demo.json"),
+        agentcore_memory_id="checkpoint-memory",
+        runtime_secret_arn="runtime-secret",  # noqa: S106 - identifier for an offline fake
+        artifact_bucket="test-artifacts",
+        release_id="ci-test",
+        release_source_sha="a" * 40,
+        release_image_digest="sha256:" + "b" * 64,
+        agentcore_runtime_id="remediation-test",
+        incident_memory_enabled=incident_memory,
+        incident_memory_id="incident-memory" if incident_memory else None,
+        incident_memory_strategy_id="semantic" if incident_memory else None,
+        incident_memory_namespace="/aios/incidents/" if incident_memory else None,
+    )
+    monkeypatch.setattr(hosted, "Settings", lambda: settings)
+    secret = AgentCoreRuntimeSecret(github_token=SecretStr("test-token"), checkpoint_encryption_key=SecretStr("x" * 32))
+    loader = MagicMock()
+    loader.load = AsyncMock(return_value=secret)
+    monkeypatch.setattr(hosted, "SecretsManagerRuntimeSecretProvider", MagicMock(return_value=loader))
+    model = MagicMock()
+    model.aclose = AsyncMock()
+    monkeypatch.setattr(hosted, "build_structured_model", MagicMock(return_value=model))
+    boundaries = {}
+    for name in (
+        "AgentCoreIncidentMemory",
+        "AgentCoreReleaseProvenance",
+        "GitHubAskpassCredentialProvider",
+        "LocalGitRepository",
+        "GitHubRemoteMcpInspectionTools",
+        "AgentCoreCodeInterpreterSandbox",
+        "DraftPullRequestProvider",
+        "S3ArtifactStore",
+        "S3AuditSink",
+        "S3ArtifactReader",
+        "WorkflowNodes",
+        "agentcore_memory_checkpointer",
+        "build_graph",
+        "RuntimeQualification",
+        "RemediationService",
+        "AgentCoreWorkspaceRecovery",
+    ):
+        boundary = MagicMock()
+        boundaries[name] = boundary
+        monkeypatch.setattr(hosted, name, boundary)
+    app = hosted.create_agentcore_app()
+    async with app.router.lifespan_context(app):
+        assert app.state.structured_model is model
+        assert app.state.probe_provider == "bedrock"
+        nodes = boundaries["WorkflowNodes"].call_args.kwargs
+        assert nodes["github_writes_enabled"] is False
+        assert nodes["incident_memory_writes_enabled"] is False
+        assert nodes["release_provenance"] is boundaries["AgentCoreReleaseProvenance"].return_value
+        assert boundaries["DraftPullRequestProvider"].call_args.kwargs["writes_enabled"] is False
+        assert boundaries["LocalGitRepository"].call_args.args[0] == tmp_path / "runs"
+        assert boundaries["agentcore_memory_checkpointer"].call_args.args == ("checkpoint-memory", "x" * 32)
+        assert boundaries["AgentCoreIncidentMemory"].call_count == int(incident_memory)
+        model.aclose.assert_not_awaited()
+    model.aclose.assert_awaited_once()
+    assert not list((tmp_path / "runs").iterdir())

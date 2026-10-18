@@ -594,3 +594,69 @@ async def test_a2a_service_and_incomplete_output_fail_closed(
     assert task["status"]["state"] in {"TASK_STATE_REJECTED", "TASK_STATE_FAILED"}
     assert task["status"]["message"]["parts"][0]["text"] == expected
     assert "private diagnostic" not in response.text
+
+
+@pytest.mark.parametrize("status", [a2a_pb.TASK_STATE_WORKING, a2a_pb.TASK_STATE_COMPLETED])
+@pytest.mark.parametrize("content", ["missing", "wrong-media", "malformed"])
+def test_artifact_handoff_requires_completed_valid_manifest(status: int, content: str) -> None:
+    from remediation_agent.api.a2a_executor import _data_part, _remediation_handoff
+    from remediation_agent.ports.models import ArtifactReadError
+
+    task = a2a_pb.Task(
+        id="task", context_id=_SESSION_ID, status=a2a_pb.TaskStatus(state=cast(a2a_pb.TaskState, status))
+    )
+    if content != "missing":
+        media = REMEDIATION_HANDOFF_MEDIA_TYPE if content == "malformed" else "application/unknown+json"
+        task.artifacts.append(a2a_pb.Artifact(artifact_id="evidence", parts=[_data_part({}, media)]))
+    expected = (
+        "ARTIFACT_INTEGRITY_FAILED"
+        if status == a2a_pb.TASK_STATE_COMPLETED and content == "malformed"
+        else "ARTIFACT_NOT_FOUND"
+    )
+    with pytest.raises(ArtifactReadError, match=expected):
+        _remediation_handoff(task)
+
+
+async def test_a2a_missing_runtime_and_probe_configuration_fail_closed() -> None:
+    from unittest.mock import MagicMock
+
+    from a2a.server.events import EventQueue
+    from google.protobuf import json_format
+
+    from remediation_agent.api.a2a_executor import RemediationA2AExecutor, _data_part
+
+    context = MagicMock()
+    context.task_id = "f53cbe6f-f919-48c4-9c05-06eed8d5f6e1"
+    context.context_id = _SESSION_ID
+    context.call_context.state = {"session_id": _SESSION_ID}
+    context.message = a2a_pb.Message(
+        parts=[_data_part(diagnosis_handoff().model_dump(mode="json"), DIAGNOSIS_HANDOFF_MEDIA_TYPE)]
+    )
+    queue = EventQueue()
+    executor = RemediationA2AExecutor(None)
+    await executor.execute(context, queue)
+    events = [await queue.dequeue_event() for _ in range(3)]
+    status = json_format.MessageToDict(events[-1])
+    assert status["status"]["message"]["parts"][0]["text"] == "RUNTIME_NOT_CONFIGURED"
+    with pytest.raises(RuntimeError, match="not configured"):
+        await executor._provider_probe(context.task_id, _SESSION_ID, {"probe": "bedrock"})
+    context.task_id = None
+    with pytest.raises(RuntimeError, match="missing generated identifiers"):
+        await executor.execute(context, queue)
+
+
+def test_resuming_legacy_task_requires_session_and_regenerates_bounded_summary() -> None:
+    from unittest.mock import MagicMock
+
+    from remediation_agent.api.a2a_executor import _resumed_run_summary
+
+    context = MagicMock()
+    context.current_task = a2a_pb.Task(id=_SESSION_ID)
+    context.call_context.state = {"session_id": _SESSION_ID}
+    summary = _resumed_run_summary(context, _SESSION_ID)
+    assert summary.task_id == summary.session_id == _SESSION_ID
+    assert summary.status is FinalStatus.PENDING
+    assert summary.repository is None
+    context.call_context.state = {}
+    with pytest.raises(RuntimeError, match="A2A_RUNTIME_SESSION_REQUIRED"):
+        _resumed_run_summary(context, _SESSION_ID)

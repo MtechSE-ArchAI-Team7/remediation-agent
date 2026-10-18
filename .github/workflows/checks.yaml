@@ -360,7 +360,7 @@ jobs:
       with:
         node-version: '22'
     - name: Install pinned Snyk CLI
-      run: npm install --global snyk@1.1307.4
+      run: npm install --global snyk@1.1308.1
     - name: Require Snyk configuration
       run: |
         : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
@@ -412,7 +412,7 @@ jobs:
       with:
         node-version: '22'
     - name: Install pinned Snyk CLI
-      run: npm install --global snyk@1.1307.4
+      run: npm install --global snyk@1.1308.1
     - name: Require Snyk configuration
       run: |
         : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
@@ -471,7 +471,7 @@ jobs:
       with:
         node-version: '22'
     - name: Install pinned Snyk CLI
-      run: npm install --global snyk@1.1307.4
+      run: npm install --global snyk@1.1308.1
     - name: Require Snyk configuration
       run: |
         : "${SNYK_TOKEN:?SNYK_TOKEN is required}"
