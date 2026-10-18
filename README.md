@@ -704,6 +704,7 @@ CRITICAL findings and scanner errors block release. Fork and Dependabot pull req
 credential-free checks without scanner secrets. The complete scanner gate remains mandatory on
 `main`. No scanner finding is suppressed in the repository policy.
 
+The runtime uses a digest-pinned Wolfi base with Python 3.12, Git and a fixed non-root UID.
 After these checks pass, the pipeline builds the `linux/arm64` runtime image once and retains a
 SHA-256-verified Docker archive. Trivy scans that archive before publication, including unfixed
 vulnerabilities. Publication loads the same archive and pushes a commit-SHA tag to
