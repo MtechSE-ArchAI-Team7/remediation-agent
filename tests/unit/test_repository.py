@@ -261,13 +261,15 @@ async def test_publication_rejects_changed_tree_remote_and_commit(tmp_path: Path
 
 
 async def test_subprocess_output_timeout_failure_and_cancellation(tmp_path: Path) -> None:
-    adapter = LocalGitRepository(tmp_path, command_timeout_seconds=0.05, max_command_output_bytes=10)
+    # Output and exit-code checks must allow interpreter startup with coverage enabled.
+    adapter = LocalGitRepository(tmp_path, command_timeout_seconds=5, max_command_output_bytes=10)
     with pytest.raises(RepositoryError, match="output limit"):
         await adapter._run([sys.executable, "-c", "print('x'*100)"], cwd=tmp_path)
     with pytest.raises(RepositoryError, match="failed"):
         await adapter._run([sys.executable, "-c", "raise SystemExit(1)"], cwd=tmp_path)
+    timeout_adapter = LocalGitRepository(tmp_path, command_timeout_seconds=0.05, max_command_output_bytes=10)
     with pytest.raises(RepositoryError, match="timed out"):
-        await adapter._run([sys.executable, "-c", "import time; time.sleep(5)"], cwd=tmp_path)
+        await timeout_adapter._run([sys.executable, "-c", "import time; time.sleep(5)"], cwd=tmp_path)
     task = asyncio.create_task(adapter._run([sys.executable, "-c", "import time; time.sleep(5)"], cwd=tmp_path))
     await asyncio.sleep(0.02)
     task.cancel()

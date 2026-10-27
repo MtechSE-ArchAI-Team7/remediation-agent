@@ -17,7 +17,13 @@ RUN rm -rf /var/lib/apt/lists/* && \
 
 # Keep the builder and runtime on the same patched glibc/Python distribution.
 FROM cgr.dev/chainguard/wolfi-base@sha256:c2a4815b6ca49b9bbafd451b4bde690d567a86b2b6b54877faac8082a7bc4296 AS runtime-base
-RUN apk add --no-cache python-3.12 git ca-certificates-bundle libstdc++ && \
+# Refresh inherited packages too, and fail the build if advisory fixes are unavailable.
+RUN apk upgrade --no-cache && \
+    apk add --no-cache python-3.12 git libstdc++ \
+        'ca-certificates-bundle>=20260909-r3' \
+        'libbrotlicommon1>=1.2.0-r7' \
+        'libbrotlidec1>=1.2.0-r7' \
+        'libbrotlienc1>=1.2.0-r7' && \
     addgroup -g 10001 remediation && \
     adduser -D -u 10001 -G remediation remediation
 
@@ -35,7 +41,7 @@ COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 COPY config ./config
 COPY scripts/qualify_workflow.py /app/scripts/qualify_workflow.py
-RUN uv pip install --target /app/validation/pytest_vendor "pytest==8.4.2" && \
+RUN uv pip install --target /app/validation/pytest_vendor "pytest==9.1.1" && \
     /app/.venv/bin/python -c "import tarfile; archive = tarfile.open('/app/validation/pytest_vendor.tar.gz', 'w:gz'); archive.add('/app/validation/pytest_vendor', arcname='.'); archive.close(); tarfile.open('/app/validation/pytest_vendor.tar.gz', 'r:gz').getmembers()"
 RUN /app/.venv/bin/python -c "from remediation_agent.api.a2a import create_a2a_app; assert callable(create_a2a_app)"
 

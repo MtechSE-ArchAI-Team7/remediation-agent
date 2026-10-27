@@ -107,3 +107,6 @@ make build
 ```
 
 Pushes to `main` run the CI pipeline, which tests, scans, qualifies and releases the image to AgentCore.
+The runtime image upgrades inherited Wolfi packages and enforces minimum patched CA bundle and Brotli versions.
+Its sealed validation bundle uses the same patched pytest version as the sandbox. Trivy blocks publication on
+high or critical vulnerabilities, including findings without an available fix.
