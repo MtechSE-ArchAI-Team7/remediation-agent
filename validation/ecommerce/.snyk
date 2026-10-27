@@ -1,0 +1,10 @@
+version: v1.25.0
+ignore:
+  SNYK-JS-PICOMATCH-21248802:
+    - 'sqlite3 > node-gyp > tinyglobby > picomatch':
+        reason: >-
+          No fixed picomatch release exists. The path is the optional node-gyp build toolchain that compiles sqlite3
+          from source when the sealed validation bundle is built. It does not process remediation input at runtime.
+          Remove this entry once a fixed picomatch or tinyglobby release is available.
+        expires: 2026-11-26T00:00:00.000Z
+        created: 2026-10-27T00:00:00.000Z

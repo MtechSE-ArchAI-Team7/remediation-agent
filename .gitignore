@@ -45,3 +45,6 @@ pip-audit.json
 reports/
 .snyk-venv/
 .scannerwork/
+
+# Local documentation (not published)
+/docs/
